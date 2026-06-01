@@ -15,7 +15,6 @@ from scvi.module.base import LossOutput, SupervisedModuleClass
 from scvi.nn import Decoder, Encoder
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from typing import Literal
 
     from torch.distributions import Distribution
@@ -48,10 +47,10 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         Dimensionality of the latent space. Default is 10.
     n_layers
         Number of hidden layers used for encoder and decoder NNs. Default is 1.
+    dropout_rate
+        Dropout rate for the encoder/decoder and the classifier / ``z2`` head. Default is 0.1.
     y_prior
-        If ``None``, initialized to uniform probability over cell types.
-    labels_groups
-        Label group designations.
+        Prior over labels of shape ``(1, n_labels)``. If ``None``, uniform.
     linear_classifier
         If ``True``, uses a single linear layer for classification instead of an MLP.
     classifier_parameters
@@ -73,8 +72,8 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         n_hidden: int = 128,
         n_latent: int = 10,
         n_layers: int = 1,
+        dropout_rate: float = 0.1,
         y_prior: torch.Tensor | None = None,
-        labels_groups: Sequence[int] = None,
         linear_classifier: bool = False,
         classifier_parameters: dict | None = None,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
@@ -91,6 +90,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             n_hidden=n_hidden,
             n_latent=n_latent,
             n_layers=n_layers,
+            dropout_rate=dropout_rate,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
             prior_mixture=False,
@@ -109,7 +109,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         cls_parameters = {
             "n_layers": 0 if linear_classifier else n_layers,
             "n_hidden": 0 if linear_classifier else n_hidden,
-            "dropout_rate": 0.1,
+            "dropout_rate": dropout_rate,
             "logits": True,
         }
         cls_parameters.update(classifier_parameters)
@@ -127,7 +127,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             n_cat_list=[self.n_labels],
             n_layers=n_layers,
             n_hidden=n_hidden,
-            dropout_rate=0.1,
+            dropout_rate=dropout_rate,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
             return_dist=True,
@@ -147,7 +147,6 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             y_prior if y_prior is not None else (1 / n_labels) * torch.ones(1, n_labels),
             requires_grad=False,
         )
-        self.labels_groups = torch.tensor(labels_groups) if labels_groups is not None else None
 
     def loss(
         self,
@@ -183,6 +182,8 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             reconst_loss = reconst_loss_int.sum(-1)
 
         # Enumerate choices of label (M1 + M2 hierarchy on z1 -> z2).
+        # NOTE: assumes z1 is 2D (n_samples == 1, as used during training); the
+        # ``.view(n_labels, -1)`` reshape below is not valid for n_samples > 1.
         ys, z1s = broadcast_labels(z1, n_broadcast=self.n_labels)
         qz2, z2 = self.encoder_z2_z1(z1s, ys)
         pz1_m, pz1_v = self.decoder_z1_z2(z2, ys)

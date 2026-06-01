@@ -50,6 +50,7 @@ import scvi
 
    external.CellAssign
    external.CYTOVI
+   external.CytoANVI
    external.GIMVI
    external.RNAStereoscope
    external.SpatialStereoscope

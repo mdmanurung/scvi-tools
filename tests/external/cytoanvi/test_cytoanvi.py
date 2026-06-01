@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -162,3 +164,87 @@ def test_cytoanvi_missing_markers():
     assert model.is_trained
     preds = model.predict()
     assert preds.shape[0] == merged.n_obs
+
+
+def test_cytoanvi_save_load(adata, save_path):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+    latent = model.get_latent_representation()
+
+    model_path = os.path.join(save_path, "test_cytoanvi")
+    model.save(model_path, save_anndata=True, overwrite=True)
+    model2 = CytoANVI.load(model_path)
+    np.testing.assert_array_equal(model2.history_["elbo_train"], model.history_["elbo_train"])
+    np.testing.assert_allclose(model2.get_latent_representation(), latent, atol=1e-5)
+    assert model2.n_labels == model.n_labels
+
+
+def test_cytoanvi_surgery_partial_labels(adata):
+    # P0: query carrying *reference* labels (plus the unlabeled category) must keep the classifier
+    # head fixed at the reference n_labels and train/predict without dimension mismatch.
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    query = _make_adata()
+    # keep ~half of the (reference-valid) labels, blank the rest to the unlabeled category
+    rng = np.random.default_rng(1)
+    labs = query.obs[LABELS_KEY].astype(str).to_numpy()
+    labs[rng.random(query.n_obs) < 0.5] = UNLABELED
+    query.obs[LABELS_KEY] = labs
+
+    q = CytoANVI.load_query_data(query, ref)
+    assert q.n_labels == ref.n_labels
+    assert q.module.classifier.classifier[-1].out_features == ref.n_labels
+    q.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
+    preds = q.predict()
+    assert preds.shape[0] == query.n_obs
+
+
+def test_cytoanvi_y_prior_empirical(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10, y_prior="empirical")
+    yp = model.module.y_prior.detach().cpu().numpy()
+    assert yp.shape == (1, model.n_labels)
+    np.testing.assert_allclose(yp.sum(), 1.0, atol=1e-5)
+    # empirical prior is not uniform on imbalanced-ish synthetic labels
+    model.train(max_epochs=1)
+    assert model.is_trained
+
+    with pytest.raises(ValueError):
+        CytoANVI(adata, n_latent=10, y_prior="not-a-mode")
+
+
+def test_cytoanvi_rejects_ln_latent(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    with pytest.raises(NotImplementedError):
+        CytoANVI(adata, n_latent=10, latent_distribution="ln")

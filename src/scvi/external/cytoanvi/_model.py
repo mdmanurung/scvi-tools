@@ -5,6 +5,9 @@ import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+import numpy as np
+import torch
+
 from scvi import settings
 from scvi.data import AnnDataManager
 from scvi.data._constants import _SETUP_ARGS_KEY, _SETUP_METHOD_NAME
@@ -62,7 +65,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     linear_classifier
         If ``True``, uses a single linear layer for classification instead of an MLP.
     y_prior
-        Prior over labels; if ``None``, uniform.
+        Prior over the observed labels. One of: ``"uniform"`` / ``None`` (uniform), ``"empirical"``
+        (label frequencies among labeled cells, Laplace-smoothed), or a tensor of shape
+        ``(1, n_labels)``. Use ``"empirical"`` for class-imbalanced panels.
     **model_kwargs
         Keyword args for :class:`~scvi.external.cytoanvi.CytoANVAE`.
 
@@ -76,6 +81,19 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     >>> model.train()
     >>> adata.obsm["X_CytoANVI"] = model.get_latent_representation()
     >>> adata.obs["pred"] = model.predict()
+
+    Notes
+    -----
+    - Only ``latent_distribution="normal"`` is supported (the semi-supervised ``z1`` log-prob term
+      assumes a Gaussian latent).
+    - With overlapping panels, the encoder (and hence the classifier, which reads the shared
+      latent ``z1``) only sees backbone markers. Cell types separated only by panel-specific
+      markers may be under-resolved; consider adding discriminative markers to the backbone.
+    - For query mapping via :meth:`load_query_data`, any labeled query cells must use labels
+      already present in the reference; the classifier head is fixed at the reference ``n_labels``.
+    - :meth:`from_cytovi_model` returns an unfit model still in train mode; call
+      ``model.module.eval()`` before :meth:`get_latent_representation` if inspecting it prior to
+      :meth:`train`.
     """
 
     _module_cls = CytoANVAE
@@ -92,9 +110,14 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         encode_backbone_only: bool | None = None,
         encoder_marker_list: list | None = None,
         linear_classifier: bool = False,
-        y_prior=None,
+        y_prior: str | torch.Tensor | None = "uniform",
         **model_kwargs,
     ):
+        if latent_distribution != "normal":
+            raise NotImplementedError(
+                "CytoANVI only supports latent_distribution='normal'; the semi-supervised z1 "
+                f"log-probability term assumes a Gaussian latent (got '{latent_distribution}')."
+            )
         # Build the CytoVI backbone (validates beta range, resolves marker masking / n_latent
         # heuristic, registers backbone markers). The module it constructs is rebuilt below with
         # the label adjustment, mirroring TOTALANVI.from_totalvi/__init__.
@@ -122,6 +145,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             else None
         )
 
+        y_prior_tensor = self._resolve_y_prior(y_prior, n_labels)
+
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,
             n_batch=self.summary_stats.n_batch,
@@ -136,7 +161,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             latent_distribution=latent_distribution,
             encoder_marker_mask=base.encoder_marker_mask,
             linear_classifier=linear_classifier,
-            y_prior=y_prior,
+            y_prior=y_prior_tensor,
             **model_kwargs,
         )
 
@@ -151,6 +176,29 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         self.was_pretrained = False
         self.n_labels = n_labels
         self.init_params_ = self._get_init_params(locals())
+
+    def _resolve_y_prior(
+        self, y_prior: str | torch.Tensor | None, n_labels: int
+    ) -> torch.Tensor | None:
+        """Resolve ``y_prior`` into a ``(1, n_labels)`` tensor, or ``None`` for a uniform prior."""
+        if y_prior is None or (isinstance(y_prior, str) and y_prior == "uniform"):
+            return None
+        if isinstance(y_prior, str):
+            if y_prior != "empirical":
+                raise ValueError(
+                    f"y_prior must be 'uniform', 'empirical', None, or a tensor; got '{y_prior}'."
+                )
+            # frequencies of observed labels among labeled cells, Laplace-smoothed
+            labeled_vals = self.labels_[self._labeled_indices]
+            counts = np.array(
+                [(labeled_vals == self._label_mapping[c]).sum() for c in range(n_labels)],
+                dtype=np.float64,
+            )
+            counts += 1.0
+            freqs = counts / counts.sum()
+            return torch.tensor(freqs[None, :], dtype=torch.float32)
+        # assume a user-provided tensor of shape (1, n_labels)
+        return y_prior
 
     @classmethod
     def from_cytovi_model(

@@ -10,6 +10,9 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
 #### Added
 
 - Add support for rapids-singlecell, {pr}`3811`.
+- Add {class}`scvi.external.CytoANVI`, a semi-supervised, annotation-aware extension of
+    {class}`scvi.external.CYTOVI` (cell-type classifier head + partially-observed-label objective,
+    scANVI-style) with `from_cytovi_model` and scArches query mapping.
 
 #### Fixed
 

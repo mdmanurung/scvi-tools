@@ -148,6 +148,13 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             requires_grad=False,
         )
 
+        # Continual-learning (EWC) state, populated by CytoANVI.load_query_data_with_replay.
+        # Inert (penalty == 0) until set, so the base model is unaffected.
+        self.importances: list[tuple[str, torch.Tensor]] | None = None
+        self.ctrl_importances: list[tuple[str, torch.Tensor]] | None = None
+        self.old_params: list[tuple[str, torch.Tensor]] | None = None
+        self.combine_type: str = "additive"
+
     def loss(
         self,
         tensors: dict[str, torch.Tensor],
@@ -228,3 +235,55 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             reconstruction_loss=reconst_loss,
             kl_local=kl_divergence,
         )
+
+    def _ewc_penalty(self) -> torch.Tensor:
+        """Elastic-Weight-Consolidation penalty: sum_k w_k (theta_k - theta_k^ref)^2.
+
+        ``w_k`` is the replay Fisher importance, optionally combined with the control importance
+        (``combine_type``). Returns 0 if continual state is unset (base model path).
+        """
+        device = self.device
+        if self.old_params is None or self.importances is None:
+            return torch.zeros((), device=device)
+        cur = dict(self.named_parameters())
+        imps = dict(self.importances)
+        ctrl = dict(self.ctrl_importances) if self.ctrl_importances is not None else None
+        penalty = torch.zeros((), device=device)
+        for name, saved in self.old_params:
+            p = cur.get(name)
+            imp = imps.get(name)
+            if p is None or imp is None or p.size() != saved.size():
+                continue
+            saved = saved.to(device)
+            w = imp.to(device)
+            if ctrl is not None and name in ctrl:
+                c = ctrl[name].to(device)
+                w = w * c if self.combine_type == "product" else w + c
+            penalty = penalty + (w * (p - saved).pow(2)).sum()
+        return penalty
+
+    def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):
+        """Standard CytoANVI loss plus the EWC penalty scaled by ``ewc_importance``."""
+        loss_kwargs = dict(loss_kwargs or {})
+        ewc_importance = loss_kwargs.pop("ewc_importance", 0.0)
+        losses = self.loss(tensors, inference_outputs, generative_outputs, **loss_kwargs)
+        penalty = self._ewc_penalty()
+        # NOTE: ewc penalty is intentionally not placed in extra_metrics, as a non-empty
+        # extra_metrics triggers the scib-autotune logging path (which expects z/batch/labels).
+        return LossOutput(
+            loss=losses.loss + ewc_importance * penalty,
+            reconstruction_loss=losses.reconstruction_loss,
+            kl_local=losses.kl_local,
+            classification_loss=losses.classification_loss,
+            true_labels=losses.true_labels,
+            logits=losses.logits,
+        )
+
+    def _replay_forward(self, tensors, loss_kwargs=None):
+        """Forward pass that adds the EWC penalty (used by the continual training plan)."""
+        inference_inputs = self._get_inference_input(tensors)
+        inference_outputs = self.inference(**inference_inputs)
+        generative_inputs = self._get_generative_input(tensors, inference_outputs)
+        generative_outputs = self.generative(**generative_inputs)
+        losses = self.loss_with_replay(tensors, inference_outputs, generative_outputs, loss_kwargs)
+        return inference_outputs, generative_outputs, losses

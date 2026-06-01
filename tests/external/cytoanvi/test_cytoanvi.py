@@ -248,3 +248,56 @@ def test_cytoanvi_rejects_ln_latent(adata):
     )
     with pytest.raises(NotImplementedError):
         CytoANVI(adata, n_latent=10, latent_distribution="ln")
+
+
+def test_cytoanvi_get_uncertainty(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+    unc = model.get_uncertainty(tta_rep=3)
+    assert unc.shape == (adata.n_obs,)
+    assert np.all(np.isfinite(unc))
+
+
+def test_cytoanvi_continual_update(adata):
+    # reference
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    replay = adata[:128].copy()  # buffer of reference cells
+    control = _make_adata()  # healthy controls sharing the panel
+    query = _make_adata()
+    query.obs[LABELS_KEY] = UNLABELED
+
+    q = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=replay, control_adata=control, combine_type="additive"
+    )
+    assert q.module.old_params is not None
+    assert q.module.importances is not None
+    assert q.module.ctrl_importances is not None
+
+    q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    assert q.is_trained
+    preds = q.predict()
+    assert preds.shape[0] == query.n_obs
+
+    # without controls + product combine still works (ctrl_importances stays None)
+    q2 = CytoANVI.load_query_data_with_replay(_make_adata(), ref, replay_adata=replay)
+    assert q2.module.ctrl_importances is None
+    q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 0.5})
+    assert q2.is_trained

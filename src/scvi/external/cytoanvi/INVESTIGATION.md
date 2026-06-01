@@ -101,7 +101,22 @@ likelihood — and **forces `prior_mixture=False`** in the semi-supervised path.
 remains available in plain CYTOVI. This is also required for the Phase 2 `cscanvi` continual-update
 port, whose replay/Fisher/freezing machinery assumes the scANVI M2 structure.
 
-## Phase 2 target — `theislab/comparative_atlas` (`cscanvi`)
+## Phase 2 — implemented (cscanvi-style continual update)
+
+Implemented in `_continual.py` + module/model extensions, ported from the cloned `cscanvi`
+source (read directly, not summarized). Key finding: despite the "replay" naming, cscanvi's
+`_replay_forward`/`loss_with_replay` do **not** mix replay data into the minibatch — they run the
+normal ELBO and add an **EWC penalty** ``ewc_importance * Σ_k w_k (θ_k − θ_k^ref)²``. The replay
+buffer and controls are used only to estimate the Fisher importances ``w_k`` (mean squared ELBO
+gradient) at surgery time; ``combine_type`` ∈ {additive, product} combines replay + control
+importances. CytoANVI adaptations to modern scvi 1.4.3: `LossOutput` (not `LossRecorder`), `qz`
+distribution (not `qz_m/qz_v`), reuse of `ArchesMixin.load_query_data` for surgery/freezing.
+Surface: `CytoANVI.load_query_data_with_replay`, `_compute_importances`, `get_uncertainty` (TTA
+Bregman-Information), `CytoANVAE._replay_forward`/`loss_with_replay`/`_ewc_penalty`,
+`CytoANVIContinualTrainingPlan`. EWC state is inert (penalty 0) until surgery sets it, so the base
+model is unchanged.
+
+## Phase 2 reference — `theislab/comparative_atlas` (`cscanvi`)
 
 A continual-learning extension of scANVI for case–control atlas building (read from the public
 GitHub raw source; treat signatures as **unconfirmed** until re-read at implementation time):

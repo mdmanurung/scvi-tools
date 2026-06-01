@@ -23,6 +23,11 @@ from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
 from scvi.model.base import SemisupervisedTrainingMixin
 from scvi.utils import setup_anndata_dsp
 
+from ._continual import (
+    CytoANVIContinualTrainingPlan,
+    compute_uncertainty_scores,
+    zerolike_params_dict,
+)
 from ._module import CytoANVAE
 
 if TYPE_CHECKING:
@@ -331,3 +336,124 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
+
+    # ------------------------------------------------------------------ #
+    # Continual / case-control atlas building (cscanvi-style EWC update)  #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _compute_importances(reference_model, adata) -> list[tuple[str, torch.Tensor]]:
+        """Fisher-style parameter importances = mean squared ELBO gradient over ``adata``.
+
+        Estimated on an unfrozen copy of ``reference_model`` so every parameter gets a gradient.
+        """
+        model = deepcopy(reference_model)
+        for p in model.module.parameters():
+            p.requires_grad = True
+        adata = model._validate_anndata(adata)
+        scdl = model._make_data_loader(adata=adata, batch_size=256)
+
+        importances = dict(zerolike_params_dict(model.module))
+        model.module.eval()
+        n_batches = 0
+        for tensors in scdl:
+            tensors = {k: v.to(model.device) for k, v in tensors.items()}
+            model.module.zero_grad()
+            inf = model.module.inference(**model.module._get_inference_input(tensors))
+            gen = model.module.generative(**model.module._get_generative_input(tensors, inf))
+            loss = model.module.loss(tensors, inf, gen).loss
+            loss.backward()
+            for name, p in model.module.named_parameters():
+                if p.grad is not None and name in importances:
+                    importances[name] += p.grad.detach().pow(2)
+            n_batches += 1
+        n_batches = max(n_batches, 1)
+        return [(k, (v / n_batches).detach()) for k, v in importances.items()]
+
+    @classmethod
+    def load_query_data_with_replay(
+        cls,
+        adata: AnnData,
+        reference_model: CytoANVI,
+        replay_adata: AnnData,
+        control_adata: AnnData | None = None,
+        combine_type: str = "additive",
+        freeze_classifier: bool = True,
+        **load_query_kwargs,
+    ):
+        """Continual case-control update: scArches surgery plus EWC anchoring to the reference.
+
+        Maps ``adata`` onto ``reference_model`` (scArches, via
+        :meth:`~scvi.model.base.ArchesMixin.load_query_data`), then anchors the trainable
+        parameters to the reference with an EWC penalty whose Fisher importances are estimated
+        from ``replay_adata`` (a buffer of reference cells, e.g. high-uncertainty cells selected
+        with :meth:`get_uncertainty`) and, if given, ``control_adata`` (healthy controls present
+        in both reference and query). Set the penalty weight at train time via
+        ``train(plan_kwargs={"ewc_importance": ...})``.
+
+        Parameters
+        ----------
+        adata
+            Query AnnData (same vars as the reference; any labels must be reference labels).
+        reference_model
+            A trained :class:`CytoANVI` reference.
+        replay_adata
+            Reference cells used to estimate replay importances.
+        control_adata
+            Optional healthy-control cells used to estimate control importances; combined with the
+            replay importances per ``combine_type``.
+        combine_type
+            ``"additive"`` (imp + ctrl_imp) or ``"product"`` (imp * ctrl_imp).
+        freeze_classifier
+            Whether to freeze the classifier during surgery (passed to ``load_query_data``).
+        load_query_kwargs
+            Additional keyword args for :meth:`~scvi.model.base.ArchesMixin.load_query_data`.
+        """
+        if combine_type not in ("additive", "product"):
+            raise ValueError("combine_type must be 'additive' or 'product'.")
+
+        model = cls.load_query_data(
+            adata, reference_model, freeze_classifier=freeze_classifier, **load_query_kwargs
+        )
+
+        # reference parameter values (loaded, pre-fine-tuning) for the trainable params
+        model.module.old_params = [
+            (k, p.detach().clone()) for k, p in model.module.named_parameters() if p.requires_grad
+        ]
+        model.module.importances = cls._compute_importances(reference_model, replay_adata)
+        if control_adata is not None:
+            model.module.ctrl_importances = cls._compute_importances(
+                reference_model, control_adata
+            )
+        else:
+            model.module.ctrl_importances = None
+        model.module.combine_type = combine_type
+
+        # route training through the EWC-aware plan
+        model._training_plan_cls = CytoANVIContinualTrainingPlan
+        return model
+
+    @torch.inference_mode()
+    def get_uncertainty(
+        self,
+        adata: AnnData | None = None,
+        indices=None,
+        batch_size: int | None = None,
+        tta_rep: int = 10,
+    ) -> np.ndarray:
+        """Per-cell Bregman-Information uncertainty via test-time augmentation.
+
+        High scores flag cells whose latent embedding is unstable under feature masking — a proxy
+        for novelty / out-of-distribution query cells (e.g. disease-specific states absent from the
+        reference). Useful before trusting :meth:`predict` on a mapped query.
+        """
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        scores = []
+        for tensors in scdl:
+            inference_inputs = self.module._get_inference_input(tensors)
+            scores.append(
+                compute_uncertainty_scores(inference_inputs, self.module, tta_rep=tta_rep)
+            )
+        return torch.cat(scores).numpy()

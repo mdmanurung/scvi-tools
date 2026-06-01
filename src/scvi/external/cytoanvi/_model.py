@@ -416,9 +416,12 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             adata, reference_model, freeze_classifier=freeze_classifier, **load_query_kwargs
         )
 
-        # reference parameter values (loaded, pre-fine-tuning) for the trainable params
+        # Snapshot reference parameter values to anchor to. Taken from the *reference* module (not
+        # the surgical query module) so the saved tensors share the reference's shapes and stay
+        # aligned with the importances; params resized by surgery (e.g. new batch dims) are skipped
+        # in the penalty via a size guard. The penalty compares these against the live query params.
         model.module.old_params = [
-            (k, p.detach().clone()) for k, p in model.module.named_parameters() if p.requires_grad
+            (k, p.detach().clone()) for k, p in reference_model.module.named_parameters()
         ]
         model.module.importances = cls._compute_importances(reference_model, replay_adata)
         if control_adata is not None:

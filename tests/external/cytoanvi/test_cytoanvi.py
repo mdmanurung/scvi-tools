@@ -301,3 +301,31 @@ def test_cytoanvi_continual_update(adata):
     assert q2.module.ctrl_importances is None
     q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 0.5})
     assert q2.is_trained
+
+
+def test_cytoanvi_continual_new_batch(adata):
+    # case-control scenario: the query comes from *new* batches, so surgery extends the batch
+    # categories and resizes batch-dependent params. The EWC penalty must skip resized params
+    # (size guard) rather than crash on a shape mismatch.
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    query = _make_adata()
+    # relabel to brand-new batch categories not seen in the reference
+    remap = {"batch_0": "batch_2", "batch_1": "batch_3"}
+    query.obs[BATCH_KEY] = query.obs[BATCH_KEY].map(remap).astype(str)
+    query.obs[LABELS_KEY] = UNLABELED
+
+    q = CytoANVI.load_query_data_with_replay(query, ref, replay_adata=adata[:128].copy())
+    assert q.summary_stats.n_batch > ref.summary_stats.n_batch
+    q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    assert q.is_trained
+    assert q.predict().shape[0] == query.n_obs

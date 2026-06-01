@@ -329,3 +329,31 @@ def test_cytoanvi_continual_new_batch(adata):
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     assert q.is_trained
     assert q.predict().shape[0] == query.n_obs
+
+
+def test_cytoanvi_continual_query_batch_controls(adata):
+    # controls drawn from the query cohort carry *query* batches; their importances must be
+    # computed on the batch-extended query model (not the reference, which lacks those batches).
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    query = _make_adata()
+    query.obs[BATCH_KEY] = query.obs[BATCH_KEY].map({"batch_0": "batch_2", "batch_1": "batch_3"})
+    query.obs[BATCH_KEY] = query.obs[BATCH_KEY].astype(str)
+    query.obs[LABELS_KEY] = UNLABELED
+    control = query[:128].copy()  # healthy controls from the query cohort (query batches)
+
+    q = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=adata[:128].copy(), control_adata=control
+    )
+    assert q.module.ctrl_importances is not None
+    q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    assert q.is_trained

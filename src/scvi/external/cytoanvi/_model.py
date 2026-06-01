@@ -408,6 +408,18 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             Whether to freeze the classifier during surgery (passed to ``load_query_data``).
         load_query_kwargs
             Additional keyword args for :meth:`~scvi.model.base.ArchesMixin.load_query_data`.
+
+        Notes
+        -----
+        - The EWC penalty weight is set at train time via
+          ``train(plan_kwargs={"ewc_importance": w})`` (default ``w = 1.0``). The right value is
+          dataset-dependent (it scales against the Fisher importance magnitudes) and should be
+          tuned; ``0`` disables regularization (plain scArches fine-tuning).
+        - The EWC state (``importances``, ``old_params``) is stored as module attributes and is
+          **not** part of the ``state_dict``: a continual model that is saved and reloaded loses it
+          and trains without the penalty. Perform the continual update within one session.
+        - Control cells may carry query batches; their importances are computed on the
+          batch-extended query model. Replay cells are reference cells (reference batches).
         """
         if combine_type not in ("additive", "product"):
             raise ValueError("combine_type must be 'additive' or 'product'.")
@@ -423,11 +435,13 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         model.module.old_params = [
             (k, p.detach().clone()) for k, p in reference_model.module.named_parameters()
         ]
+        # Replay buffer = reference cells (reference batches) -> importances on the reference.
         model.module.importances = cls._compute_importances(reference_model, replay_adata)
+        # Controls are query-side healthy cells and may carry query batches, so their importances
+        # must be computed on the (batch-extended) query model, not the reference (which does not
+        # know the query batches). Matches cscanvi's use of the batch-extended model for controls.
         if control_adata is not None:
-            model.module.ctrl_importances = cls._compute_importances(
-                reference_model, control_adata
-            )
+            model.module.ctrl_importances = cls._compute_importances(model, control_adata)
         else:
             model.module.ctrl_importances = None
         model.module.combine_type = combine_type

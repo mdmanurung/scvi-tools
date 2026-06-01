@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import torch
+import torch.nn.functional as F
+from torch.distributions import Categorical, Normal
+from torch.distributions import kl_divergence as kl
+
+from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
+from scvi.external.cytovi._module import CytoVAE
+from scvi.module._classifier import Classifier
+from scvi.module._utils import broadcast_labels
+from scvi.module.base import LossOutput, SupervisedModuleClass
+from scvi.nn import Decoder, Encoder
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from typing import Literal
+
+    from torch.distributions import Distribution
+
+
+class CytoANVAE(SupervisedModuleClass, CytoVAE):
+    """Semi-supervised variational auto-encoder for cytometry (CytoANVI).
+
+    Combines the CytoVI protein-intensity model of :cite:p:`Ingelfinger25` with the
+    scANVI/M1+M2 semi-supervised objective of :cite:p:`Xu21`. The CytoVI encoder, decoder
+    and protein-specific likelihood (Normal/Beta) are reused unchanged for reconstruction; a
+    :class:`~scvi.module.Classifier` head is added on the shared latent ``z1`` together with the
+    M1+M2 latent hierarchy (``encoder_z2_z1`` / ``decoder_z1_z2``) and a label-marginalized ELBO.
+
+    CytoVI's label-conditioned mixture-of-Gaussians prior is **disabled** here
+    (``prior_mixture=False``): the M1+M2 hierarchy supplies the ``z1`` prior, so leaving the
+    mixture prior active would double-count label structure. See the package ADR for details.
+
+    Parameters
+    ----------
+    n_input
+        Number of input proteins.
+    n_batch
+        Number of batches. Default is 0.
+    n_labels
+        Number of (observed) cell-type labels, excluding the unlabeled category. Default is 0.
+    n_hidden
+        Number of nodes per hidden layer. Default is 128.
+    n_latent
+        Dimensionality of the latent space. Default is 10.
+    n_layers
+        Number of hidden layers used for encoder and decoder NNs. Default is 1.
+    y_prior
+        If ``None``, initialized to uniform probability over cell types.
+    labels_groups
+        Label group designations.
+    linear_classifier
+        If ``True``, uses a single linear layer for classification instead of an MLP.
+    classifier_parameters
+        Keyword arguments passed into :class:`~scvi.module.Classifier`.
+    use_batch_norm
+        Whether to use batch norm in layers. Default is "both".
+    use_layer_norm
+        Whether to use layer norm in layers. Default is "none".
+    **cytovae_kwargs
+        Keyword args for :class:`~scvi.external.cytovi.CytoVAE`. ``prior_mixture`` /
+        ``prior_mixture_k`` are accepted for signature compatibility but forced off.
+    """
+
+    def __init__(
+        self,
+        n_input: int,
+        n_batch: int = 0,
+        n_labels: int = 0,
+        n_hidden: int = 128,
+        n_latent: int = 10,
+        n_layers: int = 1,
+        y_prior: torch.Tensor | None = None,
+        labels_groups: Sequence[int] = None,
+        linear_classifier: bool = False,
+        classifier_parameters: dict | None = None,
+        use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
+        use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
+        # accepted for compatibility with CytoVAE/CYTOVI but always forced off (see ADR)
+        prior_mixture: bool | None = None,
+        prior_mixture_k: int | None = None,
+        **cytovae_kwargs,
+    ):
+        super().__init__(
+            n_input,
+            n_batch=n_batch,
+            n_labels=n_labels,
+            n_hidden=n_hidden,
+            n_latent=n_latent,
+            n_layers=n_layers,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+            prior_mixture=False,
+            **cytovae_kwargs,
+        )
+
+        self.n_labels = n_labels
+        classifier_parameters = classifier_parameters or {}
+        use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
+        use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
+        use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
+        use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
+
+        # Classifier takes the shared latent z1 as input (valid under missing-marker encoding,
+        # since the classifier never sees raw markers, only post-encoder z1).
+        cls_parameters = {
+            "n_layers": 0 if linear_classifier else n_layers,
+            "n_hidden": 0 if linear_classifier else n_hidden,
+            "dropout_rate": 0.1,
+            "logits": True,
+        }
+        cls_parameters.update(classifier_parameters)
+        self.classifier = Classifier(
+            n_latent,
+            n_labels=n_labels,
+            use_batch_norm=use_batch_norm_encoder,
+            use_layer_norm=use_layer_norm_encoder,
+            **cls_parameters,
+        )
+
+        self.encoder_z2_z1 = Encoder(
+            n_latent,
+            n_latent,
+            n_cat_list=[self.n_labels],
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=0.1,
+            use_batch_norm=use_batch_norm_encoder,
+            use_layer_norm=use_layer_norm_encoder,
+            return_dist=True,
+        )
+
+        self.decoder_z1_z2 = Decoder(
+            n_latent,
+            n_latent,
+            n_cat_list=[self.n_labels],
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            use_batch_norm=use_batch_norm_decoder,
+            use_layer_norm=use_layer_norm_decoder,
+        )
+
+        self.y_prior = torch.nn.Parameter(
+            y_prior if y_prior is not None else (1 / n_labels) * torch.ones(1, n_labels),
+            requires_grad=False,
+        )
+        self.labels_groups = torch.tensor(labels_groups) if labels_groups is not None else None
+
+    def loss(
+        self,
+        tensors: dict[str, torch.Tensor],
+        inference_outputs: dict[str, torch.Tensor | Distribution | None],
+        generative_outputs: dict[str, Distribution | None],
+        kl_weight: float = 1.0,
+        labelled_tensors: dict[str, torch.Tensor] | None = None,
+        classification_ratio: float | None = None,
+    ) -> LossOutput:
+        """Compute the semi-supervised loss.
+
+        Mirrors :meth:`~scvi.module.SCANVAE.loss` /
+        :meth:`~scvi.external.totalanvi.TOTALANVAE.loss` but uses CytoVI's protein likelihood
+        (``px``, Normal/Beta) for the reconstruction term and preserves the ``nan_layer`` mask
+        for missing-marker / multi-panel data.
+        """
+        px: Distribution = generative_outputs["px"]
+        qz1: Distribution = inference_outputs["qz"]
+        z1: torch.Tensor = inference_outputs["z"]
+        x: torch.Tensor = tensors[CYTOVI_REGISTRY_KEYS.X_KEY]
+
+        if CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK in tensors.keys():
+            nan_mask = tensors[CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK]
+        else:
+            nan_mask = None
+
+        # Reconstruction under CytoVI protein likelihood, masking unobserved markers.
+        reconst_loss_int = -px.log_prob(x)
+        if nan_mask is not None:
+            reconst_loss = (reconst_loss_int * nan_mask).sum(-1)
+        else:
+            reconst_loss = reconst_loss_int.sum(-1)
+
+        # Enumerate choices of label (M1 + M2 hierarchy on z1 -> z2).
+        ys, z1s = broadcast_labels(z1, n_broadcast=self.n_labels)
+        qz2, z2 = self.encoder_z2_z1(z1s, ys)
+        pz1_m, pz1_v = self.decoder_z1_z2(z2, ys)
+
+        mean = torch.zeros_like(qz2.loc)
+        scale = torch.ones_like(qz2.scale)
+        kl_divergence_z2 = kl(qz2, Normal(mean, scale)).sum(dim=-1)
+        loss_z1_unweight = -Normal(pz1_m, torch.sqrt(pz1_v)).log_prob(z1s).sum(dim=-1)
+        loss_z1_weight = qz1.log_prob(z1).sum(dim=-1)
+
+        probs = self.classifier(z1)
+        if self.classifier.logits:
+            probs = F.softmax(probs, dim=-1)
+
+        reconst_loss = (
+            reconst_loss
+            + loss_z1_weight
+            + (loss_z1_unweight.view(self.n_labels, -1).t() * probs).sum(dim=-1)
+        )
+
+        kl_divergence = (kl_divergence_z2.view(self.n_labels, -1).t() * probs).sum(dim=-1)
+        kl_divergence = kl_divergence + kl(
+            Categorical(probs=probs),
+            Categorical(probs=self.y_prior.repeat(probs.size(0), 1)),
+        )
+
+        loss = torch.mean(reconst_loss + kl_divergence * kl_weight)
+
+        if labelled_tensors is not None:
+            ce_loss, true_labels, logits = self.classification_loss(labelled_tensors)
+            loss = loss + ce_loss * classification_ratio
+            return LossOutput(
+                loss=loss,
+                reconstruction_loss=reconst_loss,
+                kl_local=kl_divergence,
+                classification_loss=ce_loss,
+                true_labels=true_labels,
+                logits=logits,
+            )
+        return LossOutput(
+            loss=loss,
+            reconstruction_loss=reconst_loss,
+            kl_local=kl_divergence,
+        )

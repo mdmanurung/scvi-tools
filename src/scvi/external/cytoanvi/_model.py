@@ -429,9 +429,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             raise ValueError("combine_type must be 'additive' or 'product'.")
         if control_adata is None:
             raise ValueError(
-                "control_adata is required: the paper's EWC term is F_reference o F_query_ctrl, so "
-                "query control cells must be provided. Controls should exist in both reference and "
-                "query."
+                "control_adata is required: the paper's EWC term is F_reference o F_query_ctrl, "
+                "so query control cells must be provided. Controls should exist in both reference "
+                "and query."
             )
 
         model = cls.load_query_data(
@@ -440,8 +440,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         # Snapshot reference parameter values to anchor to. Taken from the *reference* module (not
         # the surgical query module) so the saved tensors share the reference's shapes and stay
-        # aligned with the importances; params resized by surgery (e.g. new batch dims) are skipped
-        # in the penalty via a size guard. The penalty compares these against the live query params.
+        # aligned with the importances; params resized by surgery (e.g. new batch dims) are
+        # skipped in the penalty via a size guard, comparing against the live query params.
         model.module.old_params = [
             (k, p.detach().clone()) for k, p in reference_model.module.named_parameters()
         ]

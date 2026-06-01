@@ -13,9 +13,10 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
 - Add {class}`scvi.external.CytoANVI`, a semi-supervised, annotation-aware extension of
     {class}`scvi.external.CYTOVI` (cell-type classifier head + partially-observed-label objective,
     scANVI-style) with `from_cytovi_model` and scArches query mapping. Includes a continual
-    case-control update (`load_query_data_with_replay`, EWC anchoring to the reference / healthy
-    controls via Fisher importances) and `get_uncertainty` (test-time-augmentation Bregman
-    Information), adapted from `theislab/comparative_atlas`.
+    case-control update (`load_query_data_with_replay`: experience replay of reference cells plus a
+    modified EWC penalty with Hadamard-product reference/query-control Fisher importances) and
+    `get_uncertainty` (test-time-augmentation Bregman Information), following the comparative-atlas
+    (cscanvi) paper.
 
 #### Fixed
 

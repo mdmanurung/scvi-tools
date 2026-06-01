@@ -101,20 +101,44 @@ likelihood — and **forces `prior_mixture=False`** in the semi-supervised path.
 remains available in plain CYTOVI. This is also required for the Phase 2 `cscanvi` continual-update
 port, whose replay/Fisher/freezing machinery assumes the scANVI M2 structure.
 
-## Phase 2 — implemented (cscanvi-style continual update)
+## Phase 2 — implemented (continual case-control update, paper-faithful)
 
-Implemented in `_continual.py` + module/model extensions, ported from the cloned `cscanvi`
-source (read directly, not summarized). Key finding: despite the "replay" naming, cscanvi's
-`_replay_forward`/`loss_with_replay` do **not** mix replay data into the minibatch — they run the
-normal ELBO and add an **EWC penalty** ``ewc_importance * Σ_k w_k (θ_k − θ_k^ref)²``. The replay
-buffer and controls are used only to estimate the Fisher importances ``w_k`` (mean squared ELBO
-gradient) at surgery time; ``combine_type`` ∈ {additive, product} combines replay + control
-importances. CytoANVI adaptations to modern scvi 1.4.3: `LossOutput` (not `LossRecorder`), `qz`
-distribution (not `qz_m/qz_v`), reuse of `ArchesMixin.load_query_data` for surgery/freezing.
-Surface: `CytoANVI.load_query_data_with_replay`, `_compute_importances`, `get_uncertainty` (TTA
-Bregman-Information), `CytoANVAE._replay_forward`/`loss_with_replay`/`_ewc_penalty`,
-`CytoANVIContinualTrainingPlan`. EWC state is inert (penalty 0) until surgery sets it, so the base
-model is unchanged.
+Grounded in the **paper** (bioRxiv 10.64898/2026.03.03.708171, Methods pp.18-19), not the released
+code. **The released `cscanvi` code diverges from the paper** in one key respect: its
+`_replay_forward`/`loss_with_replay` only use the replay buffer to estimate Fisher importances and
+never rehearse it in the ELBO. The **paper's loss** is
+
+``L(θ_query) = ELBO(x_query, x_replay) + (λ/2) (F_X_Reference ∘ F_X_QueryCtrl)(θ_query − θ_ref)²``
+
+so CytoANVI follows the paper (see ADR 0002):
+- **Experience Replay**: the training step rehearses a replay-buffer minibatch (≈20% reference
+  cells) by adding its plain ELBO to the query loss.
+- **EWC weight** = Hadamard **product** of the reference-replay Fisher (`F_X_Reference`) and the
+  query-control Fisher (`F_X_QueryCtrl`); `combine_type="product"` is the default.
+- **Query controls required** (the term is `F_reference ∘ F_query_ctrl`); controls must exist in
+  both reference and query.
+- **TTA masks 50%** of features for the Bregman-Information uncertainty (`get_uncertainty`).
+
+CytoANVI adaptations to modern scvi 1.4.3: `LossOutput` (not `LossRecorder`), `qz` distribution
+(not `qz_m/qz_v`), reuse of `ArchesMixin.load_query_data` for surgery/freezing. Surface:
+`CytoANVI.load_query_data_with_replay`, `_compute_importances`, `get_uncertainty`,
+`CytoANVAE._replay_forward`/`loss_with_replay`/`_ewc_penalty`, `CytoANVIContinualTrainingPlan`
+(adds the replay-buffer ELBO + threads `ewc_importance` = λ). Continual state is inert until
+surgery sets it, so the base model is unchanged.
+
+## Divergence notes (CytoANVI vs cscanvi / scArches)
+
+- **Freezing during surgery.** CytoANVI uses scvi's stock `ArchesMixin._set_params_online_update`
+  (`model/base/_archesmixin.py:396`), which is the same code cscanvi vendored — including
+  `mod_inference_mode = {"encoder_z2_z1","decoder_z1_z2"}` and `freeze_classifier`. cscanvi's only
+  extras (`l_encoder`, `background_pro_*`) are RNA/totalVI params absent in CytoVI, so they are
+  inert. Empirically, after CytoANVI surgery (default `freeze_classifier=True`) the trainable set
+  is the encoder/decoder/classifier *first* layers, with `encoder_z2_z1` fully frozen. Note:
+  `requires_grad=True` on a first layer does **not** mean it updates — scArches gradient hooks
+  (`set_online_update_hooks`) mask gradients to the *new input columns* only (new-batch one-hot).
+  The classifier's input is `z` (no new columns) so `freeze_classifier=True` is *effectively*
+  frozen via the hook despite `requires_grad=True`; the encoder first layer does gain new-batch
+  columns and adapts. This matches cscanvi and the canonical scArches behavior.
 
 ## Phase 2 reference — `theislab/comparative_atlas` (`cscanvi`)
 

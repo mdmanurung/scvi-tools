@@ -153,7 +153,9 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         self.importances: list[tuple[str, torch.Tensor]] | None = None
         self.ctrl_importances: list[tuple[str, torch.Tensor]] | None = None
         self.old_params: list[tuple[str, torch.Tensor]] | None = None
-        self.combine_type: str = "additive"
+        self.combine_type: str = "product"
+        # Replay buffer minibatches (reference cells) for Experience Replay, set at surgery.
+        self._replay_batches: list[dict[str, torch.Tensor]] | None = None
 
     def loss(
         self,

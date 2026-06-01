@@ -18,8 +18,11 @@ import torch
 from scvi.train import SemiSupervisedTrainingPlan
 
 
-def mask_augment(x: torch.Tensor, mask_percentage: float = 0.15) -> torch.Tensor:
-    """Randomly zero a fixed fraction of features per cell (shared mask across the batch)."""
+def mask_augment(x: torch.Tensor, mask_percentage: float = 0.5) -> torch.Tensor:
+    """Randomly zero a fixed fraction of features per cell (shared mask across the batch).
+
+    Default 0.5 matches the paper's TTA (mask 50% of genes per perturbation).
+    """
     _, feature_dim = x.shape
     num_masked = int(mask_percentage * feature_dim)
     mask = torch.cat(
@@ -64,11 +67,16 @@ def zerolike_params_dict(module: torch.nn.Module) -> list[tuple[str, torch.Tenso
 
 
 class CytoANVIContinualTrainingPlan(SemiSupervisedTrainingPlan):
-    """Semi-supervised training plan with an EWC penalty for continual query updates.
+    """Semi-supervised training plan for continual case-control updates (paper-faithful).
 
-    Identical to :class:`~scvi.train.SemiSupervisedTrainingPlan` except the forward pass is routed
-    through ``module._replay_forward`` (which adds the EWC penalty) and ``ewc_importance`` is
-    threaded into the loss kwargs.
+    Implements the paper's loss ``L(theta_query) = ELBO(x_query, x_replay) + (lambda/2) F
+    (theta_query - theta_ref)^2``:
+
+    - the query minibatch flows through ``module._replay_forward`` (ELBO + the EWC penalty,
+      weighted by ``ewc_importance`` = lambda), and
+    - a replay-buffer minibatch (reference cells stored on the module by
+      ``CytoANVI.load_query_data_with_replay``) is rehearsed each step by adding its plain ELBO
+      (Experience Replay). The replay batches cycle by ``batch_idx``.
     """
 
     def __init__(self, module, n_classes: int, *, ewc_importance: float = 1.0, **kwargs):
@@ -76,5 +84,39 @@ class CytoANVIContinualTrainingPlan(SemiSupervisedTrainingPlan):
         self.loss_kwargs.update({"ewc_importance": ewc_importance})
 
     def forward(self, *args, **kwargs):
-        """Route the forward pass through the module's replay/EWC forward."""
+        """Route the forward pass through the module's replay/EWC forward (ELBO + EWC penalty)."""
         return self.module._replay_forward(*args, **kwargs)
+
+    def _next_replay_batch(self, batch_idx: int):
+        """Cycle through the stored replay-buffer minibatches, moved to the module device."""
+        batches = getattr(self.module, "_replay_batches", None)
+        if not batches:
+            return None
+        rb = batches[batch_idx % len(batches)]
+        return {k: v.to(self.module.device) for k, v in rb.items()}
+
+    def training_step(self, batch, batch_idx):
+        """Query ELBO + EWC penalty, plus the rehearsed replay-buffer ELBO."""
+        if len(batch) == 2:
+            full_dataset, labelled_dataset = batch[0], batch[1]
+        else:
+            full_dataset, labelled_dataset = batch, None
+
+        if "kl_weight" in self.loss_kwargs:
+            self.loss_kwargs.update({"kl_weight": self.kl_weight})
+        input_kwargs = {"labelled_tensors": labelled_dataset}
+        input_kwargs.update(self.loss_kwargs)
+
+        # query minibatch: ELBO + EWC penalty
+        _, _, loss_output = self.module._replay_forward(full_dataset, loss_kwargs=input_kwargs)
+        loss = loss_output.loss
+
+        # experience replay: add the plain ELBO of a replay-buffer minibatch (no EWC)
+        replay_batch = self._next_replay_batch(batch_idx)
+        if replay_batch is not None:
+            _, _, replay_out = self.module(replay_batch, loss_kwargs={"kl_weight": self.kl_weight})
+            loss = loss + replay_out.loss
+
+        self.log("train_loss", loss, on_epoch=True, batch_size=loss_output.n_obs_minibatch)
+        self.compute_and_log_metrics(loss_output, self.train_metrics, "train")
+        return loss

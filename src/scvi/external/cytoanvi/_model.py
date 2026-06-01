@@ -377,18 +377,18 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         reference_model: CytoANVI,
         replay_adata: AnnData,
         control_adata: AnnData | None = None,
-        combine_type: str = "additive",
+        combine_type: str = "product",
         freeze_classifier: bool = True,
         **load_query_kwargs,
     ):
-        """Continual case-control update: scArches surgery plus EWC anchoring to the reference.
+        """Continual case-control update: scArches surgery + Experience Replay + modified EWC.
 
-        Maps ``adata`` onto ``reference_model`` (scArches, via
-        :meth:`~scvi.model.base.ArchesMixin.load_query_data`), then anchors the trainable
-        parameters to the reference with an EWC penalty whose Fisher importances are estimated
-        from ``replay_adata`` (a buffer of reference cells, e.g. high-uncertainty cells selected
-        with :meth:`get_uncertainty`) and, if given, ``control_adata`` (healthy controls present
-        in both reference and query). Set the penalty weight at train time via
+        Implements the comparative-atlas (cscanvi) continual-learning update: maps ``adata`` onto
+        ``reference_model`` (scArches), then
+        trains with ``L = ELBO(query, replay) + (lambda/2)(F_reference o F_query_ctrl)
+        (theta - theta_ref)^2`` — a replay buffer of reference cells is rehearsed in the ELBO, and
+        the EWC penalty's Fisher weight is the Hadamard product of the reference-replay Fisher and
+        the query-control Fisher. ``lambda`` is set at train time via
         ``train(plan_kwargs={"ewc_importance": ...})``.
 
         Parameters
@@ -398,12 +398,15 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         reference_model
             A trained :class:`CytoANVI` reference.
         replay_adata
-            Reference cells used to estimate replay importances.
+            Replay buffer = a subset (~20%) of reference cells, rehearsed in the ELBO and used for
+            the reference Fisher importances. Select randomly, or by :meth:`get_uncertainty` (BI).
         control_adata
-            Optional healthy-control cells used to estimate control importances; combined with the
-            replay importances per ``combine_type``.
+            Healthy control cells from the query (~5-10%), used for the query-control Fisher.
+            **Required** — controls must exist in both reference and query (the EWC term is
+            ``F_reference o F_query_ctrl``).
         combine_type
-            ``"additive"`` (imp + ctrl_imp) or ``"product"`` (imp * ctrl_imp).
+            How to combine the two Fishers: ``"product"`` (paper default, Hadamard) or
+            ``"additive"``.
         freeze_classifier
             Whether to freeze the classifier during surgery (passed to ``load_query_data``).
         load_query_kwargs
@@ -411,18 +414,22 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         Notes
         -----
-        - The EWC penalty weight is set at train time via
-          ``train(plan_kwargs={"ewc_importance": w})`` (default ``w = 1.0``). The right value is
-          dataset-dependent (it scales against the Fisher importance magnitudes) and should be
-          tuned; ``0`` disables regularization (plain scArches fine-tuning).
-        - The EWC state (``importances``, ``old_params``) is stored as module attributes and is
-          **not** part of the ``state_dict``: a continual model that is saved and reloaded loses it
-          and trains without the penalty. Perform the continual update within one session.
-        - Control cells may carry query batches; their importances are computed on the
-          batch-extended query model. Replay cells are reference cells (reference batches).
+        - ``ewc_importance`` (= lambda) is set at train time and is dataset-dependent (it scales
+          against the Fisher magnitudes); tune it. ``0`` disables the EWC penalty (replay only).
+        - The continual state (``importances``, ``old_params``, replay batches) is stored as module
+          attributes and is **not** in the ``state_dict``: a continual model saved and reloaded
+          loses it. Perform the continual update within one session.
+        - Control importances are computed on the batch-extended query model (controls may carry
+          query batches); reference-replay importances on the reference model.
         """
         if combine_type not in ("additive", "product"):
             raise ValueError("combine_type must be 'additive' or 'product'.")
+        if control_adata is None:
+            raise ValueError(
+                "control_adata is required: the paper's EWC term is F_reference o F_query_ctrl, so "
+                "query control cells must be provided. Controls should exist in both reference and "
+                "query."
+            )
 
         model = cls.load_query_data(
             adata, reference_model, freeze_classifier=freeze_classifier, **load_query_kwargs
@@ -435,18 +442,23 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         model.module.old_params = [
             (k, p.detach().clone()) for k, p in reference_model.module.named_parameters()
         ]
-        # Replay buffer = reference cells (reference batches) -> importances on the reference.
+        # EWC weight F = F_reference o F_query_ctrl (Hadamard).
+        # F_reference: Fisher over the replay buffer (reference cells) -> on the reference model.
         model.module.importances = cls._compute_importances(reference_model, replay_adata)
-        # Controls are query-side healthy cells and may carry query batches, so their importances
-        # must be computed on the (batch-extended) query model, not the reference (which does not
-        # know the query batches). Matches cscanvi's use of the batch-extended model for controls.
-        if control_adata is not None:
-            model.module.ctrl_importances = cls._compute_importances(model, control_adata)
-        else:
-            model.module.ctrl_importances = None
+        # F_query_ctrl: Fisher over query control cells. Controls may carry query batches, so this
+        # is computed on the (batch-extended) query model, not the reference.
+        model.module.ctrl_importances = cls._compute_importances(model, control_adata)
         model.module.combine_type = combine_type
 
-        # route training through the EWC-aware plan
+        # Experience Replay: store replay-buffer minibatches (reference cells) so the training plan
+        # can rehearse their ELBO alongside the query loss (paper's L(theta)_{x_query, x_replay}).
+        replay_val = model._validate_anndata(replay_adata)
+        replay_dl = model._make_data_loader(adata=replay_val, batch_size=256, shuffle=True)
+        model.module._replay_batches = [
+            {k: v.detach().cpu() for k, v in tensors.items()} for tensors in replay_dl
+        ]
+
+        # route training through the EWC + experience-replay plan
         model._training_plan_cls = CytoANVIContinualTrainingPlan
         return model
 

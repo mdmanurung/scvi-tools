@@ -285,20 +285,31 @@ def test_cytoanvi_continual_update(adata):
     query.obs[LABELS_KEY] = UNLABELED
 
     q = CytoANVI.load_query_data_with_replay(
-        query, ref, replay_adata=replay, control_adata=control, combine_type="additive"
+        query, ref, replay_adata=replay, control_adata=control
     )
     assert q.module.old_params is not None
     assert q.module.importances is not None
-    assert q.module.ctrl_importances is not None
+    assert q.module.ctrl_importances is not None  # required (F_reference o F_query_ctrl)
+    assert q.module.combine_type == "product"  # paper default
+    assert q.module._replay_batches  # experience-replay buffer stored
 
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     assert q.is_trained
     preds = q.predict()
     assert preds.shape[0] == query.n_obs
 
-    # without controls + product combine still works (ctrl_importances stays None)
-    q2 = CytoANVI.load_query_data_with_replay(_make_adata(), ref, replay_adata=replay)
-    assert q2.module.ctrl_importances is None
+    # control_adata is required (paper EWC term is F_reference o F_query_ctrl)
+    with pytest.raises(ValueError):
+        CytoANVI.load_query_data_with_replay(_make_adata(), ref, replay_adata=replay)
+
+    # additive combine is also available
+    q2 = CytoANVI.load_query_data_with_replay(
+        _make_adata(),
+        ref,
+        replay_adata=replay,
+        control_adata=_make_adata(),
+        combine_type="additive",
+    )
     q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 0.5})
     assert q2.is_trained
 
@@ -324,7 +335,9 @@ def test_cytoanvi_continual_new_batch(adata):
     query.obs[BATCH_KEY] = query.obs[BATCH_KEY].map(remap).astype(str)
     query.obs[LABELS_KEY] = UNLABELED
 
-    q = CytoANVI.load_query_data_with_replay(query, ref, replay_adata=adata[:128].copy())
+    q = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=adata[:128].copy(), control_adata=_make_adata()
+    )
     assert q.summary_stats.n_batch > ref.summary_stats.n_batch
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     assert q.is_trained

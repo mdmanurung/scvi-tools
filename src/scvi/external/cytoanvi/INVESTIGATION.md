@@ -1,0 +1,126 @@
+# CytoANVI — Investigation
+
+Investigation-first notes grounding the CytoANVI design in source actually read in this repo.
+Every claim cites a file:line. Anything not confirmable from source is marked **unconfirmed**.
+
+## Environment / version pin
+
+- **Source under development:** this repo checkout, `scvi-tools` **1.4.3**
+  (`pyproject.toml:7`, `requires-python >= 3.12` at `pyproject.toml:10`), git `6fe4bd88`.
+- **Test/runtime env used:** conda env `scvi-test` (Python 3.13, `scvi-tools` 1.4.2 dependency
+  set), invoked as `PYTHONPATH=src LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python` so the **repo 1.4.3
+  source** is imported while dependencies (torch, lightning, anndata, …) come from the env. No
+  editable install was performed, to avoid mutating any of the user's environments.
+- `scvi.__version__` reports the *installed* dist metadata (1.4.2 in that env), **not** 1.4.3,
+  because the source is run via `PYTHONPATH` rather than installed. When packaged/installed
+  normally it will report 1.4.3. This is the only version caveat; all API decisions below match
+  the 1.4.3 source files in `src/scvi/`.
+
+## The two architectures, side by side
+
+### CYTOVI (`scvi.external.cytovi`)
+- Model `CYTOVI(RNASeqMixin, VAEMixin, ArchesMixin, UnsupervisedTrainingMixin, BaseModelClass)`
+  (`cytovi/_model.py:66-72`); `_module_cls = CytoVAE`, `_training_plan_cls = AdversarialTrainingPlan`
+  (`:137-138`).
+- Module `CytoVAE(BaseModuleClass)` (`cytovi/_module.py:19`): `Encoder` → `z`
+  (`:139-153`); `DecoderCytoVI` → **protein likelihood Normal** (loc, softplus scale) **or Beta**
+  (`:284-294`, `:446-571`). **Intensity-valued, not count-based** — confirmed: no NB/ZINB anywhere.
+- **Label-conditioned mixture-of-Gaussians prior** (`:172-179`, `:296-318`): when
+  `n_labels > 1`, mixture components = labels and the prior logits are boosted by
+  `prior_label_weight * one_hot(y)`; cells with `y >= n_labels` (out-of-range/unlabeled) get the
+  base prior only (`:301-307`).
+- Reconstruction masks unobserved markers via `nan_layer` (`:335-357`); `encoder_marker_mask`
+  selects backbone markers for the encoder (`:131-153`, applied in `_get_inference_input` at
+  `:195-198`).
+- `setup_anndata` registers labels with a **plain `CategoricalObsField`** — no unlabeled handling
+  (`cytovi/_model.py:321`). Registry keys (`cytovi/_constants.py`) use the same string values as
+  the global `REGISTRY_KEYS` (`X`, `batch`, `labels`, `extra_categorical_covs`,
+  `extra_continuous_covs`) plus extras (`sample_id`, `nan_layer`).
+- Existing **non-parametric label transfer**: `impute_categories_from_reference`
+  (`cytovi/_model.py:1046`) does k-NN voting in latent space (`cytovi/_utils.py`), **not** a
+  trained classifier. Also `impute_rna_from_reference` (`:1137`), `get_aggregated_posterior`
+  (`:846`), `differential_abundance` (`:957`), `differential_expression` (`:699`).
+- scArches surgery: inherited from `ArchesMixin`, no overrides (only `register_manager` appears).
+
+### SCANVI / SCANVAE (`scvi.model`)
+- `SCANVI(RNASeqMixin, SemisupervisedTrainingMixin, VAEMixin, ArchesMixin, BaseMinifiedModeModelClass)`,
+  `_module_cls = SCANVAE`, `_training_plan_cls = SemiSupervisedTrainingPlan` (`model/_scanvi.py:51-113`).
+- `SCANVAE(SupervisedModuleClass, VAE)` (`module/_scanvae.py:26`): **M1+M2** — `classifier` on z1,
+  `encoder_z2_z1`/`decoder_z1_z2` (`:142-170`), `broadcast_labels` label marginalization, ELBO
+  with z2 ~ N(0,I) and `classification_loss` on labeled cells (`:178-278`).
+- `from_scvi_model(unlabeled_category, labels_key, ...)` transfers SCVI weights via
+  `load_state_dict(strict=False)` (`model/_scanvi.py:211-295`); `setup_anndata` uses
+  `LabelsWithUnlabeledObsField` (`:331`), `n_labels` adjusted for the unlabeled category
+  (`:135-142`).
+
+### TOTALANVI — the precedent we mirror (`scvi.external.totalanvi`)
+- `TOTALANVI(SemisupervisedTrainingMixin, TOTALVI)`, `_module_cls = TOTALANVAE`
+  (`totalanvi/_model.py:30,93`); `__init__` calls `super().__init__`, then
+  `_set_indices_and_labels()`, then **rebuilds** `self.module` with `n_labels =
+  summary_stats.n_labels - 1` (`:108-218`). `from_totalvi_model` mirrors `from_scvi_model`
+  (`:220-297`); `setup_anndata` uses `LabelsWithUnlabeledObsField` (`:348`).
+- `TOTALANVAE(SupervisedModuleClass, TOTALVAE)` — a literal SCANVAE M1+M2 port reusing totalVI's
+  likelihood for reconstruction (`totalanvi/_module.py:22`, `broadcast_labels`/`encoder_z2_z1`/
+  `decoder_z1_z2` at `:318-320`, `classification_loss` at `:436`).
+
+## The semi-supervised contract (what CytoANVI must satisfy)
+
+- **Module** must subclass `SupervisedModuleClass` (`module/base/_base_module.py:776`), which
+  provides `classify` (`:784-830`), `classify_helper` (`:780`), and `classification_loss`
+  (`:832-859`). Its `loss(..., kl_weight, labelled_tensors=None, classification_ratio=None)` must
+  return a `LossOutput` populating `classification_loss/true_labels/logits` when
+  `labelled_tensors` is given.
+- The base `classify` (`:815-830`) uses `self.z_encoder`, `self.log_variational`,
+  `self.encode_covariates` — all present on `CytoVAE` — and applies `log1p`, matching CytoVAE's
+  `torch.log(1 + x)` (`cytovi/_module.py:235`). **Key fact:** both `predict()`
+  (`model/base/_training_mixin.py:293`) and `classification_loss` (`:836`) build `data_inputs`
+  via `module._get_inference_input(...)`, and CytoVAE's `_get_inference_input` **already applies
+  `encoder_marker_mask`** (`cytovi/_module.py:195-198`). So `x` arrives pre-masked and the
+  inherited `classify` works unchanged — no override needed (verified against missing-marker path).
+- **Model** uses `SemisupervisedTrainingMixin` which sets `_training_plan_cls =
+  SemiSupervisedTrainingPlan`, `_data_splitter_cls = SemiSupervisedDataSplitter`
+  (`model/base/_training_mixin.py:178-180`). `_set_indices_and_labels()` (`:182-205`) populates
+  `_labeled_indices/_unlabeled_indices/_label_mapping/_code_to_label/unlabeled_category_`;
+  `train()` builds `self._training_plan_cls(self.module, self.n_labels, **plan_kwargs)` (requires
+  `self.n_labels`); `predict()` returns labels via `module.classify` (`:207-356`).
+- `LabelsWithUnlabeledObsField` remaps the unlabeled category to the **last** integer code
+  (`data/fields/_scanvi.py:41-67`), so observed-label count = registry `n_labels − 1`.
+- Because CYTOVI's registry-key strings equal the global `REGISTRY_KEYS` values, the
+  global-keyed mixin / training-plan / dataloader interoperate with CYTOVI's registry unchanged.
+
+## The genuine conflict and its resolution
+
+CYTOVI injects label structure through a **label-conditioned GMM prior on z1**; SCANVAE/TOTALANVAE
+inject it through the **M1+M2 hierarchy** assuming a plain N(0,I) prior, recomputing the z1 prior
+via `decoder_z1_z2` inside the loss. The two overlap: an M2 loss does not read
+`generative_outputs["pz"]`, so keeping CYTOVI's GMM prior active would either be dead weight or
+double-count label shaping.
+
+**Resolution (see ADR 0001):** CytoANVAE mirrors TOTALANVAE — M1+M2 port on CYTOVI's protein
+likelihood — and **forces `prior_mixture=False`** in the semi-supervised path. CYTOVI's GMM prior
+remains available in plain CYTOVI. This is also required for the Phase 2 `cscanvi` continual-update
+port, whose replay/Fisher/freezing machinery assumes the scANVI M2 structure.
+
+## Phase 2 target — `theislab/comparative_atlas` (`cscanvi`)
+
+A continual-learning extension of scANVI for case–control atlas building (read from the public
+GitHub raw source; treat signatures as **unconfirmed** until re-read at implementation time):
+- `load_query_data_with_replay(adata, reference_model, control_uns_key=None, replay_uns_key=None,
+  freeze_* flags...)` — scArches surgery + a Bregman-Information-selected replay buffer of
+  reference cells + optional healthy-control anchoring.
+- `_compute_importances(model, dataloader)` — Fisher-information parameter importances (EWC-style).
+- `CLSemiSupervisedTrainingPlan` calling `module._replay_forward(...)` — regularized fine-tuning
+  that mixes replay-buffer cells back into minibatches.
+- `get_uncertainty(...)` — test-time-augmentation predictive uncertainty for the query.
+The module layout mirrors scvi (`_scanvae.py`, `_scanvi.py`, `_trainingplans.py`, `_utils.py`,
+`_vae.py`), i.e. a fork of scANVI internals plus replay/Fisher utilities.
+
+## What CytoANVI adds (implemented in Phase 1)
+
+`scvi.external.cytoanvi`:
+- `CytoANVAE(SupervisedModuleClass, CytoVAE)` — classifier on z1 + M1+M2 + label-marginalized ELBO
+  with CytoVI Normal/Beta reconstruction and `nan_layer` masking; `prior_mixture` forced off.
+- `CytoANVI(SemisupervisedTrainingMixin, CYTOVI)` — `setup_anndata(labels_key, unlabeled_category)`
+  via `LabelsWithUnlabeledObsField`; `from_cytovi_model(...)`; inherits `train`/`predict`/
+  `get_latent_representation` from mixins and `differential_expression`/`impute_*`/
+  `differential_abundance`/scArches surgery from CYTOVI.

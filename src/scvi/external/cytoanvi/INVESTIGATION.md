@@ -140,6 +140,23 @@ surgery sets it, so the base model is unchanged.
   frozen via the hook despite `requires_grad=True`; the encoder first layer does gain new-batch
   columns and adapts. This matches cscanvi and the canonical scArches behavior.
 
+## Divergence verdicts (grilled vs the paper)
+
+- **EWC penalty alignment** — CytoANVI aligns the reference `old_params`, replay Fisher, and
+  query-control Fisher **by parameter name with a size guard** (skipping params resized by surgery),
+  rather than the released code's positional `zip`. Strictly more robust; required for the
+  new-batch case (resized batch params). Kept.
+- **Fisher coverage** — importances are estimated over all trainable params (encoder, decoder,
+  classifier, z2), a superset of the paper's "encoder and decoder weights"; frozen/size-mismatched
+  params contribute ~0 to the penalty. Kept.
+- **`ewc_importance` (λ)** — paper used `replay=0.2, EWC=100` (scANVI/RNA). Not adopted as the
+  default: CytoVI's intensity likelihood has different Fisher magnitudes, so λ must be retuned;
+  documented rather than hard-coded.
+- **`get_uncertainty` `tta_rep`** — default 50 (paper example used ~200); a balance of BI stability
+  vs cost, documented. Unlike the released code (which ignored the argument), CytoANVI respects it.
+- **CytoVI intensity base, `y_prior="empirical"`, `latent_distribution="normal"` guard** — base is
+  intrinsic to CytoANVI; the latter two are CytoANVI enhancements absent from the paper. Kept.
+
 ## Phase 2 reference — `theislab/comparative_atlas` (`cscanvi`)
 
 A continual-learning extension of scANVI for case–control atlas building (read from the public

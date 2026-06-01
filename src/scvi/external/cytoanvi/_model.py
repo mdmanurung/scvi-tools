@@ -416,6 +416,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         -----
         - ``ewc_importance`` (= lambda) is set at train time and is dataset-dependent (it scales
           against the Fisher magnitudes); tune it. ``0`` disables the EWC penalty (replay only).
+          The paper used ``replay = 0.2`` (buffer fraction) and ``EWC = 100`` for scANVI/RNA;
+          CytoVI's intensity likelihood has different Fisher magnitudes, so ``lambda`` must be
+          retuned here rather than copied.
         - The continual state (``importances``, ``old_params``, replay batches) is stored as module
           attributes and is **not** in the ``state_dict``: a continual model saved and reloaded
           loses it. Perform the continual update within one session.
@@ -468,13 +471,17 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         adata: AnnData | None = None,
         indices=None,
         batch_size: int | None = None,
-        tta_rep: int = 10,
+        tta_rep: int = 50,
     ) -> np.ndarray:
         """Per-cell Bregman-Information uncertainty via test-time augmentation.
 
         High scores flag cells whose latent embedding is unstable under feature masking — a proxy
         for novelty / out-of-distribution query cells (e.g. disease-specific states absent from the
         reference). Useful before trusting :meth:`predict` on a mapped query.
+
+        ``tta_rep`` is the number of TTA augmentations used to estimate the Bregman Information;
+        more reps give a more stable estimate at linear cost. The default (50) balances stability
+        and cost; the paper used ~200.
         """
         self._check_if_trained(warn=False)
         adata = self._validate_anndata(adata)

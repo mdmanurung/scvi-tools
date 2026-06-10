@@ -551,3 +551,89 @@ def test_cytoanvi_continual_save_load(adata, save_path):
     pen_after = float(q2.module.continual.penalty(q2.module))
     np.testing.assert_allclose(pen_after, pen_before, rtol=1e-5)
     assert q2.predict().shape[0] == query.n_obs
+
+
+def test_cytoanvi_beta_likelihood(adata):
+    # untested path: Beta protein likelihood. Beta needs expression strictly inside (0, 1), so
+    # clip the min-max endpoints (exact 0/1 give -inf log-prob).
+    adata.layers[SCALED_LAYER_KEY] = np.clip(adata.layers[SCALED_LAYER_KEY], 1e-3, 1 - 1e-3)
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10, protein_likelihood="beta")
+    model.train(max_epochs=N_EPOCHS)
+    assert model.is_trained
+    assert np.all(np.isfinite(model.get_latent_representation()))
+    assert model.predict().shape[0] == adata.n_obs
+
+
+def test_cytoanvi_continual_on_multipanel():
+    # untested path: continual case-control update on a multi-panel (nan_layer) reference, so the
+    # EWC penalty and backbone masking coexist.
+    a1 = _make_adata(n_genes=30, n_batches=1)
+    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1.obs_names = "a1_" + a1.obs_names
+    a2.obs_names = "a2_" + a2.obs_names
+    merged = cytovi_pp.merge_batches([a1, a2])
+    assert NAN_LAYER_KEY in merged.layers
+    merged.obs[LABELS_KEY] = merged.obs[LABELS_KEY].astype(str)
+
+    CytoANVI.setup_anndata(
+        merged,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        nan_layer=NAN_LAYER_KEY,
+    )
+    ref = CytoANVI(merged, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    half = merged.n_obs // 2
+    query = merged[:half].copy()
+    query.obs[LABELS_KEY] = UNLABELED
+    control = query[:64].copy()
+    replay = merged[half:][:128].copy()
+
+    q = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=replay, control_adata=control
+    )
+    assert q.module.continual is not None
+    q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    assert q.is_trained
+    assert q.predict().shape[0] == query.n_obs
+
+
+def test_cytoanvi_uncertainty_flags_ood(adata):
+    # untested path: get_uncertainty novelty discrimination. BI is >= 0 (Jensen on log-sum-exp);
+    # far-out-of-distribution cells should score higher than in-distribution ones.
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=10)
+
+    query = adata.copy()
+    n = query.n_obs
+    ood = np.zeros(n, dtype=bool)
+    ood[: n // 2] = True
+    # push the OOD half far outside the training [0, 1] range
+    x = query.layers[SCALED_LAYER_KEY].copy()
+    x[ood] = x[ood] * 8.0 + 5.0
+    query.layers[SCALED_LAYER_KEY] = x
+
+    unc = model.get_uncertainty(query, tta_rep=30)
+    assert unc.shape == (n,)
+    assert np.all(np.isfinite(unc))
+    assert np.all(unc >= -1e-6)  # Bregman Information is non-negative
+    assert unc[ood].mean() > unc[~ood].mean()  # OOD cells are flagged as more uncertain

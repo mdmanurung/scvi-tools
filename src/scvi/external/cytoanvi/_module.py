@@ -14,6 +14,8 @@ from scvi.module._utils import broadcast_labels
 from scvi.module.base import LossOutput, SupervisedModuleClass
 from scvi.nn import Decoder, Encoder
 
+from ._continual import ContinualUpdate
+
 if TYPE_CHECKING:
     from typing import Literal
 
@@ -148,14 +150,10 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             requires_grad=False,
         )
 
-        # Continual-learning (EWC) state, populated by CytoANVI.load_query_data_with_replay.
-        # Inert (penalty == 0) until set, so the base model is unaffected.
-        self.importances: list[tuple[str, torch.Tensor]] | None = None
-        self.ctrl_importances: list[tuple[str, torch.Tensor]] | None = None
-        self.old_params: list[tuple[str, torch.Tensor]] | None = None
-        self.combine_type: str = "product"
-        # Replay buffer minibatches (reference cells) for Experience Replay, set at surgery.
-        self._replay_batches: list[dict[str, torch.Tensor]] | None = None
+        # The configured continual case-control update, set by
+        # CytoANVI.load_query_data_with_replay (or reattached in on_load). None = base path
+        # (the EWC penalty contributes nothing), so the base model is unaffected.
+        self.continual: ContinualUpdate | None = None
 
     def loss(
         self,
@@ -238,38 +236,20 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             kl_local=kl_divergence,
         )
 
-    def _ewc_penalty(self) -> torch.Tensor:
-        """Elastic-Weight-Consolidation penalty: sum_k w_k (theta_k - theta_k^ref)^2.
-
-        ``w_k`` is the replay Fisher importance, optionally combined with the control importance
-        (``combine_type``). Returns 0 if continual state is unset (base model path).
-        """
-        device = self.device
-        if self.old_params is None or self.importances is None:
-            return torch.zeros((), device=device)
-        cur = dict(self.named_parameters())
-        imps = dict(self.importances)
-        ctrl = dict(self.ctrl_importances) if self.ctrl_importances is not None else None
-        penalty = torch.zeros((), device=device)
-        for name, saved in self.old_params:
-            p = cur.get(name)
-            imp = imps.get(name)
-            if p is None or imp is None or p.size() != saved.size():
-                continue
-            saved = saved.to(device)
-            w = imp.to(device)
-            if ctrl is not None and name in ctrl:
-                c = ctrl[name].to(device)
-                w = w * c if self.combine_type == "product" else w + c
-            penalty = penalty + (w * (p - saved).pow(2)).sum()
-        return penalty
+    def on_load(self, model, **kwargs):
+        """Reattach the continual update (anchor + Fishers) persisted on the model, if any."""
+        super().on_load(model, **kwargs)
+        state = getattr(model, "continual_update_state_", None)
+        if state is not None:
+            self.continual = ContinualUpdate.from_persistable_state(state)
 
     def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):
         """Standard CytoANVI loss plus the EWC penalty scaled by ``ewc_importance``."""
         loss_kwargs = dict(loss_kwargs or {})
         ewc_importance = loss_kwargs.pop("ewc_importance", 0.0)
         losses = self.loss(tensors, inference_outputs, generative_outputs, **loss_kwargs)
-        penalty = self._ewc_penalty()
+        # None continual = base path: the EWC penalty contributes nothing.
+        penalty = self.continual.penalty(self) if self.continual is not None else 0.0
         # NOTE: ewc penalty is intentionally not placed in extra_metrics, as a non-empty
         # extra_metrics triggers the scib-autotune logging path (which expects z/batch/labels).
         return LossOutput(

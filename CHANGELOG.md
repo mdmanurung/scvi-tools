@@ -19,7 +19,9 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
     case-control update (`load_query_data_with_replay`: experience replay of reference cells plus a
     modified EWC penalty with Hadamard-product reference/query-control Fisher importances) and
     `get_uncertainty` (test-time-augmentation Bregman Information), following the comparative-atlas
-    (cscanvi) paper.
+    (cscanvi) paper. The continual update is owned by a single `ContinualUpdate` module whose EWC
+    anchor and Fisher importances persist across `save`/`load` (the session-scoped replay buffer is
+    not persisted).
 
 #### Fixed
 

@@ -42,6 +42,14 @@ Incremental case–control atlas building (`cscanvi`-style) that fine-tunes on a
 anchoring to healthy controls and a replay buffer, avoiding catastrophic forgetting. _Avoid_:
 retraining, plain fine-tuning.
 
+**ContinualUpdate (module)**:
+The single module that owns a configured continual update: the reference **anchor** (`old_params`),
+the reference Fisher and the query-control Fisher, the combine rule (`F_reference ∘ F_query_ctrl`),
+and the **replay buffer**. Constructed at surgery (`load_query_data_with_replay`); held by
+`CytoANVAE` as one object (present = active, absent = inactive). Exposes the drift penalty (unscaled
+— λ stays a train-time `ewc_importance`) and the next replay minibatch. _Avoid_: "EWC state",
+"continual state" (loose attributes — the point is they no longer are).
+
 ## Relationships
 
 - A **CytoANVI reference** is built from labeled + **unlabeled-category** cells over **observed

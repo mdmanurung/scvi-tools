@@ -121,10 +121,31 @@ so CytoANVI follows the paper (see ADR 0002):
 
 CytoANVI adaptations to modern scvi 1.4.3: `LossOutput` (not `LossRecorder`), `qz` distribution
 (not `qz_m/qz_v`), reuse of `ArchesMixin.load_query_data` for surgery/freezing. Surface:
-`CytoANVI.load_query_data_with_replay`, `_compute_importances`, `get_uncertainty`,
-`CytoANVAE._replay_forward`/`loss_with_replay`/`_ewc_penalty`, `CytoANVIContinualTrainingPlan`
-(adds the replay-buffer ELBO + threads `ewc_importance` = λ). Continual state is inert until
-surgery sets it, so the base model is unchanged.
+`CytoANVI.load_query_data_with_replay`, `get_uncertainty`,
+`CytoANVAE.loss_with_replay`/`_replay_forward`, `CytoANVIContinualTrainingPlan` (adds the
+replay-buffer ELBO + threads `ewc_importance` = λ). The configured update is owned by one module —
+see below — and is absent (`None`) on the base path, so the base model is unchanged.
+
+### ContinualUpdate — one module owns the configured update
+
+The Phase-2 state used to be five loose attributes on `CytoANVAE` (`old_params`, `importances`,
+`ctrl_importances`, `combine_type`, `_replay_batches`), set in `load_query_data_with_replay` and
+read far away in `_ewc_penalty` and the training plan, each guarded by silent `if ... is None`
+toggles. They are now one deep module, `ContinualUpdate` (`_continual.py`), holding the reference
+anchor, both Fisher importances, the combine rule, and the replay buffer behind a small interface:
+`configure(reference_model, query_model, replay_adata, control_adata, combine_type)`,
+`penalty(module)` (unscaled — λ stays a train-time `ewc_importance`), `next_replay_batch`, and
+`persistable_state`/`from_persistable_state`. `CytoANVAE` holds one `self.continual` (present =
+active, absent = base path), so the silent toggles are gone by construction. The Fisher loop lives
+in `fisher_importances` (moved from the old `_model._compute_importances`).
+
+**Persistence (the former save/load gap).** The EWC anchor + both Fishers + combine rule are
+persisted across `save`/`load`: `load_query_data_with_replay` stores
+`model.continual_update_state_` (a `_`-suffixed model attribute, so it rides scvi's pickled attr
+dict), and `CytoANVAE.on_load` rebuilds `self.continual` from it. The replay buffer is **not**
+persisted (session-scoped); after a reload `predict`/`get_latent_representation`/`get_uncertainty`
+work immediately, while resuming continual *training* requires re-supplying `replay_adata`. Tested
+by `test_cytoanvi_continual_save_load` and the penalty math by `test_continual_update_penalty_math`.
 
 ## Divergence notes (CytoANVI vs cscanvi / scArches)
 

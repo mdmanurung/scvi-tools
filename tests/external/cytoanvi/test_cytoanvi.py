@@ -287,11 +287,13 @@ def test_cytoanvi_continual_update(adata):
     q = CytoANVI.load_query_data_with_replay(
         query, ref, replay_adata=replay, control_adata=control
     )
-    assert q.module.old_params is not None
-    assert q.module.importances is not None
-    assert q.module.ctrl_importances is not None  # required (F_reference o F_query_ctrl)
-    assert q.module.combine_type == "product"  # paper default
-    assert q.module._replay_batches  # experience-replay buffer stored
+    cont = q.module.continual
+    assert cont is not None
+    assert cont.old_params is not None
+    assert cont.importances is not None
+    assert cont.ctrl_importances is not None  # required (F_reference o F_query_ctrl)
+    assert cont.combine_type == "product"  # paper default
+    assert cont.replay_batches  # experience-replay buffer stored
 
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     assert q.is_trained
@@ -367,7 +369,7 @@ def test_cytoanvi_continual_query_batch_controls(adata):
     q = CytoANVI.load_query_data_with_replay(
         query, ref, replay_adata=adata[:128].copy(), control_adata=control
     )
-    assert q.module.ctrl_importances is not None
+    assert q.module.continual.ctrl_importances is not None
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     assert q.is_trained
 
@@ -450,3 +452,72 @@ def test_cytoanvi_prepare_query_requires_nan_layer(adata):
     query = query[:, list(ref.adata.var_names[:-5])].copy()
     with pytest.raises(ValueError, match="nan_layer"):
         CytoANVI.prepare_query_anndata(query, ref)
+
+
+def test_continual_update_penalty_math():
+    # The deepened seam is directly testable: penalty = sum_k w_k (theta_k - theta_k^ref)^2,
+    # with w_k = combine(reference Fisher, control Fisher). No training needed.
+    import torch
+
+    from scvi.external.cytoanvi._continual import ContinualUpdate
+
+    class _Stub(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w = torch.nn.Parameter(torch.tensor([1.0, 2.0]))
+
+        @property
+        def device(self):
+            return torch.device("cpu")
+
+    m = _Stub()
+    old = [("w", torch.tensor([0.0, 0.0]))]
+    imp = [("w", torch.tensor([1.0, 1.0]))]
+    ctrl = [("w", torch.tensor([2.0, 3.0]))]
+
+    # product: w = imp*ctrl = [2, 3] -> 2*1^2 + 3*2^2 = 14
+    assert float(ContinualUpdate(old, imp, ctrl, "product").penalty(m)) == 14.0
+    # additive: w = imp+ctrl = [3, 4] -> 3*1 + 4*4 = 19
+    assert float(ContinualUpdate(old, imp, ctrl, "additive").penalty(m)) == 19.0
+    # no control Fisher: w = imp = [1, 1] -> 1*1 + 1*4 = 5
+    assert float(ContinualUpdate(old, imp, None).penalty(m)) == 5.0
+    # size-guard: an anchor param whose shape mismatches the live param is skipped
+    mismatched = [("w", torch.tensor([0.0, 0.0, 0.0]))]
+    assert float(ContinualUpdate(mismatched, imp, ctrl).penalty(m)) == 0.0
+
+
+def test_cytoanvi_continual_save_load(adata, save_path):
+    # the continual update (anchor + both Fishers + combine rule) survives save/load; the
+    # session-scoped replay buffer does not.
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    query = _make_adata()
+    query.obs[LABELS_KEY] = UNLABELED
+    control = query[:128].copy()
+    q = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=adata[:128].copy(), control_adata=control
+    )
+    q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    assert q.module.continual is not None
+    pen_before = float(q.module.continual.penalty(q.module))
+
+    path = os.path.join(save_path, "test_cytoanvi_continual")
+    q.save(path, overwrite=True, save_anndata=True)
+    q2 = CytoANVI.load(path)
+
+    # reattached on load, anchor + Fishers preserved (penalty reproduces), replay dropped
+    assert q2.module.continual is not None
+    assert q2.module.continual.combine_type == "product"
+    assert q2.module.continual.replay_batches is None
+    pen_after = float(q2.module.continual.penalty(q2.module))
+    np.testing.assert_allclose(pen_after, pen_before, rtol=1e-5)
+    assert q2.predict().shape[0] == query.n_obs

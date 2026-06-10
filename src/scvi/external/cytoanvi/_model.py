@@ -25,12 +25,9 @@ from scvi.model.base import SemisupervisedTrainingMixin
 from scvi.model.base._archesmixin import ArchesMixin, _get_loaded_data
 from scvi.utils import setup_anndata_dsp
 
-from ._continual import (
-    ContinualUpdate,
-    CytoANVIContinualTrainingPlan,
-    compute_uncertainty_scores,
-)
+from ._continual import ContinualUpdate, CytoANVIContinualTrainingPlan
 from ._module import CytoANVAE
+from ._uncertainty import compute_uncertainty_scores
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -366,16 +363,19 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         nan-masked query is then ready for :meth:`load_query_data`.
 
         Requires the reference to have been set up with a ``nan_layer`` so the masking field
-        exists in the registry and :meth:`load_query_data` threads it through. If the reference
-        panel is complete, set it up with an all-ones mask to enable panel-divergent queries
-        later.
+        exists in the registry and :meth:`load_query_data` threads it through, **and** to have a
+        genuine backbone / panel-specific split (an all-ones mask makes every marker a backbone
+        marker, so no marker could ever be absent from the query — use a reference built from
+        overlapping panels, e.g. via :func:`~scvi.external.cytovi.merge_batches`).
 
         Parameters
         ----------
         adata
             Query AnnData with its own (possibly smaller / reordered) antibody panel.
         reference_model
-            A trained :class:`CytoANVI` reference, or a path to saved reference outputs.
+            A trained, **in-memory** :class:`CytoANVI` reference (required for the actual prep, so
+            the shared backbone can be verified). A saved path is accepted only with
+            ``return_reference_var_names=True``; otherwise load it first with :meth:`load`.
         return_reference_var_names
             If ``True``, only return the reference marker names (no padding/masking).
         inplace
@@ -390,6 +390,15 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         ref_var_names = pd.Index(var_names)
         if return_reference_var_names:
             return ref_var_names
+
+        # The actual prep needs the in-memory reference to verify the shared backbone: the encoder
+        # marker set (encoder_marker_mask) is not recoverable from saved files alone.
+        if isinstance(reference_model, str):
+            raise ValueError(
+                "Panel-aware prepare_query_anndata needs an in-memory reference model to verify "
+                "the shared backbone (the encoder marker set is not recoverable from saved files "
+                "alone). Load it first: reference_model = CytoANVI.load(path)."
+            )
 
         setup_args = attr_dict["registry_"][_SETUP_ARGS_KEY]
         nan_layer_key = setup_args.get("nan_layer")
@@ -410,34 +419,36 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         # Reference backbone = the encoder markers. CytoVI encodes *only* the backbone, and
         # scArches re-derives the query backbone from its nan mask, so the query backbone must
-        # match the reference backbone exactly. Resolve it from an in-memory reference.
-        backbone_mask = None
-        if not isinstance(reference_model, str):
-            enc = getattr(reference_model.module, "encoder_marker_mask", None)
-            if enc is not None and len(enc) == len(ref_var_names):
-                backbone_mask = np.asarray(enc, dtype=bool)
+        # match the reference backbone exactly. With a nan_layer set, CytoVI always builds this.
+        enc = getattr(reference_model.module, "encoder_marker_mask", None)
+        if enc is None or len(enc) != len(ref_var_names):
+            raise ValueError(
+                "The reference has no usable encoder backbone mask (encoder_marker_mask); "
+                "panel-aware prep needs a reference whose nan_layer yields a genuine backbone / "
+                "panel-specific split."
+            )
+        backbone_mask = np.asarray(enc, dtype=bool)
 
-        if backbone_mask is not None:
-            missing_backbone = ref_var_names[backbone_mask].intersection(missing_markers)
-            if len(missing_backbone):
-                raise ValueError(
-                    f"Query panel is missing backbone (encoder) markers {list(missing_backbone)}. "
-                    "CytoVI encodes only the shared backbone, so the backbone must be present in "
-                    "both reference and query; only panel-specific (non-backbone) markers may be "
-                    "absent from the query. Add the missing backbone markers to the query, or use "
-                    "a reference whose backbone is shared with this query."
-                )
-            # Panel-specific reference markers the query *did* measure: they'll be masked below so
-            # the query re-derives the reference backbone, so their values won't be used. Warn.
-            observed_nonbackbone = ref_var_names[~backbone_mask].intersection(adata.var_names)
-            if len(observed_nonbackbone):
-                warnings.warn(
-                    "Query measured reference panel-specific (non-backbone) markers "
-                    f"{list(observed_nonbackbone)}; these are masked so scArches re-derives the "
-                    "reference backbone, so their query values are not used for mapping.",
-                    UserWarning,
-                    stacklevel=settings.warnings_stacklevel,
-                )
+        missing_backbone = ref_var_names[backbone_mask].intersection(missing_markers)
+        if len(missing_backbone):
+            raise ValueError(
+                f"Query panel is missing backbone (encoder) markers {list(missing_backbone)}. "
+                "CytoVI encodes only the shared backbone, so the backbone must be present in "
+                "both reference and query; only panel-specific (non-backbone) markers may be "
+                "absent from the query. Add the missing backbone markers to the query, or use "
+                "a reference whose backbone is shared with this query."
+            )
+        # Panel-specific reference markers the query *did* measure: they'll be masked below so
+        # the query re-derives the reference backbone, so their values won't be used. Warn.
+        observed_nonbackbone = ref_var_names[~backbone_mask].intersection(adata.var_names)
+        if len(observed_nonbackbone):
+            warnings.warn(
+                "Query measured reference panel-specific (non-backbone) markers "
+                f"{list(observed_nonbackbone)}; these are masked so scArches re-derives the "
+                "reference backbone, so their query values are not used for mapping.",
+                UserWarning,
+                stacklevel=settings.warnings_stacklevel,
+            )
 
         # Whether the query already carries a nan mask (overlapping internal panels). If so, the
         # base pad/sort already zeros the padded (missing) columns and preserves present-marker
@@ -458,7 +469,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         # Force every non-backbone reference marker to be masked, so the query re-derives exactly
         # the reference backbone (CytoVI's encoder reads only the backbone; an observed
         # panel-specific marker would otherwise enlarge the query backbone and break surgery).
-        if backbone_mask is not None and not backbone_mask.all():
+        if not backbone_mask.all():
             mask = np.asarray(target.layers[nan_layer_key])
             mask[:, target.var_names.get_indexer(ref_var_names[~backbone_mask])] = 0.0
             target.layers[nan_layer_key] = mask

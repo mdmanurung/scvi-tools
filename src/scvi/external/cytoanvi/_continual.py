@@ -3,13 +3,15 @@
 Ports the approach of ``theislab/comparative_atlas`` (``cscanvi``) to CytoANVI and modern
 scvi-tools: regularized incremental query updates that anchor to a reference (and healthy
 controls) via an Elastic-Weight-Consolidation (EWC) penalty whose Fisher-style parameter
-importances are estimated from a replay buffer of reference cells and query controls, plus
-test-time-augmentation (TTA) Bregman-Information uncertainty for novelty detection.
+importances are estimated from a replay buffer of reference cells and query controls.
 
 A configured update lives in one place: :class:`ContinualUpdate` owns the reference anchor, both
 Fisher importances, the combine rule, and the replay buffer. At training time the query minibatch
 flows through the ELBO plus the EWC penalty, and the replay buffer is rehearsed in the ELBO
 (Experience Replay), matching the paper's loss.
+
+Query-novelty (test-time-augmentation) uncertainty is a separate concern and lives in
+:mod:`~scvi.external.cytoanvi._uncertainty`.
 """
 
 from __future__ import annotations
@@ -23,49 +25,6 @@ from scvi.train import SemiSupervisedTrainingPlan
 
 if TYPE_CHECKING:
     from anndata import AnnData
-
-
-def mask_augment(x: torch.Tensor, mask_percentage: float = 0.5) -> torch.Tensor:
-    """Randomly zero a fixed fraction of features per cell (shared mask across the batch).
-
-    Default 0.5 matches the paper's TTA (mask 50% of genes per perturbation).
-    """
-    _, feature_dim = x.shape
-    num_masked = int(mask_percentage * feature_dim)
-    mask = torch.cat(
-        [
-            torch.ones(num_masked, dtype=torch.bool),
-            torch.zeros(feature_dim - num_masked, dtype=torch.bool),
-        ]
-    )
-    mask = mask[torch.randperm(mask.size(0))]
-    mask = mask.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
-    return x * mask
-
-
-def bregman_information_lse(zs: torch.Tensor, axis: int = 0, class_axis: int = -1) -> torch.Tensor:
-    """Bregman Information of ``zs`` under the log-sum-exp generator.
-
-    ``BI[Z] = E[LSE(Z)] - LSE(E[Z])``, estimated over the sample ``axis``. Taken from
-    https://github.com/MLO-lab/Uncertainty_Estimates_via_BVD. Higher = more uncertain / novel.
-    """
-    e_of_lse = zs.logsumexp(axis=class_axis).mean(axis)
-    lse_of_e = zs.mean(axis).unsqueeze(axis).logsumexp(axis=class_axis).squeeze(axis)
-    return e_of_lse - lse_of_e
-
-
-def compute_uncertainty_scores(inference_inputs: dict, module, tta_rep: int = 10) -> torch.Tensor:
-    """Per-cell Bregman-Information uncertainty over ``tta_rep`` mask-augmented latent draws."""
-    input_x = inference_inputs["x"]
-    with torch.no_grad():
-        module.eval()
-        all_zs = []
-        for _ in range(tta_rep):
-            aug_inputs = dict(inference_inputs)
-            aug_inputs["x"] = mask_augment(input_x)
-            all_zs.append(module.inference(**aug_inputs)["z"])
-        zs_out = torch.stack(all_zs).detach().cpu()  # tta_rep x batch x n_latent
-    return bregman_information_lse(zs_out)
 
 
 def zerolike_params_dict(module: torch.nn.Module) -> list[tuple[str, torch.Tensor]]:

@@ -436,6 +436,21 @@ def test_cytoanvi_prepare_query_rejects_missing_backbone():
         CytoANVI.prepare_query_anndata(query, ref)
 
 
+def test_cytoanvi_prepare_query_rejects_path_reference(save_path):
+    # a saved path is fine for var-name lookup, but the actual prep needs an in-memory model
+    # (the encoder backbone can't be verified from saved files alone)
+    ref = _make_backbone_reference()
+    path = os.path.join(save_path, "ref_for_prep")
+    ref.save(path, overwrite=True, save_anndata=True)
+
+    query = _make_adata()[:, list(ref.adata.var_names[:25])].copy()
+    names = CytoANVI.prepare_query_anndata(query, path, return_reference_var_names=True)
+    assert list(names) == list(ref.adata.var_names)
+
+    with pytest.raises(ValueError, match="in-memory"):
+        CytoANVI.prepare_query_anndata(query, path)
+
+
 def test_cytoanvi_prepare_query_requires_nan_layer(adata):
     # a reference set up without a nan_layer cannot mask query-absent markers
     CytoANVI.setup_anndata(

@@ -147,6 +147,20 @@ persisted (session-scoped); after a reload `predict`/`get_latent_representation`
 work immediately, while resuming continual *training* requires re-supplying `replay_adata`. Tested
 by `test_cytoanvi_continual_save_load` and the penalty math by `test_continual_update_penalty_math`.
 
+### Two smaller sharpenings
+
+- **`prepare_query_anndata` interface is uniform across reference forms.** The shared-backbone
+  check (CytoVI encodes only the backbone) needs the in-memory `encoder_marker_mask`, which is not
+  recoverable from saved files. The method now accepts a saved *path* only for
+  `return_reference_var_names=True` and otherwise raises, directing the caller to `CytoANVI.load`
+  first — so the guarantee no longer silently depends on whether a model or a path was passed
+  (`test_cytoanvi_prepare_query_rejects_path_reference`).
+- **Query-novelty (TTA) uncertainty lives in its own module.** `mask_augment`,
+  `bregman_information_lse`, `compute_uncertainty_scores` moved from `_continual.py` to
+  `_uncertainty.py`: they are a query-novelty concern, not the EWC continual update, and shared the
+  file only by accident of the cscanvi paper. `_continual.py` is now about the continual update
+  alone.
+
 ## Divergence notes (CytoANVI vs cscanvi / scArches)
 
 - **Freezing during surgery.** CytoANVI uses scvi's stock `ArchesMixin._set_params_online_update`

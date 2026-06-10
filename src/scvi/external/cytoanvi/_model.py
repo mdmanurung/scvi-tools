@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 import torch
 
 from scvi import settings
@@ -21,6 +22,7 @@ from scvi.data.fields import (
 from scvi.external.cytovi import CYTOVI
 from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
 from scvi.model.base import SemisupervisedTrainingMixin
+from scvi.model.base._archesmixin import ArchesMixin, _get_loaded_data
 from scvi.utils import setup_anndata_dsp
 
 from ._continual import (
@@ -96,6 +98,12 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
       markers may be under-resolved; consider adding discriminative markers to the backbone.
     - For query mapping via :meth:`load_query_data`, any labeled query cells must use labels
       already present in the reference; the classifier head is fixed at the reference ``n_labels``.
+    - If the query was measured with a *different antibody panel* than the reference, call
+      :meth:`prepare_query_anndata` first: it pads missing markers and masks them via CytoVI's
+      ``nan_layer`` (rather than treating padded zeros as observed intensities). This requires the
+      reference to have been set up with a ``nan_layer`` (i.e. a genuine backbone /
+      panel-specific split). The query must fully observe the reference backbone; only
+      panel-specific (non-backbone) markers may be absent.
     - :meth:`from_cytovi_model` returns an unfit model still in train mode; call
       ``model.module.eval()`` before :meth:`get_latent_representation` if inspecting it prior to
       :meth:`train`.
@@ -337,9 +345,125 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
 
-    # ------------------------------------------------------------------ #
-    # Continual / case-control atlas building (cscanvi-style EWC update)  #
-    # ------------------------------------------------------------------ #
+    @classmethod
+    def prepare_query_anndata(
+        cls,
+        adata: AnnData,
+        reference_model: str | CytoANVI,
+        return_reference_var_names: bool = False,
+        inplace: bool = True,
+    ) -> AnnData | pd.Index | None:
+        """Panel-aware scArches query prep: pad missing markers **and** mask them.
+
+        The gene-oriented :meth:`~scvi.model.base.ArchesMixin.prepare_query_anndata` pads markers
+        absent from the query panel with **zeros**. For cytometry intensities zero is a real
+        measurement, not "missing", so those padded markers would be read as observed-zero signal
+        and corrupt both the embedding and the reconstruction loss. This override pads to the
+        reference panel (reusing the base pad/sort) and additionally writes CytoVI's ``nan_layer``
+        so the absent markers are **masked out** of the likelihood
+        (``reconst_loss * nan_mask``) — mirroring how CYTOVI handles overlapping antibody panels
+        (:func:`~scvi.external.cytovi.merge_batches` / ``register_nan_layer``). The padded,
+        nan-masked query is then ready for :meth:`load_query_data`.
+
+        Requires the reference to have been set up with a ``nan_layer`` so the masking field
+        exists in the registry and :meth:`load_query_data` threads it through. If the reference
+        panel is complete, set it up with an all-ones mask to enable panel-divergent queries
+        later.
+
+        Parameters
+        ----------
+        adata
+            Query AnnData with its own (possibly smaller / reordered) antibody panel.
+        reference_model
+            A trained :class:`CytoANVI` reference, or a path to saved reference outputs.
+        return_reference_var_names
+            If ``True``, only return the reference marker names (no padding/masking).
+        inplace
+            Whether to modify ``adata`` in place or return a new AnnData.
+
+        Returns
+        -------
+        The padded, nan-masked query AnnData if ``inplace=False``; a :class:`pandas.Index` of
+        reference markers if ``return_reference_var_names=True``; otherwise ``None``.
+        """
+        attr_dict, var_names, _, _ = _get_loaded_data(reference_model, device="cpu")
+        ref_var_names = pd.Index(var_names)
+        if return_reference_var_names:
+            return ref_var_names
+
+        setup_args = attr_dict["registry_"][_SETUP_ARGS_KEY]
+        nan_layer_key = setup_args.get("nan_layer")
+        if nan_layer_key is None:
+            raise ValueError(
+                "Panel-aware query prep requires the reference CytoANVI model to have been set "
+                "up with a `nan_layer` (CytoANVI.setup_anndata(..., nan_layer=...)), so the "
+                "registry has a masking field and a genuine backbone / panel-specific split. "
+                "Without it, markers absent from the query panel cannot be masked out of the "
+                "likelihood. A reference built from overlapping panels (e.g. via "
+                "scvi.external.cytovi.merge_batches) registers this automatically. To instead "
+                "treat missing markers as observed zeros, call "
+                "scvi.model.base.ArchesMixin.prepare_query_anndata directly."
+            )
+
+        # Markers absent from the query panel (in reference order) — masked after padding.
+        missing_markers = ref_var_names.difference(adata.var_names)
+
+        # Reference backbone = the encoder markers. CytoVI encodes *only* the backbone, and
+        # scArches re-derives the query backbone from its nan mask, so the query backbone must
+        # match the reference backbone exactly. Resolve it from an in-memory reference.
+        backbone_mask = None
+        if not isinstance(reference_model, str):
+            enc = getattr(reference_model.module, "encoder_marker_mask", None)
+            if enc is not None and len(enc) == len(ref_var_names):
+                backbone_mask = np.asarray(enc, dtype=bool)
+
+        if backbone_mask is not None:
+            missing_backbone = ref_var_names[backbone_mask].intersection(missing_markers)
+            if len(missing_backbone):
+                raise ValueError(
+                    f"Query panel is missing backbone (encoder) markers {list(missing_backbone)}. "
+                    "CytoVI encodes only the shared backbone, so the backbone must be present in "
+                    "both reference and query; only panel-specific (non-backbone) markers may be "
+                    "absent from the query. Add the missing backbone markers to the query, or use "
+                    "a reference whose backbone is shared with this query."
+                )
+            # Panel-specific reference markers the query *did* measure: they'll be masked below so
+            # the query re-derives the reference backbone, so their values won't be used. Warn.
+            observed_nonbackbone = ref_var_names[~backbone_mask].intersection(adata.var_names)
+            if len(observed_nonbackbone):
+                warnings.warn(
+                    "Query measured reference panel-specific (non-backbone) markers "
+                    f"{list(observed_nonbackbone)}; these are masked so scArches re-derives the "
+                    "reference backbone, so their query values are not used for mapping.",
+                    UserWarning,
+                    stacklevel=settings.warnings_stacklevel,
+                )
+
+        # Whether the query already carries a nan mask (overlapping internal panels). If so, the
+        # base pad/sort already zeros the padded (missing) columns and preserves present-marker
+        # mask values, so we only need to repair non-backbone columns below.
+        query_had_mask = nan_layer_key in adata.layers
+
+        # Base pad + sort: pads X and every existing layer with zeros, reorders to reference vars.
+        result = ArchesMixin.prepare_query_anndata(adata, reference_model, inplace=inplace)
+        target = adata if inplace else result
+
+        if not query_had_mask:
+            # 1 = observed, 0 = missing. All markers observed except the padded ones.
+            mask = np.ones((target.n_obs, target.n_vars), dtype=np.float32)
+            if len(missing_markers):
+                mask[:, target.var_names.get_indexer(missing_markers)] = 0.0
+            target.layers[nan_layer_key] = mask
+
+        # Force every non-backbone reference marker to be masked, so the query re-derives exactly
+        # the reference backbone (CytoVI's encoder reads only the backbone; an observed
+        # panel-specific marker would otherwise enlarge the query backbone and break surgery).
+        if backbone_mask is not None and not backbone_mask.all():
+            mask = np.asarray(target.layers[nan_layer_key])
+            mask[:, target.var_names.get_indexer(ref_var_names[~backbone_mask])] = 0.0
+            target.layers[nan_layer_key] = mask
+
+        return result
 
     @staticmethod
     def _compute_importances(reference_model, adata) -> list[tuple[str, torch.Tensor]]:

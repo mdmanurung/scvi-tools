@@ -171,6 +171,29 @@ GitHub raw source; treat signatures as **unconfirmed** until re-read at implemen
 The module layout mirrors scvi (`_scanvae.py`, `_scanvi.py`, `_trainingplans.py`, `_utils.py`,
 `_vae.py`), i.e. a fork of scANVI internals plus replay/Fisher utilities.
 
+## Panel-aware scArches query prep (`prepare_query_anndata`)
+
+The inherited `ArchesMixin.prepare_query_anndata` zero-fills markers absent from the query panel
+(`_archesmixin.py:_pad_and_sort_query_anndata`, pads with `csr_matrix(zeros)`). For cytometry
+intensities zero is a real measurement, so those padded markers would be read as observed-zero
+signal. `CytoANVI.prepare_query_anndata` overrides this: it pads to the reference panel (reusing the
+base pad/sort) and writes CytoVI's `nan_layer` so the absent markers are masked out of the
+likelihood (`cytovi/_module.py:353-354`, `reconst_loss * nan_mask`), mirroring `register_nan_layer`
+(`cytovi/_preprocessing.py:194-198`: `1` = observed, `0` = missing).
+
+**Backbone constraint (grounded in source).** CytoVI derives the encoder backbone from the nan mask
+— `backbone = markers with no zeros in any cell` (`cytovi/_model.py:176`) — and `encode_backbone_only`
+defaults `True` (`:183-184,210-211`), so the encoder reads *only* the backbone. scArches
+`load_query_data` rebuilds the query module and re-derives the backbone from the query's own nan
+mask (the derived mask is not in `init_params_`), then transfers reference weights with a positional
+resize that only *grows* dimensions (`_archesmixin.py:206-218`, `narrow` asserts non-negative
+length). So the query backbone must equal the reference backbone exactly. The override therefore (a)
+**raises** if the query is missing any backbone marker, and (b) force-masks every reference
+non-backbone marker in the query so it re-derives the reference backbone (warning if the query had
+measured any). Requires the reference to have been set up with a `nan_layer` (a genuine
+backbone/panel-specific split); else it raises. Tests: `test_cytoanvi_prepare_query_panel_aware`,
+`_rejects_missing_backbone`, `_requires_nan_layer`.
+
 ## What CytoANVI adds (implemented in Phase 1)
 
 `scvi.external.cytoanvi`:

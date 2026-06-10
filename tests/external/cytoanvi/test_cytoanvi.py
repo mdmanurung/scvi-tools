@@ -370,3 +370,83 @@ def test_cytoanvi_continual_query_batch_controls(adata):
     assert q.module.ctrl_importances is not None
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     assert q.is_trained
+
+
+def _make_backbone_reference():
+    """Reference with a genuine backbone (markers 0-24) + panel-specific markers (25-29).
+
+    Markers 25-29 are masked in the first 10 cells, so they are not "present in all cells" and
+    therefore fall outside the encoder backbone (which CytoVI derives from the nan mask).
+    """
+    adata = _make_adata()
+    mask = np.ones_like(adata.layers[SCALED_LAYER_KEY])
+    mask[:10, 25:] = 0
+    adata.layers[SCALED_LAYER_KEY][:10, 25:] = 0
+    adata.layers[NAN_LAYER_KEY] = mask
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+        nan_layer=NAN_LAYER_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+    return ref
+
+
+def test_cytoanvi_prepare_query_panel_aware():
+    ref = _make_backbone_reference()
+    ref_vars = ref.adata.var_names
+    # backbone = first 25 markers; query was measured on the backbone panel only
+    backbone = list(ref_vars[:25])
+    panel_specific = list(ref_vars[25:])
+    assert ref_vars[ref.module.encoder_marker_mask].tolist() == backbone
+
+    query = _make_adata()
+    query = query[:, backbone].copy()
+    query.obs[LABELS_KEY] = UNLABELED
+    assert NAN_LAYER_KEY not in query.layers
+
+    CytoANVI.prepare_query_anndata(query, ref)
+
+    # padded + sorted to the reference panel, with a freshly built nan mask
+    assert list(query.var_names) == list(ref_vars)
+    assert NAN_LAYER_KEY in query.layers
+    mask = np.asarray(query.layers[NAN_LAYER_KEY])
+    assert (mask[:, query.var_names.get_indexer(panel_specific)] == 0).all()  # masked out
+    assert (mask[:, query.var_names.get_indexer(backbone)] == 1).all()  # backbone kept
+
+    # the query re-derives the reference backbone, so surgery + predict run end-to-end
+    q = CytoANVI.load_query_data(query, ref)
+    q.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
+    assert q.predict().shape[0] == query.n_obs
+
+
+def test_cytoanvi_prepare_query_rejects_missing_backbone():
+    ref = _make_backbone_reference()
+    # drop a backbone marker (index 0) — the encoder needs it, so prep must reject this
+    query = _make_adata()
+    query = query[:, list(ref.adata.var_names[1:])].copy()
+    with pytest.raises(ValueError, match="backbone"):
+        CytoANVI.prepare_query_anndata(query, ref)
+
+
+def test_cytoanvi_prepare_query_requires_nan_layer(adata):
+    # a reference set up without a nan_layer cannot mask query-absent markers
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+
+    query = _make_adata()
+    query = query[:, list(ref.adata.var_names[:-5])].copy()
+    with pytest.raises(ValueError, match="nan_layer"):
+        CytoANVI.prepare_query_anndata(query, ref)

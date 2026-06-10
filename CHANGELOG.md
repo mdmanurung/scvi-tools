@@ -12,7 +12,10 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
 - Add support for rapids-singlecell, {pr}`3811`.
 - Add {class}`scvi.external.CytoANVI`, a semi-supervised, annotation-aware extension of
     {class}`scvi.external.CYTOVI` (cell-type classifier head + partially-observed-label objective,
-    scANVI-style) with `from_cytovi_model` and scArches query mapping. Includes a continual
+    scANVI-style) with `from_cytovi_model` and scArches query mapping, including a panel-aware
+    `prepare_query_anndata` that pads markers absent from the query antibody panel and masks them
+    via CytoVI's `nan_layer` (instead of treating padded zeros as observed intensities). Includes a
+    continual
     case-control update (`load_query_data_with_replay`: experience replay of reference cells plus a
     modified EWC penalty with Hadamard-product reference/query-control Fisher importances) and
     `get_uncertainty` (test-time-augmentation Bregman Information), following the comparative-atlas

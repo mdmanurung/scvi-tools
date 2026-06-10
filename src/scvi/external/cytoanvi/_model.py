@@ -429,7 +429,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             )
         backbone_mask = np.asarray(enc, dtype=bool)
 
-        missing_backbone = ref_var_names[backbone_mask].intersection(missing_markers)
+        backbone_markers = ref_var_names[backbone_mask]
+        missing_backbone = backbone_markers.intersection(missing_markers)
         if len(missing_backbone):
             raise ValueError(
                 f"Query panel is missing backbone (encoder) markers {list(missing_backbone)}. "
@@ -438,6 +439,23 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 "absent from the query. Add the missing backbone markers to the query, or use "
                 "a reference whose backbone is shared with this query."
             )
+        # A backbone marker the query *keeps* but masks in some cells (via its own pre-existing
+        # nan_layer) drops out of the query-derived backbone just as a missing one would — but
+        # `missing_markers` (set difference on var_names) can't see it. Catch it here, so it fails
+        # fast with a clear message instead of a cryptic resize error in load_query_data.
+        if nan_layer_key in adata.layers:
+            qmask = np.asarray(adata.layers[nan_layer_key])
+            present_backbone = backbone_markers.intersection(adata.var_names)
+            if len(present_backbone):
+                cols = adata.var_names.get_indexer(present_backbone)
+                partial = present_backbone[(qmask[:, cols] == 0).any(axis=0)]
+                if len(partial):
+                    raise ValueError(
+                        f"Query's nan_layer masks backbone (encoder) markers {list(partial)} in "
+                        "some cells, so the query would re-derive a smaller backbone than the "
+                        "reference and scArches surgery would fail. Backbone markers must be "
+                        "fully observed across all query cells."
+                    )
         # Panel-specific reference markers the query *did* measure: they'll be masked below so
         # the query re-derives the reference backbone, so their values won't be used. Warn.
         observed_nonbackbone = ref_var_names[~backbone_mask].intersection(adata.var_names)

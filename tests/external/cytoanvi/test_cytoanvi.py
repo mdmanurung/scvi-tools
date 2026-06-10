@@ -436,6 +436,21 @@ def test_cytoanvi_prepare_query_rejects_missing_backbone():
         CytoANVI.prepare_query_anndata(query, ref)
 
 
+def test_cytoanvi_prepare_query_rejects_partial_backbone():
+    # a query whose own nan_layer masks a *backbone* marker in some cells would re-derive a
+    # smaller backbone than the reference -> reject up front (not a cryptic resize crash later)
+    ref = _make_backbone_reference()
+    backbone = list(ref.adata.var_names[:25])
+    query = _make_adata()
+    query = query[:, backbone].copy()
+    query.obs[LABELS_KEY] = UNLABELED
+    qmask = np.ones_like(query.layers[SCALED_LAYER_KEY])
+    qmask[:10, 0] = 0.0  # backbone marker (column 0) masked in some cells
+    query.layers[NAN_LAYER_KEY] = qmask
+    with pytest.raises(ValueError, match="backbone"):
+        CytoANVI.prepare_query_anndata(query, ref)
+
+
 def test_cytoanvi_prepare_query_rejects_path_reference(save_path):
     # a saved path is fine for var-name lookup, but the actual prep needs an in-memory model
     # (the encoder backbone can't be verified from saved files alone)

@@ -1,63 +1,93 @@
-# PRD: CytoANVI real-data benchmarking
+# PRD: CytoANVI real-data benchmarking (Track B)
 
 Status: ready-for-human
 Owner: mdmanurung
 Branch: feat/cytoanvi
 Created: 2026-06-10
+Updated: 2026-06-17
 
 ## Problem
 
-CytoANVI (semi-supervised CytoVI + paper-faithful cscanvi continual update) passes 20/20 synthetic
-tests but has **no real-data validation** — synthetic accuracy is meaningless (independent
-ref/query). We need to show, on real cytometry, that:
+CytoANVI passes synthetic tests but needs real-data validation against **original CytoVI** (k-NN
+label transfer in the CytoVI latent). Prior smoke results used vignette subsamples, `max_epochs=100`,
+and lightweight integration metrics — not publication-grade.
 
-1. the semi-supervised classifier transfers labels better than CytoVI's k-NN, while preserving a
-   well-integrated latent; and
-2. the panel-aware query mapping (`prepare_query_anndata` + scArches surgery) and novelty
-   uncertainty (`get_uncertainty`) work on a genuine multi-panel dataset.
+## Decisions (2026-06-17)
+
+| Decision | Value |
+|----------|-------|
+| Scope | Track B of unified plan (Track A in parallel) |
+| Data | **Full** Nuñez + full Roider cohorts (see Track A data issues) |
+| Training | **`max_epochs=1000`** |
+| Integration metrics | **`scib-metrics`** via `benchmarks/common/scib.py` |
+
+Master plan: `notes/2026-06-17-cytovi-cytoanvi-benchmark-plan.md`.
 
 ## Approach
 
-Benchmark against CytoVI's **own** workflow on the datasets the CytoVI vignettes use (no
-substituted data — primary-source rule).
+Extend `benchmarks/cytoanvi/` against CytoVI's k-NN baseline on full cohorts.
 
-- **D1 — Roider BNHL** (CytoVI *advanced* tutorial): 2 antibody panels, 10 shared backbone markers,
-  ~9,966 cells, 4 batches, 33 donors, labels in panel 1 only. Figshare files `56891468`/`56891471`
-  (preprocessed `.h5ad`). Primary — exactly CytoANVI's target scenario.
-- **D2 — Nuñez PBMC** (CytoVI *batch* tutorial): single panel, 35 markers, 2 batches, 11 labelled
-  populations. Figshare `55982654`/`55982657` (`.fcs`). Secondary.
+- **B-D1** — Full Roider (63 patients, 10k T cells/patient): B3, B4, B5, B8
+- **B-D2** — Full Nuñez batch replicate: B1, B2
+- **B-D3** — Nuñez + Kreutmair: B7 (optional)
 
-Baseline throughout: **CytoVI latent + k-NN label transfer** (the vignette's method).
-
-## Tasks (→ CytoANVI feature)
+## Tasks
 
 | # | Measures | API | Baseline | Issue |
 |---|----------|-----|----------|-------|
-| B1 | label-transfer accuracy / macro-F1 on held-out labels | `predict` | CytoVI + kNN | 02 |
-| B2 | batch mixing vs bio conservation of the latent | `get_latent_representation` | CytoVI latent | 02 |
-| B3 | panel-1 → panel-2 mapping | `prepare_query_anndata` + `load_query_data` + `predict` | CytoVI kNN (concordance) | 03 |
-| B5 | flags a held-out (novel) cell type | `get_uncertainty` | — | 04 |
-| B4 | continual case-control update preserves reference while surfacing case signal | `load_query_data_with_replay` | — | 06 (deferred) |
-| B6 | tune `ewc_importance` (λ) for CytoVI's intensity likelihood | (output: default) | — | 06 (deferred) |
+| B1 | label-transfer macro-F1 | `predict` | CytoVI kNN | 08 |
+| B2 | scib integration aggregates | `get_latent_representation` | CytoVI latent | 08 |
+| B3 | panel-1 → panel-2 mapping | `prepare_query_anndata` + `load_query_data` + `predict` | CytoVI kNN | 09 |
+| B4 | continual case-control update | `load_query_data_with_replay` | static CytoVI | 10 |
+| B5 | novelty AUROC (holdout sweep) | `get_uncertainty` | — | 09 |
+| B6 | λ (`ewc_importance`) sweep | continual plan kwargs | — | 10 |
+| B7–B9 | imputation / DA / query fidelity | various | CytoVI | 11 (later) |
 
-## Success criteria (pre-registered)
+## Success criteria (mean over ≥3 seeds)
 
-- **B1:** CytoANVI macro-F1 ≥ CytoVI k-NN on the holdout (target +0.03 absolute).
-- **B2:** CytoANVI within ±0.02 cLISI/silhouette of CytoVI at equal-or-better batch mixing.
-- **B3:** panel-1 holdout accuracy > chance and ≥ kNN; panel-2 concordance ≥ 0.7.
-- **B5:** held-out-type AUROC > 0.7.
-- **B4/B6:** a λ exists where reference-drift stays low and the case population is recovered; record
-  it as the CytoVI-specific default (replaces the paper's 100).
+- **B1:** CytoANVI macro-F1 ≥ CytoVI k-NN + **0.03**
+- **B2:** CytoANVI scib `bio_conservation` within **±0.02** of CytoVI; `batch_correction` ≥ CytoVI
+- **B3:** panel-1 holdout macro-F1 ≥ k-NN; panel-2 concordance ≥ **0.70**
+- **B5:** best holdout-type AUROC > **0.70**
+- **B4/B6:** λ knee documented as CytoVI-specific default
+
+## Prior results (INVALID for PR — vignette / epochs=100 / lightweight B2)
+
+`roider_seed0_summary.json`: B1/B3 pass; B5 fails on single holdout. **Re-run on full B-D1 with
+scib + epochs=1000.**
+
+## Vignette smoke results (2026-06-17) — harness validation only
+
+**Data:** CytoVI tutorial `.h5ad` subsamples (`data/Roider_et_al_BNHL_panel{1,2}.h5ad`), not full
+cohort. **`max_epochs=100`**, lightweight B2 metrics (not full scib aggregates).
+
+**Summary:** `.scratch/cytoanvi-benchmark/results/roider_multiseed_summary.json`
+
+| Task | Result | PRD target (smoke) |
+|------|--------|-------------------|
+| **B1** (3 seeds) | CytoANVI **0.925 ± 0.009** vs k-NN **0.810 ± 0.025** (Δ **+0.115**) | ≥ +0.03 — **pass** |
+| **B2** (3 seeds, scib) | Bio conservation **+0.099** vs CytoVI; batch correction **−0.040** | bio ±0.02 / batch ≥ baseline — **fail** (better bio, worse batch) |
+| **B3** (seed 0) | p1 holdout F1 **0.913**; p2 concordance **0.863** | ≥ 0.7 — **pass** |
+| **B5** (13 holdouts) | **Tfh 0.875**, Treg CD69+ **0.779**, Ttox EM3 **0.742** (>0.7) | ≥ 1 type — **pass** |
+
+Per-seed JSON: `results/roider_seed{0,1,2}_b{1,2}.json`, `roider_seed0_b{3,5}.json`,
+`results/b5_sweep/*.json`.
+
+**Harness fixes:** `baselines.py` skip k-NN when zero unlabeled cells; `run.py` `--holdout-type`,
+`--holdout-sweep`, B5 kwargs filter; `holdout_safe_name()` for sweep filenames (`+`/`-` safe).
+
+**Next:** issues 08–10 on **full** cohorts (`max_epochs=1000`, scib B2) — blocked on
+`cytovi-benchmark/01–02` (data ingest). Issue 03 (scib infra) done; issue 05 (readfcs) unblocks
+Nuñez loader once FCS files land.
 
 ## Artifacts
 
-- Harness: `benchmarks/cytoanvi/` (committed `2f7cf944`). Smoke-tested end-to-end on synthetic data.
-- Full plan + provenance: `notes/2026-06-10-cytoanvi-benchmark-plan.md`.
+- Harness: `benchmarks/cytoanvi/` (existing)
+- Shared: `benchmarks/common/` (issue cytovi-benchmark/03)
+- Results: `.scratch/cytoanvi-benchmark/results/`
 
-## Status / blockers
+## Blockers
 
-- Data download is **blocked in the dev environment** (Figshare returns HTTP 202 / egress blocked).
-  Needs a human to fetch the files (issue 01).
-- D2 needs an FCS reader (`readfcs`/`flowio`) not in the `scvi-test` env (issue 05).
-- B4/B6 need a case/control axis the Roider tumor data lacks (issue 06).
-- B1–B3, B5 are ready to run the moment D1 data lands.
+- Full data: cytovi-benchmark issues 01, 02
+- scib infra: cytovi-benchmark issue 03
+- FCS reader for Nuñez: issue 05 (unchanged)

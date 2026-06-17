@@ -1,0 +1,11 @@
+{
+  "dataset": "roider",
+  "seed": 0,
+  "b5": {
+    "task": "b5_novelty",
+    "seed": 0,
+    "holdout_type": "Tdp",
+    "auroc": 0.383845882826656,
+    "n_novel": 16
+  }
+}

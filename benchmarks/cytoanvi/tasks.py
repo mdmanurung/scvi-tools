@@ -7,40 +7,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
+from benchmarks.common.training import NAN_LAYER, SCALED_LAYER, latent_obsm, train_cytoanvi
+
 from . import metrics
 from .baselines import cytovi_latent_and_knn
-
-SCALED_LAYER = "scaled"
-NAN_LAYER = "_nan_mask"
-
-
-def _train_cytoanvi(
-    adata,
-    labels_key,
-    unlabeled_category,
-    *,
-    batch_key,
-    sample_key,
-    nan_layer,
-    n_latent=10,
-    max_epochs=100,
-):
-    from scvi.external import CytoANVI
-
-    a = adata.copy()
-    CytoANVI.setup_anndata(
-        a,
-        layer=SCALED_LAYER,
-        batch_key=batch_key,
-        labels_key=labels_key,
-        unlabeled_category=unlabeled_category,
-        sample_key=sample_key,
-        nan_layer=nan_layer,
-    )
-    model = CytoANVI(a, n_latent=n_latent)
-    model.train(max_epochs=max_epochs)
-    model.module.eval()
-    return model, a
 
 
 def _holdout(labels, unlabeled_category, frac, seed):
@@ -66,7 +37,8 @@ def task_b1_label_transfer(
     nan_layer=None,
     holdout_frac=0.2,
     seed=0,
-    max_epochs=100,
+    max_epochs=1000,
+    n_latent=None,
 ):
     """B1: CytoANVI classifier vs CytoVI k-NN at transferring labels to held-out cells."""
     true = np.asarray(adata.obs[labels_key].astype(str))
@@ -77,13 +49,14 @@ def task_b1_label_transfer(
     masked[held] = unlabeled_category
     work.obs[labels_key] = masked
 
-    model, a = _train_cytoanvi(
+    model, a = train_cytoanvi(
         work,
-        labels_key,
-        unlabeled_category,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
     cytoanvi_pred = np.asarray(model.predict())
@@ -95,6 +68,7 @@ def task_b1_label_transfer(
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
     knn_full = masked.copy()
@@ -103,6 +77,7 @@ def task_b1_label_transfer(
     return {
         "task": "b1_label_transfer",
         "seed": seed,
+        "max_epochs": max_epochs,
         "holdout_frac": holdout_frac,
         "n_held": int(held.sum()),
         "cytoanvi": metrics.label_transfer_metrics(true[held], cytoanvi_pred[held]),
@@ -118,19 +93,27 @@ def task_b2_integration(
     sample_key=None,
     nan_layer=None,
     seed=0,
-    max_epochs=100,
+    max_epochs=1000,
+    n_latent=None,
+    subsample_per_batch=10_000,
 ):
-    """B2: batch mixing + bio conservation of the CytoANVI vs CytoVI latent."""
-    model, a = _train_cytoanvi(
+    """B2: scib-metrics on CytoANVI vs CytoVI latents."""
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    keep = labels != unlabeled_category
+
+    model, a = train_cytoanvi(
         adata,
-        labels_key,
-        unlabeled_category,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
-    cytoanvi_latent = model.get_latent_representation()
+    anvi_adata = a.copy()
+    latent_obsm(anvi_adata, model, obsm_key=LATENT_OBSM)
+
     _, cytovi_latent, _ = cytovi_latent_and_knn(
         adata,
         labels_key,
@@ -138,18 +121,38 @@ def task_b2_integration(
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
+    vi_adata = adata.copy()
+    vi_adata.obsm[LATENT_OBSM] = cytovi_latent
 
-    batch = np.asarray(adata.obs[batch_key].astype(str))
-    labels = np.asarray(adata.obs[labels_key].astype(str))
-    keep = labels != unlabeled_category  # bio metrics over labelled cells only
-    out = {"task": "b2_integration", "seed": seed}
-    for name, lat in (("cytoanvi", cytoanvi_latent), ("cytovi", cytovi_latent)):
-        out[name] = {
-            **metrics.batch_mixing(lat, batch),
-            **metrics.bio_conservation(lat[keep], labels[keep]),
-        }
+    # scib over labelled cells only (exclude unlabeled category)
+    anvi_sub = anvi_adata[keep].copy()
+    vi_sub = vi_adata[keep].copy()
+
+    out = {
+        "task": "b2_integration",
+        "seed": seed,
+        "max_epochs": max_epochs,
+        "subsample_per_batch": subsample_per_batch,
+        "cytoanvi": run_scib_benchmark(
+            anvi_sub,
+            batch_key=batch_key,
+            label_key=labels_key,
+            embedding_obsm_key=LATENT_OBSM,
+            subsample_per_batch=subsample_per_batch,
+            seed=seed,
+        ),
+        "cytovi": run_scib_benchmark(
+            vi_sub,
+            batch_key=batch_key,
+            label_key=labels_key,
+            embedding_obsm_key=LATENT_OBSM,
+            subsample_per_batch=subsample_per_batch,
+            seed=seed,
+        ),
+    }
     return out
 
 
@@ -162,34 +165,28 @@ def task_b3_panel_divergent(
     sample_key=None,
     holdout_frac=0.2,
     seed=0,
-    max_epochs=100,
+    max_epochs=1000,
+    n_latent=None,
 ):
-    """B3: panel-1 reference -> panel-2 query via panel-aware prep + scArches surgery.
-
-    Reports panel-1 holdout accuracy (hard number) and CytoANVI-vs-CytoVI concordance on panel 2.
-    The reference (p1) must carry a nan_layer / backbone split; build it with merge so panel-2's
-    missing markers are registered. Here p1/p2 are the *separate* panels and we map p2 onto p1.
-    """
+    """B3: panel-1 reference -> panel-2 query via panel-aware prep + scArches surgery."""
     from scvi.external import cytovi
 
-    # reference = merged panels so p1 has the backbone/panel-specific split + labels; then restrict
-    # training labels to p1 cells (p2 is unlabelled).
     merged = cytovi.merge_batches([p1.copy(), p2.copy()], batch_key="panel_batch")
     labels = np.asarray(merged.obs[labels_key].astype(str))
     is_p2 = np.isin(merged.obs_names, p2.obs_names)
-    # hold out part of p1 labels to measure accuracy; p2 is unlabelled
     held = _holdout(labels, unlabeled_category, holdout_frac, seed) & ~is_p2
     masked = labels.copy()
     masked[held | is_p2] = unlabeled_category
     merged.obs[labels_key] = masked
 
-    model, a = _train_cytoanvi(
+    model, a = train_cytoanvi(
         merged,
-        labels_key,
-        unlabeled_category,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=NAN_LAYER,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
     pred = np.asarray(model.predict())
@@ -197,11 +194,11 @@ def task_b3_panel_divergent(
     out = {
         "task": "b3_panel_divergent",
         "seed": seed,
+        "max_epochs": max_epochs,
         "n_p2": int(is_p2.sum()),
         "p1_holdout": metrics.label_transfer_metrics(labels[held], pred[held]),
     }
 
-    # CytoVI k-NN baseline on p2, for concordance
     knn_pred_unlab, _, unlab_mask = cytovi_latent_and_knn(
         merged,
         labels_key,
@@ -209,6 +206,7 @@ def task_b3_panel_divergent(
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=NAN_LAYER,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
     knn_full = masked.copy()
@@ -226,7 +224,8 @@ def task_b5_novelty(
     nan_layer=None,
     holdout_type=None,
     seed=0,
-    max_epochs=100,
+    max_epochs=1000,
+    n_latent=None,
 ):
     """B5: does get_uncertainty flag a cell type held out of the reference entirely?"""
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -235,24 +234,64 @@ def task_b5_novelty(
         holdout_type = types[0]
     is_novel = labels == holdout_type
 
-    # reference excludes the novel type's labels (mark unlabeled so the classifier never sees it)
     work = adata.copy()
     masked = labels.copy()
     masked[is_novel] = unlabeled_category
     work.obs[labels_key] = masked
-    model, a = _train_cytoanvi(
+    model, a = train_cytoanvi(
         work,
-        labels_key,
-        unlabeled_category,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
         batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        n_latent=n_latent,
         max_epochs=max_epochs,
     )
     unc = model.get_uncertainty()
     return {
         "task": "b5_novelty",
         "seed": seed,
+        "max_epochs": max_epochs,
         "holdout_type": holdout_type,
         **metrics.novelty_auroc(unc, is_novel),
+    }
+
+
+def task_b5_holdout_sweep(
+    adata,
+    labels_key="labels",
+    unlabeled_category="Unknown",
+    batch_key="batch",
+    sample_key=None,
+    nan_layer=None,
+    seed=0,
+    max_epochs=1000,
+    n_latent=None,
+):
+    """B5 sweep: AUROC for each cell type held out as novel."""
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    types = sorted(t for t in set(labels) if t != unlabeled_category)
+    per_type = {}
+    for ht in types:
+        per_type[ht] = task_b5_novelty(
+            adata,
+            labels_key=labels_key,
+            unlabeled_category=unlabeled_category,
+            batch_key=batch_key,
+            sample_key=sample_key,
+            nan_layer=nan_layer,
+            holdout_type=ht,
+            seed=seed,
+            max_epochs=max_epochs,
+            n_latent=n_latent,
+        )
+    aurocs = [v["auroc"] for v in per_type.values() if not np.isnan(v["auroc"])]
+    return {
+        "task": "b5_holdout_sweep",
+        "seed": seed,
+        "max_epochs": max_epochs,
+        "per_type": per_type,
+        "best_auroc": float(max(aurocs)) if aurocs else float("nan"),
+        "mean_auroc": float(np.mean(aurocs)) if aurocs else float("nan"),
     }

@@ -1,0 +1,13 @@
+{
+  "seed": 0,
+  "max_epochs": 100,
+  "b5": {
+    "task": "b5_novelty",
+    "seed": 0,
+    "max_epochs": 100,
+    "holdout_type": "Treg CD69+",
+    "auroc": 0.7787292877895662,
+    "n_novel": 584
+  },
+  "dataset": "roider"
+}

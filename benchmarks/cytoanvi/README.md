@@ -16,8 +16,11 @@ vignettes use. Plan: `notes/2026-06-10-cytoanvi-benchmark-plan.md`.
 ```bash
 ENV=/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test
 PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
-    -m benchmarks.cytoanvi.run --dataset synthetic --task all --max-epochs 3
+  -m benchmarks.cytoanvi.run --dataset synthetic --task all --max-epochs 3 \
+  --subsample-per-batch 200
 ```
+
+Requires `scib-metrics` (and `python-igraph` + `leidenalg` for some scib metrics).
 
 ## Real data
 
@@ -50,10 +53,10 @@ and run with the discovered keys:
 ```
 
 ### Dependency notes
-- **D2 (Nuñez `.fcs`) needs an FCS reader** (`readfcs`/`flowio`) — not currently in the `scvi-test`
-  env. Install it there, or skip D2 (D1 needs no FCS reader).
-- Metrics are deliberately scib-metrics-free (scanpy Leiden + sklearn). `bio_conservation` needs
-  `python-igraph` + `leidenalg` for the Leiden flavor; install if missing.
+- **`scib-metrics`** required for B2 (and Track A A2). Install in the benchmark env.
+- **D2 (Nuñez `.fcs`)** — `readfcs`/`flowio` (pulled in by cyCombinePy or cytovi).
+- **Track A cyCombine baseline:** [cyCombinePy](https://github.com/mdmanurung/cyCombinePy) — batch correction only, not imputation.
+- Metrics use **scib-metrics** aggregates (`batch_correction`, `bio_conservation`, `total`).
 
 ## Tasks → CytoANVI features (B4 continual deferred — needs a case/control axis)
 | Task | Measures | API exercised | Baseline |

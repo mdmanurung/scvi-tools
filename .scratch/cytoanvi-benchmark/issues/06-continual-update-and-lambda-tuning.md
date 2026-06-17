@@ -1,7 +1,9 @@
-# 06 — B4 continual case-control update + B6 λ tuning
+# 06 — B4 continual case-control update + B6 λ tuning [SUPERSEDED]
 
-Status: needs-info
+Status: wontfix
 Blocked-by: a dataset with an explicit case/control axis
+
+> Unblocked and superseded by issue 10 (full Roider with rLN vs lymphoma entities).
 
 ## Task
 

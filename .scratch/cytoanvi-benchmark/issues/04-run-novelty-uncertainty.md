@@ -1,7 +1,9 @@
-# 04 — Run B5 (novelty / get_uncertainty) on D1
+# 04 — Run B5 (novelty / get_uncertainty) on D1 [SUPERSEDED]
 
-Status: ready-for-agent
+Status: wontfix
 Blocked-by: 01
+
+> Superseded by issue 09 (full Roider, `--holdout-sweep`, epochs=1000).
 
 ## Task
 
@@ -22,3 +24,8 @@ Optionally sweep `--holdout-type` across the larger populations (extend run.py t
 - Results JSON committed; summary in PRD.
 
 ## Comments
+
+### 2026-06-17 — vignette holdout sweep completed (historical)
+
+13 cell types swept (`results/b5_sweep/`). Three pass AUROC >0.7: **Tfh 0.875**, **Treg CD69+ 0.779**,
+**Ttox EM3 0.742**. Summary in `roider_multiseed_summary.json`. Superseded for PR by issue 09.

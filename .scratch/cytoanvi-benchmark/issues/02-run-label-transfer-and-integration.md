@@ -1,7 +1,9 @@
-# 02 — Run B1 (label transfer) + B2 (integration) on D1 panel 1
+# 02 — Run B1 (label transfer) + B2 (integration) on D1 panel 1 [SUPERSEDED]
 
-Status: ready-for-agent
+Status: wontfix
 Blocked-by: 01
+
+> Superseded by issue 08 (full Nuñez, scib, epochs=1000). Vignette Roider B1/B2 no longer used for PR claims.
 
 ## Task
 
@@ -25,3 +27,10 @@ Column names come from issue 01's `--inspect`.
 - Results JSON committed under `.scratch/cytoanvi-benchmark/results/`; summary added to the PRD.
 
 ## Comments
+
+### 2026-06-17 — vignette smoke completed (historical)
+
+Ran on tutorial subsamples, `max_epochs=100`, seeds 0–2. B1 pass (Δ macro-F1 +0.115 mean).
+B2 ambiguous (better silhouette, worse batch mixing). Results:
+`results/roider_multiseed_summary.json`, `roider_seed{0,1,2}_b{1,2}.json`.
+Superseded for PR claims by issue 08 (full Nuñez).

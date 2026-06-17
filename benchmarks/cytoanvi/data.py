@@ -28,6 +28,15 @@ SCALED_LAYER = "scaled"
 NAN_LAYER = "_nan_mask"
 
 
+def holdout_safe_name(holdout_type: str) -> str:
+    """Filesystem-safe slug for B5 sweep JSON filenames."""
+    return (
+        holdout_type.replace("+", "_plus")
+        .replace("-", "_minus")
+        .replace(" ", "_")
+    )
+
+
 def download(name: str, data_dir: str, retries: int = 8, wait: float = 15.0) -> str:
     """Download a known Figshare file into ``data_dir`` (retries the 202 'generating' state)."""
     if name not in FIGSHARE:

@@ -1,0 +1,36 @@
+{
+  "dataset": "roider",
+  "seed": 0,
+  "labels_key": "cell_type",
+  "batch_key": "batch",
+  "sample_key": "PatientID",
+  "max_epochs": 100,
+  "b1": {
+    "task": "b1_label_transfer",
+    "cytoanvi_macro_f1": 0.9331756698290137,
+    "cytovi_knn_macro_f1": 0.7811918261410612,
+    "delta_macro_f1": 0.1519838436879525,
+    "pass_target_plus_0.03": true
+  },
+  "b2": {
+    "task": "b2_integration",
+    "cytoanvi_bio_conservation": 0.7286588668823242,
+    "cytovi_bio_conservation": 0.6274316787719727,
+    "cytoanvi_batch_correction": 0.7528884466365796,
+    "cytovi_batch_correction": 0.7909593233219265,
+    "note": "scib aggregates (epochs=100); CytoANVI +0.10 bio, -0.04 batch vs CytoVI"
+  },
+  "b3": {
+    "task": "b3_panel_divergent",
+    "p1_holdout_macro_f1": 0.9125641636132796,
+    "p2_concordance_vs_knn": 0.8625326108769817,
+    "pass_concordance_ge_0.7": true
+  },
+  "b5": {
+    "task": "b5_novelty",
+    "holdout_type": "Naive CD4 T",
+    "auroc": 0.5911681551331304,
+    "pass_auroc_gt_0.7": false,
+    "note": "default holdout fails; sweep shows Tfh 0.875, Treg CD69+ 0.779, Ttox EM3 0.742 pass — see b5_sweep/"
+  }
+}

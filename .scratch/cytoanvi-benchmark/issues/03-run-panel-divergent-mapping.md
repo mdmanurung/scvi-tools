@@ -1,7 +1,9 @@
-# 03 — Run B3 (panel-divergent mapping) on D1
+# 03 — Run B3 (panel-divergent mapping) on D1 [SUPERSEDED]
 
-Status: ready-for-agent
+Status: wontfix
 Blocked-by: 01
+
+> Superseded by issue 09 (full Roider, epochs=1000, holdout sweep).
 
 ## Task
 
@@ -25,3 +27,8 @@ panel-aware path, and transfer labels. This exercises `prepare_query_anndata` + 
 - Results JSON committed; summary in PRD.
 
 ## Comments
+
+### 2026-06-17 — vignette smoke completed (historical)
+
+Seed 0: p1 holdout macro-F1 **0.913**, p2 concordance **0.863** (pass ≥0.7). See
+`results/roider_seed0_b3.json`. Superseded for PR by issue 09 (full Roider).

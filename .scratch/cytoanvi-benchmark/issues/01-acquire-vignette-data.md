@@ -1,7 +1,11 @@
-# 01 — Acquire CytoVI vignette datasets
+# 01 — Acquire CytoVI vignette datasets [SMOKE ONLY]
 
-Status: ready-for-human
-Blocks: 02, 03, 04
+Status: wontfix
+Blocks: —
+
+> **Superseded** for PR benchmarks by full-cohort data acquisition:
+> `.scratch/cytovi-benchmark/issues/01-nunez-full-fcs-and-labels.md` and
+> `02-roider-full-cohort.md`. Keep vignette files only for `--smoke` / CI.
 
 ## Task
 
@@ -33,3 +37,9 @@ If `ndownloader` 202s, download from the Figshare article page in a browser inst
   (used to set `--labels-key` / `--batch-key` / `--sample-key` for the run issues).
 
 ## Comments
+
+### 2026-06-17
+
+Vignette files acquired at `data/Roider_et_al_BNHL_panel{1,2}.h5ad`, symlinked into
+`benchmarks/cytoanvi/data/`. Keys: `--labels-key cell_type --batch-key batch --sample-key PatientID
+--unlabeled Unknown`. Smoke B1–B5 complete — see `results/roider_multiseed_summary.json`.

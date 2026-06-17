@@ -1,7 +1,7 @@
 # 05 — Install an FCS reader to enable D2 (Nuñez)
 
-Status: ready-for-human
-Blocks: D2 tasks (optional)
+Status: ready-for-agent
+Blocked-by: cytovi-benchmark/01
 
 ## Task
 
@@ -22,3 +22,14 @@ Decide whether to mutate the shared `scvi-test` env (previously avoided) or use 
 - `... python -m benchmarks.cytoanvi.run --dataset nunez --inspect` loads the FCS files.
 
 ## Comments
+
+### 2026-06-17
+
+`readfcs` installed in `scvi-test` env (`import readfcs` OK). Nuñez `.fcs` in
+`benchmarks/cytoanvi/data/` are still **0 bytes** — download from Figshare before `--dataset nunez`.
+
+### 2026-06-17 — readfcs installed in scvi-test
+
+`pip install readfcs` succeeded; `import readfcs` OK. Still blocked on Nuñez FCS files
+(cytovi-benchmark/01). Run `--dataset nunez --inspect` once `Nunez_PBMCs_batch*.fcs` are in
+`benchmarks/cytoanvi/data/`.

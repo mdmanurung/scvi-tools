@@ -1,15 +1,11 @@
-"""Baseline: CytoVI latent + k-NN label transfer (the CytoVI vignette's own method).
-
-Equivalent to :meth:`~scvi.external.CYTOVI.impute_categories_from_reference` (k-NN voting in the
-CytoVI latent), implemented directly with sklearn so reference and query share one fitted model.
-"""
+"""Baseline: CytoVI latent + k-NN label transfer."""
 
 from __future__ import annotations
 
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 
-SCALED_LAYER = "scaled"
+from benchmarks.common.training import SCALED_LAYER, train_cytovi
 
 
 def cytovi_latent_and_knn(
@@ -20,32 +16,32 @@ def cytovi_latent_and_knn(
     sample_key: str | None = None,
     nan_layer: str | None = None,
     n_neighbors: int = 20,
-    max_epochs: int = 100,
-    n_latent: int = 10,
+    max_epochs: int = 1000,
+    n_latent: int | None = None,
 ):
-    """Train CytoVI, then k-NN-transfer labels from labelled to unlabeled cells in its latent.
+    """Train CytoVI, then k-NN-transfer labels in its latent.
 
     Returns ``(pred_for_unlabeled, latent_all, unlabeled_mask)``.
     """
-    from scvi.external import CYTOVI
-
-    a = adata.copy()
-    CYTOVI.setup_anndata(
-        a,
-        layer=SCALED_LAYER,
+    model, a = train_cytovi(
+        adata,
         batch_key=batch_key,
         labels_key=labels_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        layer=SCALED_LAYER,
+        n_latent=n_latent,
+        max_epochs=max_epochs,
     )
-    model = CYTOVI(a, n_latent=n_latent)
-    model.train(max_epochs=max_epochs)
-    model.module.eval()
     latent = model.get_latent_representation()
 
     labels = np.asarray(a.obs[labels_key].astype(str))
     labelled = labels != unlabeled_category
     knn = KNeighborsClassifier(n_neighbors=min(n_neighbors, int(labelled.sum())))
     knn.fit(latent[labelled], labels[labelled])
-    pred_unlabeled = knn.predict(latent[~labelled])
-    return pred_unlabeled, latent, ~labelled
+    unlabeled_mask = ~labelled
+    if unlabeled_mask.any():
+        pred_unlabeled = knn.predict(latent[unlabeled_mask])
+    else:
+        pred_unlabeled = np.array([], dtype=object)
+    return pred_unlabeled, latent, unlabeled_mask

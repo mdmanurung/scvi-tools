@@ -12,22 +12,42 @@ from __future__ import annotations
 import torch
 
 
-def mask_augment(x: torch.Tensor, mask_percentage: float = 0.5) -> torch.Tensor:
-    """Randomly zero a fixed fraction of features per cell (shared mask across the batch).
+def mask_augment(
+    x: torch.Tensor,
+    mask_percentage: float = 0.5,
+    nan_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Randomly zero a fixed fraction of features per cell.
+
+    When ``nan_mask`` is provided (1 = observed, 0 = missing), only **observed** features are
+    candidates for masking — per-cell missing backbone markers are never perturbed.
 
     Default 0.5 matches the paper's TTA (mask 50% of genes per perturbation).
     """
-    _, feature_dim = x.shape
-    num_masked = int(mask_percentage * feature_dim)
-    mask = torch.cat(
-        [
-            torch.ones(num_masked, dtype=torch.bool),
-            torch.zeros(feature_dim - num_masked, dtype=torch.bool),
-        ]
-    )
-    mask = mask[torch.randperm(mask.size(0))]
-    mask = mask.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
-    return x * mask
+    if nan_mask is None:
+        _, feature_dim = x.shape
+        num_masked = int(mask_percentage * feature_dim)
+        mask = torch.cat(
+            [
+                torch.ones(num_masked, dtype=torch.bool),
+                torch.zeros(feature_dim - num_masked, dtype=torch.bool),
+            ]
+        )
+        mask = mask[torch.randperm(mask.size(0))]
+        mask = mask.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
+        return x * mask
+
+    out = x.clone()
+    batch_size, _ = x.shape
+    for i in range(batch_size):
+        observed = (nan_mask[i] > 0).nonzero(as_tuple=True)[0]
+        n_obs = observed.numel()
+        if n_obs == 0:
+            continue
+        num_masked = max(1, int(mask_percentage * n_obs))
+        perm = observed[torch.randperm(n_obs, device=x.device)]
+        out[i, perm[:num_masked]] = 0.0
+    return out
 
 
 def bregman_information_lse(zs: torch.Tensor, axis: int = 0, class_axis: int = -1) -> torch.Tensor:
@@ -41,7 +61,12 @@ def bregman_information_lse(zs: torch.Tensor, axis: int = 0, class_axis: int = -
     return e_of_lse - lse_of_e
 
 
-def compute_uncertainty_scores(inference_inputs: dict, module, tta_rep: int = 10) -> torch.Tensor:
+def compute_uncertainty_scores(
+    inference_inputs: dict,
+    module,
+    tta_rep: int = 10,
+    nan_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Per-cell Bregman-Information uncertainty over ``tta_rep`` mask-augmented latent draws."""
     input_x = inference_inputs["x"]
     with torch.no_grad():
@@ -49,7 +74,7 @@ def compute_uncertainty_scores(inference_inputs: dict, module, tta_rep: int = 10
         all_zs = []
         for _ in range(tta_rep):
             aug_inputs = dict(inference_inputs)
-            aug_inputs["x"] = mask_augment(input_x)
+            aug_inputs["x"] = mask_augment(input_x, nan_mask=nan_mask)
             all_zs.append(module.inference(**aug_inputs)["z"])
         zs_out = torch.stack(all_zs).detach().cpu()  # tta_rep x batch x n_latent
     return bregman_information_lse(zs_out)

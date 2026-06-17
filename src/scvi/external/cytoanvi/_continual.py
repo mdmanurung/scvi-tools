@@ -16,9 +16,11 @@ Query-novelty (test-time-augmentation) uncertainty is a separate concern and liv
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 
 from scvi.train import SemiSupervisedTrainingPlan
@@ -26,24 +28,41 @@ from scvi.train import SemiSupervisedTrainingPlan
 if TYPE_CHECKING:
     from anndata import AnnData
 
+logger = logging.getLogger(__name__)
+
 
 def zerolike_params_dict(module: torch.nn.Module) -> list[tuple[str, torch.Tensor]]:
     """``[(name, zeros_like(param))]`` for trainable params (Fisher accumulator init)."""
     return [(k, torch.zeros_like(p)) for k, p in module.named_parameters() if p.requires_grad]
 
 
-def fisher_importances(model, adata: AnnData) -> list[tuple[str, torch.Tensor]]:
+def fisher_importances(
+    model,
+    adata: AnnData,
+    *,
+    max_cells: int | None = 10_000,
+    batch_size: int = 256,
+    seed: int = 0,
+) -> list[tuple[str, torch.Tensor]]:
     """Fisher-style parameter importances = mean squared ELBO gradient over ``adata``.
 
     Estimated on an unfrozen copy of ``model`` so every parameter gets a gradient. Returns CPU
     tensors keyed by parameter name (CPU so they pickle cleanly for save/load; the EWC penalty
     moves them to the live device on use).
+
+    Uses the **unsupervised ELBO** only (no labelled minibatch / classification term). For large
+    references, subsamples to ``max_cells`` cells before estimation.
     """
     model = deepcopy(model)
     for p in model.module.parameters():
         p.requires_grad = True
     adata = model._validate_anndata(adata)
-    scdl = model._make_data_loader(adata=adata, batch_size=256)
+    if max_cells is not None and adata.n_obs > max_cells:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(adata.n_obs, size=max_cells, replace=False)
+        adata = adata[idx].copy()
+    logger.info("Estimating Fisher importances on %d cells.", adata.n_obs)
+    scdl = model._make_data_loader(adata=adata, batch_size=batch_size)
 
     importances = dict(zerolike_params_dict(model.module))
     model.module.eval()

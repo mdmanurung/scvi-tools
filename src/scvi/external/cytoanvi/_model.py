@@ -148,6 +148,11 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         # LabelsWithUnlabeledObsField appends the unlabeled category as the final code, so the
         # number of *observed* labels is one fewer than the registry's n_labels.
         n_labels = self.summary_stats.n_labels - 1
+        if n_labels < 1:
+            raise ValueError(
+                "CytoANVI requires at least one observed label category (cells not equal to "
+                f"unlabeled_category={self.unlabeled_category_!r}). All cells appear unlabeled."
+            )
 
         n_cats_per_cov = (
             self.adata_manager.get_state_registry(CYTOVI_REGISTRY_KEYS.CAT_COVS_KEY).n_cats_per_key
@@ -185,7 +190,102 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         self.semisupervised_history_ = None
         self.was_pretrained = False
         self.n_labels = n_labels
+        self._sync_encoder_marker_mask_attr()
         self.init_params_ = self._get_init_params(locals())
+
+    def _sync_encoder_marker_mask_attr(self) -> None:
+        """Persist backbone mask on the model for save/load and path-only query prep."""
+        enc = getattr(self.module, "encoder_marker_mask", None)
+        self.encoder_marker_mask_ = (
+            np.asarray(enc, dtype=bool) if enc is not None else None
+        )
+
+    def train(self, max_epochs: int | None = None, **kwargs):
+        """Train the model; warn if continual update lacks a replay buffer."""
+        cont = getattr(self.module, "continual", None)
+        if cont is not None and not cont.replay_batches:
+            warnings.warn(
+                "Continual update is active but the replay buffer is empty (typical after "
+                "save/load). Experience replay is disabled until you re-call "
+                "`load_query_data_with_replay(..., replay_adata=...)`. The EWC penalty still "
+                "applies.",
+                UserWarning,
+                stacklevel=settings.warnings_stacklevel,
+            )
+        return super().train(max_epochs=max_epochs, **kwargs)
+
+    @torch.inference_mode()
+    def get_latent_representation(self, *args, **kwargs):
+        """Compute latent representation with the module in eval mode."""
+        was_training = self.module.training
+        self.module.eval()
+        try:
+            return super().get_latent_representation(*args, **kwargs)
+        finally:
+            if was_training:
+                self.module.train()
+
+    @classmethod
+    def _encoder_mask_from_reference(
+        cls, reference_model: str | CytoANVI, ref_var_names: pd.Index
+    ) -> np.ndarray:
+        """Resolve the reference backbone mask from an in-memory model or saved attrs."""
+        if not isinstance(reference_model, str):
+            enc = getattr(reference_model.module, "encoder_marker_mask", None)
+            if enc is None or len(enc) != len(ref_var_names):
+                raise ValueError(
+                    "The reference has no usable encoder backbone mask (encoder_marker_mask); "
+                    "panel-aware prep needs a reference whose nan_layer yields a genuine backbone / "
+                    "panel-specific split."
+                )
+            return np.asarray(enc, dtype=bool)
+
+        attr_dict, _, _, _ = _get_loaded_data(reference_model, device="cpu")
+        enc = attr_dict.get("encoder_marker_mask_")
+        if enc is None:
+            raise ValueError(
+                "Panel-aware prepare_query_anndata needs an in-memory reference model or a saved "
+                "model that records encoder_marker_mask_ (re-save with scvi-tools >= 1.5). Load "
+                "it first: reference_model = CytoANVI.load(path)."
+            )
+        backbone_mask = np.asarray(enc, dtype=bool)
+        if len(backbone_mask) != len(ref_var_names):
+            raise ValueError(
+                "Saved encoder_marker_mask_ length does not match reference var names."
+            )
+        return backbone_mask
+
+    @classmethod
+    def select_replay_by_uncertainty(
+        cls,
+        model: CytoANVI,
+        adata: AnnData,
+        fraction: float = 0.2,
+        tta_rep: int = 50,
+    ) -> AnnData:
+        """Select high-uncertainty reference cells for the continual replay buffer.
+
+        Mirrors the cscanvi paper's Bregman-Information replay selection: cells whose latent
+        embedding is unstable under feature masking are rehearsed during continual update.
+
+        Parameters
+        ----------
+        model
+            A trained :class:`CytoANVI` reference.
+        adata
+            Reference AnnData subset from which to draw the replay buffer.
+        fraction
+            Fraction of cells to retain (highest uncertainty first).
+        tta_rep
+            TTA repetitions passed to :meth:`get_uncertainty`.
+        """
+        if not 0 < fraction <= 1:
+            raise ValueError("fraction must be in (0, 1].")
+        model._check_if_trained(warn=False)
+        unc = model.get_uncertainty(adata, tta_rep=tta_rep)
+        n = max(1, int(fraction * adata.n_obs))
+        idx = np.argsort(unc)[-n:]
+        return adata[idx].copy()
 
     def _resolve_y_prior(
         self, y_prior: str | torch.Tensor | None, n_labels: int
@@ -373,9 +473,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         adata
             Query AnnData with its own (possibly smaller / reordered) antibody panel.
         reference_model
-            A trained, **in-memory** :class:`CytoANVI` reference (required for the actual prep, so
-            the shared backbone can be verified). A saved path is accepted only with
-            ``return_reference_var_names=True``; otherwise load it first with :meth:`load`.
+            A trained :class:`CytoANVI` reference (in memory or saved directory). Saved models
+            must include ``encoder_marker_mask_`` (models saved with scvi-tools >= 1.5).
         return_reference_var_names
             If ``True``, only return the reference marker names (no padding/masking).
         inplace
@@ -390,15 +489,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         ref_var_names = pd.Index(var_names)
         if return_reference_var_names:
             return ref_var_names
-
-        # The actual prep needs the in-memory reference to verify the shared backbone: the encoder
-        # marker set (encoder_marker_mask) is not recoverable from saved files alone.
-        if isinstance(reference_model, str):
-            raise ValueError(
-                "Panel-aware prepare_query_anndata needs an in-memory reference model to verify "
-                "the shared backbone (the encoder marker set is not recoverable from saved files "
-                "alone). Load it first: reference_model = CytoANVI.load(path)."
-            )
+        backbone_mask = cls._encoder_mask_from_reference(reference_model, ref_var_names)
 
         setup_args = attr_dict["registry_"][_SETUP_ARGS_KEY]
         nan_layer_key = setup_args.get("nan_layer")
@@ -416,18 +507,6 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         # Markers absent from the query panel (in reference order) — masked after padding.
         missing_markers = ref_var_names.difference(adata.var_names)
-
-        # Reference backbone = the encoder markers. CytoVI encodes *only* the backbone, and
-        # scArches re-derives the query backbone from its nan mask, so the query backbone must
-        # match the reference backbone exactly. With a nan_layer set, CytoVI always builds this.
-        enc = getattr(reference_model.module, "encoder_marker_mask", None)
-        if enc is None or len(enc) != len(ref_var_names):
-            raise ValueError(
-                "The reference has no usable encoder backbone mask (encoder_marker_mask); "
-                "panel-aware prep needs a reference whose nan_layer yields a genuine backbone / "
-                "panel-specific split."
-            )
-        backbone_mask = np.asarray(enc, dtype=bool)
 
         backbone_markers = ref_var_names[backbone_mask]
         missing_backbone = backbone_markers.intersection(missing_markers)
@@ -575,6 +654,44 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         model._training_plan_cls = CytoANVIContinualTrainingPlan
         return model
 
+    @classmethod
+    def load(
+        cls,
+        dir_path: str,
+        adata=None,
+        accelerator: str = "auto",
+        device: int | str = "auto",
+        prefix: str | None = None,
+        backup_url: str | None = None,
+        datamodule=None,
+        allowed_classes_names_list: list[str] | None = None,
+    ):
+        """Load a saved model; backfill ``encoder_marker_mask_`` from the module when absent."""
+        model = super().load(
+            dir_path,
+            adata=adata,
+            accelerator=accelerator,
+            device=device,
+            prefix=prefix,
+            backup_url=backup_url,
+            datamodule=datamodule,
+            allowed_classes_names_list=allowed_classes_names_list,
+        )
+        if getattr(model, "encoder_marker_mask_", None) is None:
+            model._sync_encoder_marker_mask_attr()
+        return model
+
+    def save(self, dir_path, prefix=None, overwrite=False, save_anndata=False, **kwargs):
+        """Save model state, including ``encoder_marker_mask_`` for panel-aware query prep."""
+        self._sync_encoder_marker_mask_attr()
+        return super().save(
+            dir_path,
+            prefix=prefix,
+            overwrite=overwrite,
+            save_anndata=save_anndata,
+            **kwargs,
+        )
+
     @torch.inference_mode()
     def get_uncertainty(
         self,
@@ -595,11 +712,28 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         """
         self._check_if_trained(warn=False)
         adata = self._validate_anndata(adata)
+        was_training = self.module.training
+        self.module.eval()
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
         scores = []
-        for tensors in scdl:
-            inference_inputs = self.module._get_inference_input(tensors)
-            scores.append(
-                compute_uncertainty_scores(inference_inputs, self.module, tta_rep=tta_rep)
-            )
+        nan_key = CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK
+        enc_mask = getattr(self.module, "encoder_marker_mask", None)
+        try:
+            for tensors in scdl:
+                inference_inputs = self.module._get_inference_input(tensors)
+                nan_mask = None
+                if nan_key in tensors:
+                    full_mask = tensors[nan_key]
+                    if enc_mask is not None:
+                        nan_mask = full_mask[..., enc_mask]
+                    else:
+                        nan_mask = full_mask
+                scores.append(
+                    compute_uncertainty_scores(
+                        inference_inputs, self.module, tta_rep=tta_rep, nan_mask=nan_mask
+                    )
+                )
+        finally:
+            if was_training:
+                self.module.train()
         return torch.cat(scores).numpy()

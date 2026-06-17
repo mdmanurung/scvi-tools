@@ -145,6 +145,11 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             use_layer_norm=use_layer_norm_decoder,
         )
 
+        if n_labels < 1:
+            raise ValueError(
+                "CytoANVAE requires n_labels >= 1 (at least one observed cell-type category "
+                "excluding the unlabeled category)."
+            )
         self.y_prior = torch.nn.Parameter(
             y_prior if y_prior is not None else (1 / n_labels) * torch.ones(1, n_labels),
             requires_grad=False,

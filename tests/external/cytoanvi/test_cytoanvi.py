@@ -452,8 +452,7 @@ def test_cytoanvi_prepare_query_rejects_partial_backbone():
 
 
 def test_cytoanvi_prepare_query_rejects_path_reference(save_path):
-    # a saved path is fine for var-name lookup, but the actual prep needs an in-memory model
-    # (the encoder backbone can't be verified from saved files alone)
+    # saved path works for prep when encoder_marker_mask_ is persisted (scvi-tools >= 1.5)
     ref = _make_backbone_reference()
     path = os.path.join(save_path, "ref_for_prep")
     ref.save(path, overwrite=True, save_anndata=True)
@@ -462,8 +461,9 @@ def test_cytoanvi_prepare_query_rejects_path_reference(save_path):
     names = CytoANVI.prepare_query_anndata(query, path, return_reference_var_names=True)
     assert list(names) == list(ref.adata.var_names)
 
-    with pytest.raises(ValueError, match="in-memory"):
-        CytoANVI.prepare_query_anndata(query, path)
+    query2 = _make_adata()[:, list(ref.adata.var_names[:25])].copy()
+    CytoANVI.prepare_query_anndata(query2, path)
+    assert NAN_LAYER_KEY in query2.layers
 
 
 def test_cytoanvi_prepare_query_requires_nan_layer(adata):
@@ -637,3 +637,139 @@ def test_cytoanvi_uncertainty_flags_ood(adata):
     assert np.all(np.isfinite(unc))
     assert np.all(unc >= -1e-6)  # Bregman Information is non-negative
     assert unc[ood].mean() > unc[~ood].mean()  # OOD cells are flagged as more uncertain
+
+
+def test_cytoanvi_all_unlabeled_raises(adata):
+    adata.obs[LABELS_KEY] = UNLABELED
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+    )
+    with pytest.raises(ValueError, match="at least one observed"):
+        CytoANVI(adata, n_latent=10)
+
+
+def test_cytoanvi_inherited_cytovi_smoke(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+    norm = model.get_normalized_expression()
+    assert norm.shape[0] == adata.n_obs
+    de = model.differential_expression(groupby=LABELS_KEY)
+    assert len(de) > 0
+
+
+def test_cytoanvi_select_replay_by_uncertainty(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+    replay = CytoANVI.select_replay_by_uncertainty(model, adata, fraction=0.2)
+    assert 0 < replay.n_obs < adata.n_obs
+
+
+def test_cytoanvi_encoder_mask_saved_path_prep(adata, save_path):
+    a1 = _make_adata(n_genes=30, n_batches=1)
+    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1.obs_names = "a1_" + a1.obs_names
+    a2.obs_names = "a2_" + a2.obs_names
+    merged = cytovi_pp.merge_batches([a1, a2])
+    CytoANVI.setup_anndata(
+        merged,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        nan_layer=NAN_LAYER_KEY,
+    )
+    ref = CytoANVI(merged, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+    path = os.path.join(save_path, "ref_encoder_mask")
+    ref.save(path, overwrite=True, save_anndata=True)
+
+    backbone = list(ref.adata.var_names[ref.encoder_marker_mask_])
+    query = _make_adata()[:, backbone].copy()
+    query.obs[LABELS_KEY] = UNLABELED
+    CytoANVI.prepare_query_anndata(query, path)
+    assert list(query.var_names) == list(ref.adata.var_names)
+
+
+def test_cytoanvi_prepare_query_path_no_longer_rejects(save_path):
+    ref = _make_backbone_reference()
+    path = os.path.join(save_path, "ref_for_prep_v2")
+    ref.save(path, overwrite=True, save_anndata=True)
+    query = _make_adata()[:, list(ref.adata.var_names[:25])].copy()
+    CytoANVI.prepare_query_anndata(query, path)
+    assert NAN_LAYER_KEY in query.layers
+
+
+def test_cytoanvi_continual_resume_replay(adata, save_path):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=N_EPOCHS)
+    replay = adata[:128].copy()
+    query = _make_adata()
+    query.obs[LABELS_KEY] = UNLABELED
+    q = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=replay, control_adata=query[:64].copy()
+    )
+    q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    path = os.path.join(save_path, "continual_resume")
+    q.save(path, overwrite=True, save_anndata=True)
+    q2 = CytoANVI.load(path)
+    assert q2.module.continual.replay_batches is None
+    with pytest.warns(UserWarning, match="replay buffer"):
+        q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    q3 = CytoANVI.load_query_data_with_replay(
+        query, ref, replay_adata=replay, control_adata=query[:64].copy()
+    )
+    q3.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    assert q3.module.continual.replay_batches is not None
+
+
+def test_cytoanvi_uncertainty_multipanel():
+    a1 = _make_adata(n_genes=30, n_batches=1)
+    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1.obs_names = "a1_" + a1.obs_names
+    a2.obs_names = "a2_" + a2.obs_names
+    merged = cytovi_pp.merge_batches([a1, a2])
+    CytoANVI.setup_anndata(
+        merged,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        nan_layer=NAN_LAYER_KEY,
+    )
+    model = CytoANVI(merged, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+    unc = model.get_uncertainty(tta_rep=3)
+    assert unc.shape == (merged.n_obs,)
+    assert np.all(np.isfinite(unc))
+
+
+def test_example_reference_query_runs():
+    from scvi.external.cytoanvi import example_reference_query
+
+    example_reference_query.main(max_epochs=2)

@@ -90,6 +90,39 @@ def main(max_epochs: int = 20) -> None:
     print("[done] same-panel reference -> surgery -> label transfer complete.\n")
 
     panel_divergent_query(max_epochs=max_epochs)
+    uncertainty_and_continual(max_epochs=max_epochs)
+
+
+def uncertainty_and_continual(max_epochs: int = 20) -> None:
+    """Uncertainty scoring + continual update on a pseudo case/control split."""
+    ref = _make_cytometry_adata(seed=4)
+    ref.obs[LABELS_KEY] = ref.obs[LABELS_KEY].astype(str)
+    ref.obs.loc[ref.obs[LABELS_KEY] == "label_0", LABELS_KEY] = UNLABELED
+
+    CytoANVI.setup_anndata(
+        ref,
+        layer=LAYER,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+    )
+    model = CytoANVI(ref, n_latent=10)
+    model.train(max_epochs=max_epochs)
+
+    unc = model.get_uncertainty(tta_rep=5)
+    print(f"[uncertainty] mean BI={unc.mean():.4f}, max={unc.max():.4f}")
+
+    replay = CytoANVI.select_replay_by_uncertainty(model, ref, fraction=0.2)
+    query = _make_cytometry_adata(seed=5)
+    query.obs[LABELS_KEY] = UNLABELED
+    control = query[:64].copy()
+
+    updated = CytoANVI.load_query_data_with_replay(
+        query, model, replay_adata=replay, control_adata=control
+    )
+    updated.train(max_epochs=max_epochs, plan_kwargs={"ewc_importance": 1.0})
+    print(f"[continual] query predictions: {updated.predict()[:5]}")
+    print("[done] uncertainty + continual update complete.")
 
 
 def panel_divergent_query(max_epochs: int = 20) -> None:

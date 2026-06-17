@@ -37,3 +37,13 @@ PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytovi.run \
 
 Runs CytoVI, Harmony, and cyCombinePy under min-max / z-score / rank preprocessing; reports
 scib-metrics aggregates.
+
+## A3 — marker imputation (Figure S4)
+
+CytoVI vs KNN (k=10) only — cyCombinePy has no imputation API.
+
+```bash
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytovi.run \
+  --dataset roider --task a3 --max-epochs 1000 --max-cells 50000 \
+  --batch-key batch --out .scratch/cytovi-benchmark/results/a3_roider.json
+```

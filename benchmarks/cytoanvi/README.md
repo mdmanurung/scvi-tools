@@ -34,6 +34,21 @@ Requires `scib-metrics` (and `python-igraph` + `leidenalg` for some scib metrics
 | `Nunez_PBMCs_batch1.fcs` | 55982654 | D2 batch 1 |
 | `Nunez_PBMCs_batch2.fcs` | 55982657 | D2 batch 2 |
 
+Place Nuñez files in **`data/`** at the repo root (preferred) or `benchmarks/cytoanvi/data/`.
+The loader resolves both automatically.
+
+**Nuñez labels (D2):** FCS files have no cell types. For the 11 PBMC subsets from the CytoVI
+tutorial, generate once and reuse:
+
+```bash
+PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
+  -m benchmarks.cytoanvi.annotate_nunez \
+  --data-dir data --out data/nunez_annotated.h5ad --max-epochs 100
+```
+
+`load_nunez()` prefers `data/nunez_annotated.h5ad` when present (skips FCS + proxy Leiden).
+Checkpoint: `.scratch/cytoanvi-benchmark/nunez_cytovi_ckpt` for fast re-runs.
+
 ```bash
 cd benchmarks/cytoanvi/data
 for id in 56891468 56891471; do curl -L -o $id.h5ad "https://figshare.com/ndownloader/files/$id"; done
@@ -44,6 +59,13 @@ Then **inspect** to discover the real obs-column names (label/batch/sample keys)
 known until the data is in hand:
 ```bash
 ... python -m benchmarks.cytoanvi.run --dataset roider --inspect
+```
+
+Fetch or validate vignette files:
+```bash
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.common.fetch_data --fetch
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.common.fetch_data --validate-only
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.common.fetch_data --list-full-cohort
 ```
 and run with the discovered keys:
 ```bash
@@ -58,10 +80,14 @@ and run with the discovered keys:
 - **Track A cyCombine baseline:** [cyCombinePy](https://github.com/mdmanurung/cyCombinePy) — batch correction only, not imputation.
 - Metrics use **scib-metrics** aggregates (`batch_correction`, `bio_conservation`, `total`).
 
-## Tasks → CytoANVI features (B4 continual deferred — needs a case/control axis)
+## Tasks → CytoANVI features
 | Task | Measures | API exercised | Baseline |
 |------|----------|---------------|----------|
 | B1 | label-transfer accuracy / macro-F1 on held-out labels | `predict` | CytoVI + kNN |
 | B2 | batch mixing vs bio conservation of the latent | `get_latent_representation` | CytoVI latent |
 | B3 | panel-1 → panel-2 mapping (panel-aware prep + surgery) | `prepare_query_anndata`, `load_query_data`, `predict` | CytoVI kNN (concordance) |
+| B4 | continual vs plain surgery (pseudo batch split) | `load_query_data_with_replay`, `select_replay_by_uncertainty` | plain `load_query_data` |
 | B5 | flags a held-out (novel) cell type | `get_uncertainty` | — |
+| B6 | λ (`ewc_importance`) sweep | continual plan kwargs | — |
+
+Use `--require-annotated-nunez` for Nuñez runs that must use manual tutorial labels (not Leiden proxy).

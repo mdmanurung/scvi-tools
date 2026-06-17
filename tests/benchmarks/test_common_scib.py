@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from anndata import AnnData
@@ -43,3 +45,14 @@ def test_run_scib_benchmark_returns_aggregates():
 )
 def test_holdout_safe_name(holdout, expected):
     assert holdout_safe_name(holdout) == expected
+
+
+def test_validate_vignette_roider_ok():
+    from benchmarks.common.fetch_data import validate_vignette
+
+    data_dir = Path("benchmarks/cytoanvi/data")
+    if not (data_dir / "roider_p1.h5ad").exists():
+        pytest.skip("vignette roider data not present")
+    report = validate_vignette(data_dir)
+    assert report["roider_p1.h5ad"]["ok"]
+    assert report["roider_p2.h5ad"]["ok"]

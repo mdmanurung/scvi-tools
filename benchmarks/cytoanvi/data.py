@@ -159,8 +159,26 @@ def load_nunez(
     leiden_resolution: float = 0.05,
     annotate: bool = True,
     seed: int = 0,
+    annotated_h5ad: str | None = "nunez_annotated.h5ad",
 ):
-    """Load D2: read Nuñez FCS batches, preprocess, merge, Leiden labels, optional subsample."""
+    """Load D2: Nuñez PBMC vignette.
+
+    If ``nunez_annotated.h5ad`` exists (CytoVI tutorial manual labels), load it and skip
+    FCS I/O plus on-the-fly Leiden. Otherwise read FCS, preprocess, merge, and optionally
+    assign proxy Leiden labels (not interchangeable with tutorial names).
+    """
+    if annotated_h5ad:
+        h5ad_path = _resolve_file(data_dir, annotated_h5ad)
+        if os.path.exists(h5ad_path) and os.path.getsize(h5ad_path) > 0:
+            import scanpy as sc
+
+            merged = sc.read_h5ad(h5ad_path)
+            if labels_key != "cell_type" and labels_key not in merged.obs and "cell_type" in merged.obs:
+                merged.obs[labels_key] = merged.obs["cell_type"]
+            if max_cells is not None and merged.n_obs > max_cells:
+                merged = _subsample_batches(merged, "batch", max_cells, seed=seed)
+            return merged
+
     import numpy as np
     from scvi.external import cytovi
 
@@ -193,6 +211,13 @@ def load_nunez(
     return merged
 
 
+def _subset_roider_patients(merged, max_patients: int | None):
+    if max_patients is None:
+        return merged
+    keep = sorted(merged.obs["PatientID"].astype(str).unique())[:max_patients]
+    return merged[merged.obs["PatientID"].astype(str).isin(keep)].copy()
+
+
 def load_roider_full(
     data_dir: str | None = None,
     *,
@@ -201,11 +226,16 @@ def load_roider_full(
     max_cells_per_patient: int = 10_000,
     cache_path: str | None = None,
     seed: int = 0,
+    annotate_metadata: bool = True,
+    leiden_labels: bool = True,
+    leiden_resolution: float = 1.0,
+    labels_key: str = "cell_type",
+    leiden_refresh: bool = False,
 ):
     """Load full Roider cohort from extracted ``data/roider_raw/`` FCS (issue cytovi-benchmark/02).
 
     Expects ``data/24915633.zip`` extracted via ``python -m benchmarks.common.ingest --extract-roider``.
-    Gating is not reimplemented here — uses pre-exported ``Panel{1,2}_*.fcs`` files as-is.
+    Panel-1 ``cell_type`` labels are Leiden clusters (proxy; not manual gating).
     """
     import scanpy as sc
     import anndata as ad
@@ -219,8 +249,23 @@ def load_roider_full(
     cache = Path(cache_path) if cache_path else repo_data / "roider_full" / "merged.h5ad"
     if cache.exists() and cache.stat().st_size > 0:
         merged = _ensure_scaled(sc.read(cache))
+        merged = _subset_roider_patients(merged, max_patients)
         p1 = merged[merged.obs["panel_batch"].astype(str) == "0"].copy()
         p2 = merged[merged.obs["panel_batch"].astype(str) == "1"].copy()
+        if annotate_metadata:
+            from benchmarks.common.roider_metadata import annotate_roider_obs, load_patient_entity_map
+
+            annotate_roider_obs(
+                merged,
+                p1,
+                p2,
+                load_patient_entity_map(),
+                labels_key=labels_key,
+                leiden=leiden_labels,
+                leiden_resolution=leiden_resolution,
+                leiden_refresh=leiden_refresh,
+                leiden_write_cache=max_patients is None,
+            )
         return merged, p1, p2
 
     if not raw.exists():
@@ -266,13 +311,29 @@ def load_roider_full(
     if not panel1_list or not panel2_list:
         raise RuntimeError("No paired panel1/panel2 patients loaded")
 
-    p1 = ad.concat(panel1_list, join="outer", label="patient_batch")
-    p2 = ad.concat(panel2_list, join="outer", label="patient_batch")
+    # Inner join: patients can differ in exported marker sets; outer concat leaves NaNs
+    # in ``scaled`` and ``merge_batches`` rejects those.
+    p1 = ad.concat(panel1_list, join="inner", label="patient_batch")
+    p2 = ad.concat(panel2_list, join="inner", label="patient_batch")
     p1.obs_names_make_unique()
     p2.obs_names_make_unique()
     merged = cytovi.merge_batches([p1, p2], batch_key="panel_batch")
     cache.parent.mkdir(parents=True, exist_ok=True)
     merged.write(cache)
+    if annotate_metadata:
+        from benchmarks.common.roider_metadata import annotate_roider_obs, load_patient_entity_map
+
+        annotate_roider_obs(
+            merged,
+            p1,
+            p2,
+            load_patient_entity_map(),
+            labels_key=labels_key,
+            leiden=leiden_labels,
+            leiden_resolution=leiden_resolution,
+            leiden_refresh=leiden_refresh,
+            leiden_write_cache=max_patients is None,
+        )
     return merged, p1, p2
 
 

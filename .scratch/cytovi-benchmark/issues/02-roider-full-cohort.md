@@ -23,3 +23,10 @@ Keep vignette `.h5ad` (56891468/71) as `--smoke` only.
 - Loader returns `(merged, panel1, panel2)` compatible with existing B3 API
 
 ## Comments
+
+### 2026-06-17
+
+Archives dropped in ``data/24915633.zip`` and ``data/ffkvft27ds-2.zip``. Extract:
+``python -m benchmarks.common.ingest --extract-roider --extract-kreutmair``.
+Inventory: ``data/ingest_inventory.json``. Loader scaffold: ``load_roider_full()`` +
+``--dataset roider-full`` (125 FCS, ~63 patients when regex + pairing complete).

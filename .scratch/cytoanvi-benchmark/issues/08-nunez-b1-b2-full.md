@@ -1,7 +1,7 @@
 # 08 — Run B1 + B2 on full Nuñez (scib, epochs=1000)
 
 Status: ready-for-agent
-Blocked-by: cytovi-benchmark/01, cytovi-benchmark/03, 05
+Blocked-by: cytovi-benchmark/01
 
 ## Task
 
@@ -22,7 +22,17 @@ PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytoanvi.run \
 - B1: macro-F1 mean ± SD over 3 seeds; pass if ≥ baseline +0.03
 - B2: scib aggregates for CytoANVI and CytoVI; bio within ±0.02, batch ≥ baseline
 
-## Comments
+### 2026-06-17
+
+Vignette FCS (17 MB each) in ``data/Nunez_PBMCs_batch{1,2}.fcs``, symlinked into harness.
+**Issue 08 B1/B2** running at ``max_epochs=1000`` (background log:
+``results/nunez_full_b12.log``). ``readfcs`` installed.
+
+### 2026-06-17
+
+- cytovi-benchmark/03 (scib infra) and issue 05 (readfcs) are done
+- Vignette Nuñez FCS still blocked on Figshare egress from HPC; use
+  `python -m benchmarks.common.fetch_data --fetch` from a networked shell
 
 Supersedes issue 02 (vignette Roider B1/B2) for primary integration/transfer validation — Nuñez is
 the paper's clean fully-labelled batch-replicate setting.

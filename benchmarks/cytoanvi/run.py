@@ -25,13 +25,17 @@ from . import data as data_mod
 from . import tasks as task_mod
 
 
-def _load(dataset, data_dir):
+def _load(dataset, data_dir, leiden_resolution=0.05, max_cells=100_000, roider_max_patients=None):
     if dataset == "synthetic":
         return data_mod.make_synthetic_panels()
     if dataset == "roider":
         return data_mod.load_roider(data_dir)
+    if dataset == "roider-full":
+        return data_mod.load_roider_full(data_dir, max_patients=roider_max_patients)
     if dataset == "nunez":
-        merged = data_mod.load_nunez(data_dir)
+        merged = data_mod.load_nunez(
+            data_dir, leiden_resolution=leiden_resolution, max_cells=max_cells
+        )
         return merged, merged, None
     raise ValueError(dataset)
 
@@ -97,7 +101,7 @@ def _run_tasks(args, p1, p2, unlab, seed):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", choices=["synthetic", "roider", "nunez"], required=True)
+    ap.add_argument("--dataset", choices=["synthetic", "roider", "roider-full", "nunez"], required=True)
     ap.add_argument("--task", choices=["b1", "b2", "b3", "b5", "all"], default="all")
     ap.add_argument("--data-dir", default="benchmarks/cytoanvi/data")
     ap.add_argument("--labels-key", default="labels")
@@ -110,11 +114,25 @@ def main():
     ap.add_argument("--subsample-per-batch", type=int, default=10_000)
     ap.add_argument("--holdout-type", default=None, help="B5: cell type held out as novel")
     ap.add_argument("--holdout-sweep", action="store_true", help="B5: sweep all cell types")
+    ap.add_argument("--leiden-resolution", type=float, default=0.05, help="Nuñez: Leiden resolution")
+    ap.add_argument("--max-cells", type=int, default=100_000, help="Nuñez: subsample cap")
+    ap.add_argument(
+        "--roider-max-patients",
+        type=int,
+        default=None,
+        help="roider-full: cap patients while ingest matures (default: all paired)",
+    )
     ap.add_argument("--inspect", action="store_true")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    merged, p1, p2 = _load(args.dataset, args.data_dir)
+    merged, p1, p2 = _load(
+        args.dataset,
+        args.data_dir,
+        leiden_resolution=args.leiden_resolution,
+        max_cells=args.max_cells,
+        roider_max_patients=args.roider_max_patients,
+    )
 
     if args.inspect:
         _inspect(p1, p2)

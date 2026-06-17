@@ -22,11 +22,25 @@ PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytoanvi.run \
 - B1: macro-F1 mean ± SD over 3 seeds; pass if ≥ baseline +0.03
 - B2: scib aggregates for CytoANVI and CytoVI; bio within ±0.02, batch ≥ baseline
 
-### 2026-06-17
+### 2026-06-17 — e1000 vignette Nuñez (in flight)
 
-Vignette FCS (17 MB each) in ``data/Nunez_PBMCs_batch{1,2}.fcs``, symlinked into harness.
-**Issue 08 B1/B2** running at ``max_epochs=1000`` (background log:
-``results/nunez_full_b12.log``). ``readfcs`` installed.
+- **Labels:** `data/nunez_annotated.h5ad` (11 tutorial PBMC types via `annotate_nunez.py`).
+  `load_nunez()` prefers this file; no `--leiden-resolution` needed.
+- **Running:** `run_e1000.sh` → `nunez_r005_e1000_b1_multiseed.json` (started before output rename;
+  uses annotated h5ad regardless of filename). Future runs → `nunez_annotated_e1000_b*.json`.
+- **Smoke (epochs=100, Leiden r=0.05):** `nunez_r005_seed0_summary.json` — superseded for publication.
+
+### 2026-06-17 — e1000 Roider vignette complete
+
+Rolling summary: `results/e1000/roider_e1000_partial_summary.json`. B1 Δ **+0.12**; B2 batch still
+slightly below CytoVI; B3 concordance **0.877**.
+
+### 2026-06-17 — e1000 in flight (Roider)
+
+Vignette Roider **B1+B2 @ 1000 epochs** complete; **B3** running. Rolling summary:
+``results/e1000/roider_e1000_partial_summary.json``. B1 macro-F1: CytoANVI **0.908±0.008** vs
+k-NN **0.787±0.039** (Δ **+0.12**). B2 bio: CytoANVI **0.737** vs CytoVI **0.628**; batch:
+CytoANVI **0.792** vs CytoVI **0.798** (batch still slightly worse).
 
 ### 2026-06-17
 

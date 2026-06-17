@@ -24,9 +24,12 @@ Keep vignette `.h5ad` (56891468/71) as `--smoke` only.
 
 ## Comments
 
-### 2026-06-17
+### 2026-06-17 — full cache + Entity metadata
 
-Archives dropped in ``data/24915633.zip`` and ``data/ffkvft27ds-2.zip``. Extract:
-``python -m benchmarks.common.ingest --extract-roider --extract-kreutmair``.
-Inventory: ``data/ingest_inventory.json``. Loader scaffold: ``load_roider_full()`` +
-``--dataset roider-full`` (125 FCS, ~63 patients when regex + pairing complete).
+- ``data/roider_full/merged.h5ad``: **1.24M cells**, **62 paired patients**, 894 MB (inner-join
+  marker harmonization across patients).
+- ``data/roider_full/patient_entity.json``: **101 patients** from Nature Supp Table 1
+  (``data/41556_2024_1358_MOESM3_ESM.xlsx``); all 63 FCS patients covered, DLBCL subtypes
+  collapsed to ``DLBCL``.
+- ``load_roider_full()`` annotates ``Entity`` + ``batch`` on load; ``--roider-leiden`` for proxy
+  labels. Full B3/B5 still blocked on manual gating cell types.

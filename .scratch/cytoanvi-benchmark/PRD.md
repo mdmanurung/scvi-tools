@@ -77,8 +77,27 @@ Per-seed JSON: `results/roider_seed{0,1,2}_b{1,2}.json`, `roider_seed0_b{3,5}.js
 `--holdout-sweep`, B5 kwargs filter; `holdout_safe_name()` for sweep filenames (`+`/`-` safe).
 
 **Next:** issues 08–10 on **full** cohorts (`max_epochs=1000`, scib B2) — blocked on
-`cytovi-benchmark/01–02` (data ingest). Issue 03 (scib infra) done; issue 05 (readfcs) unblocks
-Nuñez loader once FCS files land.
+`cytovi-benchmark/01–02` (data ingest). Validate/fetch vignette assets:
+`python -m benchmarks.common.fetch_data --validate-only`. Issue 03 done; readfcs installed (05).
+
+## Vignette e1000 results (2026-06-17) — publication training, still vignette data
+
+**Data:** CytoVI tutorial subsamples (Roider `.h5ad`; Nuñez via `data/nunez_annotated.h5ad`).
+**`max_epochs=1000`**, scib B2 aggregates.
+
+**Roider summary:** `.scratch/cytoanvi-benchmark/results/e1000/roider_e1000_partial_summary.json`
+
+| Task | Result (3 seeds) | PRD target |
+|------|------------------|------------|
+| **B1** | CytoANVI **0.908 ± 0.008** vs k-NN **0.787 ± 0.039** (Δ **+0.121**) | ≥ +0.03 — **pass** |
+| **B2** | Bio CytoANVI **0.737** vs CytoVI **0.628**; batch **0.792** vs **0.798** | bio ±0.02 / batch ≥ baseline — **fail** (better bio, batch slightly worse) |
+| **B3** | p1 holdout F1 **0.917 ± 0.018**; p2 concordance **0.877 ± 0.012** | F1 ≥ k-NN; concordance ≥ 0.70 — **pass** |
+
+**Nuñez e1000:** B1/B2 in flight from `run_e1000.sh` (uses tutorial 11-type labels). Smoke @
+epochs=100 with Leiden r=0.05 superseded by `nunez_annotated.h5ad`.
+
+**Nuñez labels:** `python -m benchmarks.cytoanvi.annotate_nunez` → `data/nunez_annotated.h5ad`;
+`load_nunez()` auto-loads when present.
 
 ## Artifacts
 

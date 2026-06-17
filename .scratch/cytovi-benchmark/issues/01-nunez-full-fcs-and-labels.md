@@ -24,3 +24,17 @@ Deliver `benchmarks/cytovi/data/nunez/` (or shared `benchmarks/common/data/`) wi
 - Loader in `benchmarks/cytovi/data.py` + shared preprocessing
 
 ## Comments
+
+### 2026-06-17 — vignette labels (Track B unblocked for tutorial subsample)
+
+- Vignette FCS in `data/Nunez_PBMCs_batch{1,2}.fcs` (200k merged cells).
+- Tutorial 11-type labels: `data/nunez_annotated.h5ad` via
+  `python -m benchmarks.cytoanvi.annotate_nunez` (CytoVI + Leiden r=0.4 + manual map).
+- **Full cohort** (≥50k beyond vignette / paper manual gating) still open — see YosefLab
+  cytovi-reproducibility notebook for paper-aligned workflow.
+
+### 2026-06-17
+
+Validate vignette assets: `python -m benchmarks.common.fetch_data --validate-only`
+Fetch from networked host: `python -m benchmarks.common.fetch_data --fetch`
+Full-cohort notes: `python -m benchmarks.common.fetch_data --list-full-cohort`

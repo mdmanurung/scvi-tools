@@ -416,6 +416,99 @@ def task_b4_continual(
     }
 
 
+def default_synthetic_hierarchy_edges():
+    """Parent→children edges for synthetic_iid observed labels (label_1 .. label_4)."""
+    return {
+        "label_1": ["label_2", "label_3"],
+        "label_2": ["label_4"],
+        "label_3": [],
+    }
+
+
+def task_b8_hce_label_transfer(
+    adata,
+    labels_key="labels",
+    unlabeled_category="Unknown",
+    batch_key="batch",
+    sample_key=None,
+    nan_layer=None,
+    holdout_frac=0.2,
+    seed=0,
+    max_epochs=1000,
+    n_latent=None,
+    hierarchy_edges=None,
+):
+    """B8: flat CE vs HCE when a user ontology matches observed model labels.
+
+    Trains two CytoANVI models on the same stratified label holdout: default flat CE, then HCE via
+    ``set_hierarchy`` before training. Also scores ``predict_hierarchical(leaf_only=True)`` on the
+    HCE model.
+    """
+    from scvi.external import CytoANVI
+
+    if hierarchy_edges is None:
+        hierarchy_edges = default_synthetic_hierarchy_edges()
+
+    true = np.asarray(adata.obs[labels_key].astype(str))
+    held = _holdout(true, unlabeled_category, holdout_frac, seed)
+
+    work = adata.copy()
+    masked = true.copy()
+    masked[held] = unlabeled_category
+    work.obs[labels_key] = masked
+
+    flat_model, _ = train_cytoanvi(
+        work,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
+        batch_key=batch_key,
+        sample_key=sample_key,
+        nan_layer=nan_layer,
+        n_latent=n_latent,
+        max_epochs=max_epochs,
+    )
+    flat_pred = np.asarray(flat_model.predict())
+
+    hce_work = work.copy()
+    CytoANVI.setup_anndata(
+        hce_work,
+        layer=SCALED_LAYER,
+        batch_key=batch_key,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
+        sample_key=sample_key,
+        nan_layer=nan_layer,
+    )
+    hce_model = CytoANVI(hce_work, n_latent=n_latent)
+    hce_model.set_hierarchy(hierarchy_edges)
+    hce_model.train(max_epochs=max_epochs)
+    hce_model.module.eval()
+    hce_pred = np.asarray(hce_model.predict())
+    hier_pred = np.asarray(hce_model.predict_hierarchical(leaf_only=True))
+
+    flat_metrics = metrics.label_transfer_metrics(true[held], flat_pred[held])
+    hce_metrics = metrics.label_transfer_metrics(true[held], hce_pred[held])
+    hier_metrics = metrics.label_transfer_metrics(true[held], hier_pred[held])
+
+    return {
+        "task": "b8_hce_label_transfer",
+        "seed": seed,
+        "max_epochs": max_epochs,
+        "holdout_frac": holdout_frac,
+        "n_held": int(held.sum()),
+        "hierarchy_edges": hierarchy_edges,
+        "flat_ce": flat_metrics,
+        "hce_flat_predict": hce_metrics,
+        "hce_hierarchical_predict": hier_metrics,
+        "delta_hce_vs_flat_macro_f1": float(
+            hce_metrics["macro_f1"] - flat_metrics["macro_f1"]
+        ),
+        "delta_hierarchical_vs_flat_macro_f1": float(
+            hier_metrics["macro_f1"] - flat_metrics["macro_f1"]
+        ),
+    }
+
+
 def task_b6_lambda_sweep(
     adata,
     labels_key="labels",

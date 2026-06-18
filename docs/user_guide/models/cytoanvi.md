@@ -24,6 +24,7 @@ The limitations of CytoANVI include:
 
 ```{topic} Related tutorials:
 - {doc}`/tutorials/notebooks/cytometry/CytoANVI_tutorial` (label transfer, panel mapping, uncertainty)
+- {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial` (scHPL hierarchy learn/update/predict)
 - {doc}`/tutorials/notebooks/cytometry/CytoVI_batch_correction_tutorial` (CytoVI preprocessing & Nuñez data)
 - {doc}`/tutorials/notebooks/cytometry/CytoVI_advanced_tutorial` (multi-panel Roider mapping)
 - {doc}`/user_guide/models/cytovi` (shared cytometry preprocessing and tasks)
@@ -118,6 +119,96 @@ prob = model.predict(soft=True)  # per-class probabilities
 Unlabeled cells (category `unlabeled_category`) receive predictions; labeled cells can be evaluated
 by masking labels during training.
 
+### Hierarchical cross-entropy (opt-in)
+
+By default CytoANVI uses flat cross-entropy. To train with
+[hierarchical cross-entropy](https://github.com/microsoft/hce-classification) (HCE), supply a
+parent→children ontology or reachability matrix. HCE is **off** until you set a matrix explicitly.
+
+```python
+# Option A: parent → children edges (observed labels only; excludes unlabeled_category)
+edges = {
+    "T cells": ["CD4 T", "CD8 T"],
+    "Myeloid": ["Monocyte", "DC"],
+}
+model.set_hierarchy(edges)
+
+# Option B: precomputed (n_labels, n_labels) reachability matrix at construction
+model = CytoANVI(adata, reachability_matrix=matrix)
+
+model.train(max_epochs=200)
+
+# Hierarchy-consistent predictions (requires set_hierarchy first)
+hier_pred = model.predict_hierarchical()
+hier_prob = model.predict_hierarchical(soft=True)
+# Leaf labels only (skip coarse parents in argmax)
+hier_leaf = model.predict_hierarchical(leaf_only=True)
+```
+
+Reachability is persisted across `save`/`load`. The unlabeled category is never a hierarchy node.
+
+#### When HCE helps
+
+| Source | Non-trivial hierarchy when… |
+|--------|----------------------------|
+| `set_hierarchy(edges)` | Coarse types (e.g. `"T cells"`) are **observed model labels** in the edge dict |
+| `set_hierarchy_from_schpl(tree)` | A coarse type is an scHPL **internal** node whose name matches a model label (or use explicit `label_map`) |
+
+If scHPL maps only **sibling fine types** (no shared coarse label in the model), the reachability
+matrix is often the identity — HCE then matches flat CE for those labels. For batch-specific scHPL
+leaves (`celltype-batch`), pass an explicit `label_map` rather than relying on prefix matching.
+
+**Fail-fast:** `predict_hierarchical()` raises `ValueError` if no hierarchy is set.
+`set_hierarchy` raises on label mismatches, invalid DAGs, or wrong matrix shape — there is no silent
+fallback to flat CE.
+
+See ADR `docs/adr/0003-cytoanvi-hce-schpl-hierarchy.md`.
+
+### treeArches workflow (optional scHPL)
+
+Learn, update, and predict cell-type hierarchies on CytoANVI latents with
+[scHPL](https://schpl.readthedocs.io/) (treeArches-style). Install the optional extra:
+
+```bash
+pip install scvi-tools[cytoanvi-hierarchy]
+```
+
+Import helpers from the optional module (not the top-level `cytoanvi` package):
+
+```python
+from scvi.external.cytoanvi.hierarchy import (
+    latent_to_anndata,
+    learn_hierarchy,
+    update_hierarchy,
+    predict_schpl,
+    set_hierarchy_from_schpl,
+    run_tree_arches_pipeline,
+)
+```
+
+Calling these without scHPL installed raises `ImportError` with the pip command above.
+
+#### Recommended workflow
+
+1. **Reference integration** — train CYTOVI (~1000 epochs), then
+   `CytoANVI.from_cytovi_model` and fine-tune (~200 epochs). Optionally call `set_hierarchy` first
+   if you have a user ontology for HCE.
+2. **Learn hierarchy** — `latent_to_anndata(model, adata)` → `learn_hierarchy` on reference latent
+   (concatenate `cell_type + "-" + batch` for unique labels across studies).
+3. **Optional HCE alignment** — `set_hierarchy_from_schpl(model, tree)` then a short retrain.
+4. **Query surgery** — `prepare_query_anndata` (if panel divergent) → `load_query_data` → train.
+5. **Post-integration hierarchy** — combined latent → `update_hierarchy` (labeled query) or
+   `predict_schpl` (unlabeled query). Compare with `predict_hierarchical()` and flat `predict()`.
+
+Or call `run_tree_arches_pipeline(...)` to chain steps 2–5 in one explicit invocation (each stage
+validates inputs; no silent skip on failure).
+
+For `mode="update"`, provide latents via one of: pre-built `combined_latent`, `combined_adata` plus
+`query_model`, or `reference_adata` + `query_adata` + `query_model` (concatenates with
+`adata.concatenate` — add batch metadata before concat if you need provenance columns).
+
+Tutorial: {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial`.
+
 ### Warm-start from CytoVI
 
 ```python
@@ -181,7 +272,7 @@ updated.train(max_epochs=200, plan_kwargs={"ewc_importance": 100.0})  # λ — r
 `λ=100` for scANVI/RNA; CytoVI's intensity likelihood has different Fisher magnitudes, so λ must be
 retuned (see benchmark task B6).
 
-See ADR `docs/adr/0002-cytoanvi-continual-follows-paper-not-not-code.md` for design notes.
+See ADR `docs/adr/0002-cytoanvi-continual-follows-paper-not-code.md` for design notes.
 
 ## Nuñez PBMC labels (benchmark D2)
 

@@ -11,10 +11,12 @@ from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
 from scvi.external.cytovi._module import CytoVAE
 from scvi.module._classifier import Classifier
 from scvi.module._utils import broadcast_labels
-from scvi.module.base import LossOutput, SupervisedModuleClass
+from scvi import REGISTRY_KEYS
+from scvi.module.base import LossOutput, SupervisedModuleClass, auto_move_data
 from scvi.nn import Decoder, Encoder
 
 from ._continual import ContinualUpdate
+from ._hce import hierarchical_cross_entropy_loss
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -83,6 +85,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         # accepted for compatibility with CytoVAE/CYTOVI but always forced off (see ADR)
         prior_mixture: bool | None = None,
         prior_mixture_k: int | None = None,
+        reachability_matrix: torch.Tensor | None = None,
         **cytovae_kwargs,
     ):
         super().__init__(
@@ -159,6 +162,13 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         # CytoANVI.load_query_data_with_replay (or reattached in on_load). None = base path
         # (the EWC penalty contributes nothing), so the base model is unaffected.
         self.continual: ContinualUpdate | None = None
+
+        reachability_tensor = (
+            torch.as_tensor(reachability_matrix, dtype=torch.float32)
+            if reachability_matrix is not None
+            else None
+        )
+        self.register_buffer("reachability_matrix_", reachability_tensor)
 
     def loss(
         self,
@@ -241,12 +251,48 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             kl_local=kl_divergence,
         )
 
+    @auto_move_data
+    def classification_loss(
+        self, labelled_dataset: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        inference_inputs = self._get_inference_input(labelled_dataset)
+        data_inputs = {
+            key: inference_inputs[key]
+            for key in inference_inputs.keys()
+            if key not in ["batch_index", "cont_covs", "cat_covs", "panel_index"]
+        }
+
+        y = labelled_dataset[REGISTRY_KEYS.LABELS_KEY]
+        batch_idx = labelled_dataset[REGISTRY_KEYS.BATCH_KEY]
+        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
+        cont_covs = labelled_dataset[cont_key] if cont_key in labelled_dataset.keys() else None
+
+        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
+        cat_covs = labelled_dataset[cat_key] if cat_key in labelled_dataset.keys() else None
+
+        logits = self.classify(
+            **data_inputs, batch_index=batch_idx, cat_covs=cat_covs, cont_covs=cont_covs
+        )
+        y_long = y.view(-1).long()
+        if self.reachability_matrix_ is None:
+            ce_loss = F.cross_entropy(logits, y_long)
+        else:
+            ce_loss = hierarchical_cross_entropy_loss(
+                logits, y_long, self.reachability_matrix_
+            )
+        return ce_loss, y, logits
+
     def on_load(self, model, **kwargs):
-        """Reattach the continual update (anchor + Fishers) persisted on the model, if any."""
+        """Reattach persisted continual state and hierarchy reachability, if any."""
         super().on_load(model, **kwargs)
         state = getattr(model, "continual_update_state_", None)
         if state is not None:
             self.continual = ContinualUpdate.from_persistable_state(state)
+        hierarchy = getattr(model, "hierarchy_reachability_", None)
+        if hierarchy is not None:
+            self.reachability_matrix_ = torch.as_tensor(
+                hierarchy, dtype=torch.float32, device=self.device
+            )
 
     def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):
         """Standard CytoANVI loss plus the EWC penalty scaled by ``ewc_importance``."""

@@ -41,6 +41,7 @@ Extend `benchmarks/cytoanvi/` against CytoVI's k-NN baseline on full cohorts.
 | B4 | continual case-control update | `load_query_data_with_replay` | static CytoVI | 10 |
 | B5 | novelty AUROC (holdout sweep) | `get_uncertainty` | — | 09 |
 | B6 | λ (`ewc_importance`) sweep | continual plan kwargs | — | 10 |
+| B8 | flat CE vs HCE holdout macro-F1 | `set_hierarchy`, `predict`, `predict_hierarchical` | flat CE | 12 |
 | B7–B9 | imputation / DA / query fidelity | various | CytoVI | 11 (later) |
 
 ## Success criteria (mean over ≥3 seeds)
@@ -50,6 +51,7 @@ Extend `benchmarks/cytoanvi/` against CytoVI's k-NN baseline on full cohorts.
 - **B3:** panel-1 holdout macro-F1 ≥ k-NN; panel-2 concordance ≥ **0.70**
 - **B5:** best holdout-type AUROC > **0.70**
 - **B4/B6:** λ knee documented as CytoVI-specific default
+- **B8:** document Δ macro-F1 (HCE vs flat CE) when coarse types are observed model labels
 
 ## Prior results (INVALID for PR — vignette / epochs=100 / lightweight B2)
 

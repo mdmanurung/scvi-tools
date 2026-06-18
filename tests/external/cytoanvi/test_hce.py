@@ -1,0 +1,196 @@
+import os
+
+import numpy as np
+import pytest
+import torch
+
+from scvi.data import synthetic_iid
+from scvi.external import CytoANVI
+from scvi.external import cytovi as cytovi_pp
+from scvi.external.cytoanvi._hce import (
+    build_reachability_matrix,
+    hierarchical_cross_entropy_loss,
+)
+
+SCALED_LAYER_KEY = "scaled"
+BATCH_KEY = "batch"
+LABELS_KEY = "labels"
+SAMPLE_KEY = "sample_key"
+UNLABELED = "label_0"
+N_EPOCHS = 2
+
+
+def _make_adata(n_genes=30, n_batches=2, n_labels=5):
+    adata = synthetic_iid(
+        batch_size=256,
+        n_genes=n_genes,
+        n_proteins=0,
+        n_regions=0,
+        n_batches=n_batches,
+        n_labels=n_labels,
+        rna_dist="normal",
+    )
+    adata.obs[SAMPLE_KEY] = np.random.choice(["group_a", "group_b"], size=adata.shape[0])
+    adata.layers["raw"] = adata.X.copy()
+    cytovi_pp.transform_arcsinh(adata)
+    cytovi_pp.scale(adata)
+    return adata
+
+
+@pytest.fixture
+def adata():
+    return _make_adata()
+
+
+def _toy_dag_edges():
+    """A -> B,C; B -> D; C -> E."""
+    return {"A": ["B", "C"], "B": ["D"], "C": ["E"]}
+
+
+def _expected_toy_reachability(label_names):
+    """Reachability[i, j] == 1 iff j is reachable from i (j is i or a descendant)."""
+    idx = {name: i for i, name in enumerate(label_names)}
+    edges = _toy_dag_edges()
+    n = len(label_names)
+    reach = np.zeros((n, n), dtype=np.float32)
+
+    def descendants(node):
+        out = {node}
+        for child in edges.get(node, []):
+            out |= descendants(child)
+        return out
+
+    for i, name in enumerate(label_names):
+        for desc in descendants(name):
+            reach[i, idx[desc]] = 1.0
+    return reach
+
+
+def test_build_reachability_matrix_toy_dag():
+    label_names = ["A", "B", "C", "D", "E"]
+    matrix = build_reachability_matrix(label_names, _toy_dag_edges())
+    expected = _expected_toy_reachability(label_names)
+    assert matrix.shape == (5, 5)
+    np.testing.assert_array_equal(matrix, expected)
+
+
+def test_hierarchical_cross_entropy_loss_finite():
+    label_names = ["A", "B", "C", "D", "E"]
+    reachability = torch.tensor(
+        build_reachability_matrix(label_names, _toy_dag_edges()), dtype=torch.float32
+    )
+    logits = torch.randn(16, 5)
+    targets = torch.randint(0, 5, (16,))
+    loss = hierarchical_cross_entropy_loss(logits, targets, reachability)
+    assert torch.isfinite(loss)
+    assert loss.ndim == 0
+
+
+def _synthetic_hierarchy_edges():
+    """Hierarchy over synthetic_iid observed labels (label_1 .. label_4)."""
+    return {
+        "label_1": ["label_2", "label_3"],
+        "label_2": ["label_4"],
+        "label_3": [],
+    }
+
+
+def _setup_cytoanvi(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    return CytoANVI(adata, n_latent=10)
+
+
+def test_cytoanvi_set_hierarchy_train_uses_hce(adata):
+    model = _setup_cytoanvi(adata)
+    model.set_hierarchy(_synthetic_hierarchy_edges())
+    assert model.hierarchy_reachability_ is not None
+    assert model.module.reachability_matrix_ is not None
+    model.train(max_epochs=N_EPOCHS)
+    assert model.is_trained
+    assert model.module.reachability_matrix_ is not None
+
+
+def test_predict_hierarchical_raises_without_hierarchy(adata):
+    model = _setup_cytoanvi(adata)
+    model.train(max_epochs=N_EPOCHS)
+    with pytest.raises(ValueError, match="hierarchy"):
+        model.predict_hierarchical()
+
+
+def test_predict_hierarchical_soft_returns_probabilities(adata):
+    model = _setup_cytoanvi(adata)
+    model.set_hierarchy(_synthetic_hierarchy_edges())
+    model.train(max_epochs=N_EPOCHS)
+
+    probs = model.predict_hierarchical(soft=True)
+    label_names = model._observed_label_names()
+    assert list(probs.columns) == label_names
+    assert probs.shape == (adata.n_obs, len(label_names))
+    values = np.asarray(probs.values)
+    assert np.all(np.isfinite(values))
+    assert (values >= 0).all()
+
+
+def test_set_hierarchy_raises_on_label_mismatch(adata):
+    model = _setup_cytoanvi(adata)
+    bad_edges = {"not_a_real_label": ["also_fake"]}
+    with pytest.raises(ValueError):
+        model.set_hierarchy(bad_edges)
+
+
+def test_set_hierarchy_twice(adata):
+    model = _setup_cytoanvi(adata)
+    edges = _synthetic_hierarchy_edges()
+    model.set_hierarchy(edges)
+    reach_first = model.hierarchy_reachability_.copy()
+    model.set_hierarchy(edges)
+    np.testing.assert_array_equal(model.hierarchy_reachability_, reach_first)
+    assert model.module.reachability_matrix_ is not None
+
+
+def test_cytoanvi_hierarchy_save_load(adata, tmp_path):
+    model = _setup_cytoanvi(adata)
+    model.set_hierarchy(_synthetic_hierarchy_edges())
+    model.train(max_epochs=N_EPOCHS)
+    reach_before = model.hierarchy_reachability_.copy()
+
+    model_path = os.path.join(tmp_path, "test_cytoanvi_hierarchy")
+    model.save(model_path, save_anndata=True, overwrite=True)
+    model2 = CytoANVI.load(model_path)
+
+    assert model2.hierarchy_reachability_ is not None
+    np.testing.assert_array_equal(model2.hierarchy_reachability_, reach_before)
+    assert model2.module.reachability_matrix_ is not None
+    np.testing.assert_allclose(
+        model2.module.reachability_matrix_.cpu().numpy(),
+        reach_before,
+    )
+
+
+def test_set_hierarchy_twice_save_load(adata, tmp_path):
+    """Save/load round-trip after calling set_hierarchy more than once."""
+    model = _setup_cytoanvi(adata)
+    edges = _synthetic_hierarchy_edges()
+    model.set_hierarchy(edges)
+    model.set_hierarchy(edges)
+    model.train(max_epochs=N_EPOCHS)
+    reach_before = model.hierarchy_reachability_.copy()
+
+    model_path = os.path.join(tmp_path, "test_cytoanvi_hierarchy_twice")
+    model.save(model_path, save_anndata=True, overwrite=True)
+    model2 = CytoANVI.load(model_path)
+
+    assert model2.hierarchy_reachability_ is not None
+    np.testing.assert_array_equal(model2.hierarchy_reachability_, reach_before)
+    assert model2.module.reachability_matrix_ is not None
+    np.testing.assert_allclose(
+        model2.module.reachability_matrix_.cpu().numpy(),
+        reach_before,
+    )

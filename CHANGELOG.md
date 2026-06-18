@@ -21,7 +21,14 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
     `get_uncertainty` (test-time-augmentation Bregman Information), following the comparative-atlas
     (cscanvi) paper. The continual update is owned by a single `ContinualUpdate` module whose EWC
     anchor and Fisher importances persist across `save`/`load` (the session-scoped replay buffer is
-    not persisted).
+    not persisted).     Adds `select_replay_by_uncertainty`, saved-model panel prep via
+    `encoder_marker_mask_`, and benchmark tasks B4/B6.
+- Add optional hierarchical cross-entropy (HCE) for CytoANVI via explicit reachability matrix
+    (`set_hierarchy`, `predict_hierarchical`; flat CE remains default). Add optional
+    `cytoanvi-hierarchy` extra (`pip install scvi-tools[cytoanvi-hierarchy]`) with scHPL
+    treeArches helpers in `scvi.external.cytoanvi.hierarchy` (`learn_hierarchy`,
+    `update_hierarchy`, `predict_schpl`, `set_hierarchy_from_schpl`,
+    `run_tree_arches_pipeline`).
 
 #### Fixed
 

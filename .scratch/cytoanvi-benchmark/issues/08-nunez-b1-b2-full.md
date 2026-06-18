@@ -3,6 +3,12 @@
 Status: ready-for-agent
 Blocked-by: cytovi-benchmark/01
 
+### 2026-06-18 — B8 HCE benchmark harness
+
+- **Task B8** added to `benchmarks/cytoanvi/tasks.py` (flat CE vs HCE + hierarchical predict).
+- Smoke: `--dataset synthetic --task b8 --max-epochs 50`
+- Real runs: pass `--hierarchy-edges` JSON with coarse+fine observed labels (issue 12).
+
 ## Task
 
 On **full** Nuñez batch replicate (B-D2):

@@ -89,5 +89,13 @@ and run with the discovered keys:
 | B4 | continual vs plain surgery (pseudo batch split) | `load_query_data_with_replay`, `select_replay_by_uncertainty` | plain `load_query_data` |
 | B5 | flags a held-out (novel) cell type | `get_uncertainty` | — |
 | B6 | λ (`ewc_importance`) sweep | continual plan kwargs | — |
+| B8 | flat CE vs HCE on held-out labels | `set_hierarchy`, `predict`, `predict_hierarchical` | flat CE on same holdout |
 
 Use `--require-annotated-nunez` for Nuñez runs that must use manual tutorial labels (not Leiden proxy).
+
+B8 smoke:
+```bash
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytoanvi.run \
+  --dataset synthetic --task b8 --max-epochs 50 --seed 0
+```
+Pass `--hierarchy-edges path/to/edges.json` for real-data ontologies (parent→children dict).

@@ -4,6 +4,7 @@
 :maxdepth: 1
 
 notebooks/cytometry/CytoANVI_tutorial
+notebooks/cytometry/CytoANVI_treeArches_tutorial
 notebooks/cytometry/CytoVI_batch_correction_tutorial
 notebooks/cytometry/CytoVI_advanced_tutorial
 ```
@@ -13,6 +14,13 @@ notebooks/cytometry/CytoVI_advanced_tutorial
 :tags: Integration, Analysis, Cytometry, Label-transfer
 
 Semi-supervised label transfer and panel-aware query mapping with CytoANVI
+```
+
+```{customcard}
+:path: notebooks/cytometry/CytoANVI_treeArches_tutorial
+:tags: Integration, Analysis, Cytometry, Hierarchy
+
+Learn and update cell-type hierarchies on CytoANVI latents with scHPL (treeArches)
 ```
 
 ```{customcard}

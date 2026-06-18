@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from scvi import settings
+from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data._constants import _SETUP_ARGS_KEY, _SETUP_METHOD_NAME
 from scvi.data.fields import (
@@ -26,6 +26,7 @@ from scvi.model.base._archesmixin import ArchesMixin, _get_loaded_data
 from scvi.utils import setup_anndata_dsp
 
 from ._continual import ContinualUpdate, CytoANVIContinualTrainingPlan
+from ._hce import build_reachability_matrix, validate_reachability_matrix
 from ._module import CytoANVAE
 from ._uncertainty import compute_uncertainty_scores
 
@@ -104,6 +105,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     - :meth:`from_cytovi_model` returns an unfit model still in train mode; call
       ``model.module.eval()`` before :meth:`get_latent_representation` if inspecting it prior to
       :meth:`train`.
+    - Optional hierarchical CE: :meth:`set_hierarchy` / :meth:`predict_hierarchical` (flat CE when
+      no matrix is set). Optional scHPL treeArches helpers:
+      ``scvi.external.cytoanvi.hierarchy`` (requires ``scvi-tools[cytoanvi-hierarchy]``).
     """
 
     _module_cls = CytoANVAE
@@ -121,8 +125,14 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         encoder_marker_list: list | None = None,
         linear_classifier: bool = False,
         y_prior: str | torch.Tensor | None = "uniform",
+        hierarchy_edges: dict[str, list[str]] | None = None,
+        reachability_matrix: np.ndarray | torch.Tensor | None = None,
         **model_kwargs,
     ):
+        if hierarchy_edges is not None and reachability_matrix is not None:
+            raise ValueError(
+                "Pass only one of hierarchy_edges or reachability_matrix, not both."
+            )
         if latent_distribution != "normal":
             raise NotImplementedError(
                 "CytoANVI only supports latent_distribution='normal'; the semi-supervised z1 "
@@ -162,6 +172,16 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         y_prior_tensor = self._resolve_y_prior(y_prior, n_labels)
 
+        reachability_tensor = None
+        if reachability_matrix is not None:
+            reachability_arr = np.asarray(
+                reachability_matrix.detach().cpu().numpy()
+                if isinstance(reachability_matrix, torch.Tensor)
+                else reachability_matrix
+            )
+            validate_reachability_matrix(reachability_arr, n_labels)
+            reachability_tensor = torch.tensor(reachability_arr, dtype=torch.float32)
+
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,
             n_batch=self.summary_stats.n_batch,
@@ -177,8 +197,14 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             encoder_marker_mask=base.encoder_marker_mask,
             linear_classifier=linear_classifier,
             y_prior=y_prior_tensor,
+            reachability_matrix=reachability_tensor,
             **model_kwargs,
         )
+
+        if hierarchy_edges is not None:
+            self._apply_hierarchy(hierarchy_edges=hierarchy_edges)
+        elif reachability_tensor is not None:
+            self.hierarchy_reachability_ = reachability_tensor.detach().cpu().numpy()
 
         self._model_summary_string = (
             f"CytoANVI Model with the following params: \nunlabeled_category: "
@@ -191,13 +217,159 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         self.was_pretrained = False
         self.n_labels = n_labels
         self._sync_encoder_marker_mask_attr()
-        self.init_params_ = self._get_init_params(locals())
+        init_locals = locals()
+        init_locals.pop("hierarchy_edges", None)
+        init_locals.pop("reachability_matrix", None)
+        self.init_params_ = self._get_init_params(init_locals)
 
     def _sync_encoder_marker_mask_attr(self) -> None:
         """Persist backbone mask on the model for save/load and path-only query prep."""
         enc = getattr(self.module, "encoder_marker_mask", None)
         self.encoder_marker_mask_ = (
             np.asarray(enc, dtype=bool) if enc is not None else None
+        )
+
+    def _observed_label_names(self) -> list[str]:
+        """Return observed label category names (excluding the unlabeled category)."""
+        return list(self._label_mapping[: self.n_labels])
+
+    def _apply_hierarchy(
+        self,
+        hierarchy_edges: dict[str, list[str]] | None = None,
+        reachability_matrix: np.ndarray | torch.Tensor | None = None,
+    ) -> None:
+        if hierarchy_edges is not None:
+            self.set_hierarchy(hierarchy_edges)
+        elif reachability_matrix is not None:
+            self.set_hierarchy(reachability_matrix)
+        else:
+            raise ValueError("Provide hierarchy_edges or reachability_matrix.")
+
+    def set_hierarchy(self, edges: dict[str, list[str]] | np.ndarray | torch.Tensor) -> None:
+        """Set the label hierarchy used for HCE training and hierarchical prediction.
+
+        Parameters
+        ----------
+        edges
+            Either a parent→children edge dictionary (built with
+            :func:`~scvi.external.cytoanvi._hce.build_reachability_matrix`) or a precomputed
+            reachability matrix of shape ``(n_labels, n_labels)``.
+        """
+        label_names = self._observed_label_names()
+        n_labels = len(label_names)
+        if isinstance(edges, dict):
+            edge_nodes: set[str] = set(edges.keys())
+            for children in edges.values():
+                edge_nodes.update(children)
+            unknown = sorted(edge_nodes - set(label_names))
+            if unknown:
+                raise ValueError(
+                    "hierarchy references labels not in the model's observed categories: "
+                    f"{unknown}."
+                )
+            missing = sorted(set(label_names) - edge_nodes)
+            if missing:
+                raise ValueError(f"observed labels missing from hierarchy: {missing}.")
+            matrix = build_reachability_matrix(label_names, edges)
+        else:
+            matrix = (
+                edges.detach().cpu().numpy()
+                if isinstance(edges, torch.Tensor)
+                else np.asarray(edges)
+            )
+            validate_reachability_matrix(matrix, n_labels)
+        tensor = torch.as_tensor(matrix, dtype=torch.float32, device=self.module.device)
+        self.module.reachability_matrix_ = tensor
+        self.hierarchy_reachability_ = np.asarray(matrix, dtype=np.float32)
+
+    @torch.inference_mode()
+    def predict_hierarchical(
+        self,
+        adata: AnnData | None = None,
+        soft: bool = False,
+        leaf_only: bool = False,
+        indices=None,
+        batch_size: int | None = None,
+        use_posterior_mean: bool = True,
+    ) -> np.ndarray | pd.DataFrame:
+        """Predict cell types with probabilities propagated through the hierarchy.
+
+        Parameters
+        ----------
+        adata
+            AnnData registered with this model.
+        soft
+            If ``True``, return hierarchy-adjusted per-class probabilities.
+        leaf_only
+            If ``True`` and ``soft=False``, restrict argmax to leaf labels (no children in
+            the hierarchy).
+        indices
+            Cell indices to predict.
+        batch_size
+            Minibatch size for inference.
+        use_posterior_mean
+            Whether to use the posterior mean of ``z`` for classification.
+
+        Returns
+        -------
+        Hierarchical label predictions, or a DataFrame of adjusted probabilities if
+        ``soft=True``.
+        """
+        if self.module.reachability_matrix_ is None:
+            raise ValueError("No hierarchy set. Call set_hierarchy(...) first.")
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+        if len(indices) == 0:
+            return np.array([]) if not soft else pd.DataFrame(index=adata.obs_names[indices])
+
+        was_training = self.module.training
+        self.module.eval()
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        y_pred = []
+        try:
+            for tensors in scdl:
+                inference_inputs = self.module._get_inference_input(tensors)
+                data_inputs = {
+                    key: inference_inputs[key]
+                    for key in inference_inputs.keys()
+                    if key not in ["batch_index", "cont_covs", "cat_covs", "panel_index"]
+                }
+                batch = tensors[REGISTRY_KEYS.BATCH_KEY]
+                cont_key = REGISTRY_KEYS.CONT_COVS_KEY
+                cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+                cat_key = REGISTRY_KEYS.CAT_COVS_KEY
+                cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+                pred = self.module.classify(
+                    **data_inputs,
+                    batch_index=batch,
+                    cat_covs=cat_covs,
+                    cont_covs=cont_covs,
+                    use_posterior_mean=use_posterior_mean,
+                )
+                if self.module.classifier.logits:
+                    pred = torch.nn.functional.softmax(pred, dim=-1)
+                pred = torch.matmul(pred, self.module.reachability_matrix_.T)
+                if not soft:
+                    if leaf_only:
+                        leaf_mask = self.module.reachability_matrix_.sum(dim=-1) == 1
+                        pred = pred.masked_fill(~leaf_mask, float("-inf")).argmax(dim=1)
+                    else:
+                        pred = pred.argmax(dim=1)
+                y_pred.append(pred.detach().cpu())
+        finally:
+            if was_training:
+                self.module.train()
+
+        y_pred = torch.cat(y_pred).numpy()
+        if not soft:
+            return np.array([self._code_to_label[p] for p in y_pred])
+        return pd.DataFrame(
+            y_pred,
+            columns=self._observed_label_names(),
+            index=adata.obs_names[indices],
         )
 
     def train(self, max_epochs: int | None = None, **kwargs):
@@ -679,11 +851,17 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         )
         if getattr(model, "encoder_marker_mask_", None) is None:
             model._sync_encoder_marker_mask_attr()
+        if getattr(model.module, "continual", None) is not None:
+            model._training_plan_cls = CytoANVIContinualTrainingPlan
         return model
 
     def save(self, dir_path, prefix=None, overwrite=False, save_anndata=False, **kwargs):
         """Save model state, including ``encoder_marker_mask_`` for panel-aware query prep."""
         self._sync_encoder_marker_mask_attr()
+        if getattr(self.module, "reachability_matrix_", None) is not None:
+            self.hierarchy_reachability_ = (
+                self.module.reachability_matrix_.detach().cpu().numpy()
+            )
         return super().save(
             dir_path,
             prefix=prefix,

@@ -80,6 +80,47 @@ adata.obs["pred_cell_type"] = model.predict()
 Hold out a fraction of labels by setting those cells to `"Unknown"` before `setup_anndata`, then
 compare `model.predict()` on held-out cells to ground truth.
 
+## Paired scRNA + CyTOF
+
+For same-study cohorts with **paired donors** (shared `sample_id`, not same-cell barcodes), use
+{func}`scvi.external.cytovi.prepare_paired_cytoanvi` to harmonize immune markers, scale RNA,
+run **scennep** (SNN-weighted pseudobulk on RNA), and merge with pre-scaled CyTOF. Partial pairing
+is supported: some donors may be RNA-only or CyTOF-only, as long as at least one `sample_id` appears
+in both modalities.
+
+| Requirement | RNA | CyTOF |
+|-------------|-----|-------|
+| `obs["sample_id"]` | required | required |
+| `obs["celltype"]` | required (eval; masked to Unknown for training) | required (training labels) |
+| Expression | built internally (`scaled` → `scennep`) | `layers["scaled"]` required |
+
+CyTOF must be arcsinh-transformed and min-max scaled first (see {doc}`/user_guide/models/cytovi`):
+
+```python
+import scvi
+from scvi.external import CytoANVI
+from scvi.external.cytovi import prepare_paired_cytoanvi
+
+adata, markers = prepare_paired_cytoanvi(rna, cytof)
+
+CytoANVI.setup_anndata(
+    adata,
+    layer="scaled",
+    batch_key="modality",
+    sample_key="sample_id",
+    labels_key="celltype",
+    unlabeled_category="Unknown",
+)
+model = CytoANVI(adata, y_prior="empirical")
+model.train(max_epochs=1000)
+
+adata.obsm["X_CytoANVI"] = model.get_latent_representation()
+adata.obs["pred"] = model.predict()
+```
+
+Smoke test: `python vignettes/rna_cytof_cocluster.py --smoke` (synthetic data, no download).
+Benchmark task B7: `python -m benchmarks.cytoanvi.run --dataset paired-rna-cytof --task b7`.
+
 ## Training details
 
 - Default training uses {class}`~scvi.train.SemiSupervisedTrainingPlan` (labeled + unlabeled minibatches).
@@ -213,17 +254,47 @@ Tutorial: {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial`.
 
 ```python
 from scvi.external import CYTOVI, CytoANVI
+from scvi.external import cytovi as cytovi_pp
 
+LAYER = "scaled"
+LABELS_KEY = "cell_type"
+UNLABELED = "Unknown"
+
+# Preprocess cytometry intensities and keep unannotated / held-out cells explicitly unlabeled.
+cytovi_pp.transform_arcsinh(adata)
+cytovi_pp.scale(adata)
+adata.obs[LABELS_KEY] = adata.obs[LABELS_KEY].where(adata.obs[LABELS_KEY].notna(), UNLABELED)
+adata.obs.loc[held_out_cells, LABELS_KEY] = UNLABELED
+adata.obs[LABELS_KEY] = adata.obs[LABELS_KEY].astype(str)
+
+CYTOVI.setup_anndata(
+    adata,
+    layer=LAYER,
+    batch_key="batch",
+    labels_key=LABELS_KEY,
+)
 cytovi_model = CYTOVI(adata)
 cytovi_model.train(max_epochs=1000)
 
 anvi = CytoANVI.from_cytovi_model(
     cytovi_model,
     unlabeled_category="Unknown",
-    labels_key="cell_type",
+    labels_key=LABELS_KEY,
 )
 anvi.train(max_epochs=200)  # fine-tune classifier + semi-supervised head
+
+# Optional query mapping. If the query has no labels, add/fill the label column as unlabeled.
+if LABELS_KEY not in query_adata.obs:
+    query_adata.obs[LABELS_KEY] = UNLABELED
+else:
+    query_adata.obs[LABELS_KEY] = query_adata.obs[LABELS_KEY].fillna(UNLABELED).astype(str)
+query_model = CytoANVI.load_query_data(query_adata, anvi)
+query_model.train(max_epochs=200)
+query_adata.obs["cytoanvi_pred"] = query_model.predict()
 ```
+
+Direct CytoANVI tutorials that call `CytoANVI.setup_anndata(...)` and then `CytoANVI(...)`
+remain valid direct-training examples; they are not the CYTOVI warm-start workflow above.
 
 ### Panel-divergent query mapping (Roider-style)
 
@@ -246,6 +317,47 @@ unc = model.get_uncertainty()  # per-cell Bregman information (higher = more unc
 ```
 
 Useful for flagging held-out cell types or low-confidence predictions (see benchmark task B5).
+
+### Query mapping QC (optional mapQC)
+
+After query surgery, score mapping quality on CytoANVI latents with
+[mapQC](https://github.com/theislab/mapqc) (scores **> 2** = far from reference). Install:
+
+```bash
+pip install scvi-tools[cytoanvi-mapping-qc]
+```
+
+Import helpers from the optional module (not the top-level `cytoanvi` package):
+
+```python
+from scvi.external.cytoanvi.mapping_qc import (
+    build_mapqc_anndata,
+    evaluate_mapqc,
+    run_mapqc_on_cytoanvi,
+)
+
+joint = query_model.score_query_mapping(
+    reference_controls,
+    query_adata,
+    sample_key="patient",
+    n_nhoods=50,
+    k_min=50,
+    k_max=200,
+)
+stats = evaluate_mapqc(joint, case_control_key="status", case_cats=["case"], control_cats=["control"])
+```
+
+Use the **trained query model** after surgery (not the reference-only model when query batches differ).
+
+**Requirements:** reference = **controls only**; query must include **matched control cells**
+(and optionally case cells). At least **3 reference samples** in `sample_key`. mapQC runs on the
+joint embedding in ``obsm["X_CytoANVI"]`` — not on raw protein intensities.
+
+**Fail-fast:** missing optional extra → `ImportError`; too few reference samples → `ValueError`.
+mapQC is never run automatically during training or `load_query_data`.
+
+Complements :meth:`get_uncertainty` (novelty) with sample-neighborhood mapping QC for case/control
+atlases. Not applicable to unlabeled panel-only queries without matched controls (e.g. Roider panel-2).
 
 ### Continual update (experimental)
 

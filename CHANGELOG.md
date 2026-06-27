@@ -29,6 +29,9 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
     treeArches helpers in `scvi.external.cytoanvi.hierarchy` (`learn_hierarchy`,
     `update_hierarchy`, `predict_schpl`, `set_hierarchy_from_schpl`,
     `run_tree_arches_pipeline`).
+- Add optional mapQC query-mapping QC for CytoANVI (`pip install scvi-tools[cytoanvi-mapping-qc]`)
+    with helpers in `scvi.external.cytoanvi.mapping_qc` and :meth:`~scvi.external.CytoANVI.score_query_mapping`.
+    Benchmark task B9 compares control mapQC rates after query surgery.
 
 #### Fixed
 

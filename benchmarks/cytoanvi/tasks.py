@@ -11,7 +11,7 @@ from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
 from benchmarks.common.training import NAN_LAYER, SCALED_LAYER, latent_obsm, train_cytoanvi
 
 from . import metrics
-from .baselines import cytovi_latent_and_knn
+from .baselines import cytovi_latent_and_knn, harmony_latent_and_knn, raw_marker_knn
 
 
 def _holdout(labels, unlabeled_category, frac, seed):
@@ -39,6 +39,8 @@ def task_b1_label_transfer(
     seed=0,
     max_epochs=1000,
     n_latent=None,
+    n_samples_per_label=None,
+    reduce_lr_on_plateau=False,
 ):
     """B1: CytoANVI classifier vs CytoVI k-NN at transferring labels to held-out cells."""
     true = np.asarray(adata.obs[labels_key].astype(str))
@@ -58,6 +60,8 @@ def task_b1_label_transfer(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        n_samples_per_label=n_samples_per_label,
+        reduce_lr_on_plateau=reduce_lr_on_plateau,
     )
     cytoanvi_pred = np.asarray(model.predict())
 
@@ -74,6 +78,27 @@ def task_b1_label_transfer(
     knn_full = masked.copy()
     knn_full[unlab_mask] = knn_pred_unlab
 
+    raw_pred_unlab, _, raw_unlab_mask = raw_marker_knn(
+        work,
+        labels_key,
+        unlabeled_category,
+    )
+    raw_full = masked.copy()
+    raw_full[raw_unlab_mask] = raw_pred_unlab
+
+    try:
+        hm_pred_unlab, _, hm_unlab_mask = harmony_latent_and_knn(
+            work,
+            labels_key,
+            unlabeled_category,
+            batch_key=batch_key,
+        )
+        hm_full = masked.copy()
+        hm_full[hm_unlab_mask] = hm_pred_unlab
+        harmony_result = metrics.label_transfer_metrics(true[held], hm_full[held])
+    except Exception as e:
+        harmony_result = {"error": str(e)}
+
     return {
         "task": "b1_label_transfer",
         "seed": seed,
@@ -82,6 +107,8 @@ def task_b1_label_transfer(
         "n_held": int(held.sum()),
         "cytoanvi": metrics.label_transfer_metrics(true[held], cytoanvi_pred[held]),
         "cytovi_knn": metrics.label_transfer_metrics(true[held], knn_full[held]),
+        "raw_marker_knn": metrics.label_transfer_metrics(true[held], raw_full[held]),
+        "harmony_knn": harmony_result,
     }
 
 
@@ -248,13 +275,16 @@ def task_b5_novelty(
         n_latent=n_latent,
         max_epochs=max_epochs,
     )
-    unc = model.get_uncertainty()
+    unc_latent = model.get_uncertainty(mode="latent")
+    unc_logit = model.get_uncertainty(mode="logit")
     return {
         "task": "b5_novelty",
         "seed": seed,
         "max_epochs": max_epochs,
         "holdout_type": holdout_type,
-        **metrics.novelty_auroc(unc, is_novel),
+        "latent": metrics.novelty_auroc(unc_latent, is_novel),
+        "logit": metrics.novelty_auroc(unc_logit, is_novel),
+        **metrics.novelty_auroc(unc_latent, is_novel),  # top-level for backward compat
     }
 
 
@@ -372,7 +402,6 @@ def task_b4_continual(
     )
 
     n_ctrl = max(16, int(control_frac * query_adata.n_obs))
-    n_replay = max(16, int(replay_frac * ref_adata.n_obs))
     control = query_adata[:n_ctrl].copy()
     replay = CytoANVI.select_replay_by_uncertainty(ref_model, ref_adata, fraction=replay_frac)
 
@@ -390,7 +419,6 @@ def task_b4_continual(
         plan_kwargs={"ewc_importance": ewc_importance, "weight_decay": 0.0},
     )
 
-    true_query = labels[np.isin(adata.obs_names, query_adata.obs_names)]
     plain_pred = np.asarray(plain.predict())
     cont_pred = np.asarray(continual.predict())
 
@@ -554,3 +582,138 @@ def task_b6_lambda_sweep(
         "recommended_query_macro_f1": float(f1s[best_idx]),
         "note": "Heuristic: λ with lowest control-latent drift; retune on real case/control data.",
     }
+
+
+MAPQC_SAMPLE_KEY = "mapqc_sample"
+MAPQC_STATUS_KEY = "mapqc_status"
+
+
+def _assign_mapqc_pseudo_samples(adata, batch_key: str, seed: int):
+    """Split one batch → reference, the other → query; assign ≥3 ref / ≥2 query sample IDs."""
+    adata = adata.copy()
+    batches = sorted(adata.obs[batch_key].astype(str).unique())
+    if len(batches) < 2:
+        raise ValueError("B9 requires at least two batches in adata.")
+    ref_batch = batches[0]
+    is_ref = adata.obs[batch_key].astype(str) == ref_batch
+    rng = np.random.default_rng(seed)
+    ref_samples = [f"ref_s{i}" for i in range(4)]
+    query_samples = [f"query_s{i}" for i in range(2)]
+
+    adata.obs[MAPQC_SAMPLE_KEY] = ""
+    ref_idx = np.where(is_ref.to_numpy())[0]
+    query_idx = np.where((~is_ref).to_numpy())[0]
+    adata.obs.iloc[ref_idx, adata.obs.columns.get_loc(MAPQC_SAMPLE_KEY)] = np.take(
+        ref_samples, np.arange(len(ref_idx)) % len(ref_samples)
+    )
+    adata.obs.iloc[query_idx, adata.obs.columns.get_loc(MAPQC_SAMPLE_KEY)] = np.take(
+        query_samples, np.arange(len(query_idx)) % len(query_samples)
+    )
+
+    adata.obs[MAPQC_STATUS_KEY] = np.nan
+    adata.obs.iloc[query_idx, adata.obs.columns.get_loc(MAPQC_STATUS_KEY)] = rng.choice(
+        ["control", "case"],
+        size=len(query_idx),
+        p=[0.5, 0.5],
+    )
+    return adata, is_ref.to_numpy()
+
+
+def task_b9_mapqc(
+    adata,
+    labels_key="labels",
+    unlabeled_category="Unknown",
+    batch_key="batch",
+    sample_key=None,
+    nan_layer=None,
+    seed=0,
+    max_epochs=1000,
+    n_latent=None,
+    n_nhoods=3,
+    k_min=5,
+    k_max=15,
+    run_mapqc=True,
+):
+    """B9: mapQC on CytoANVI latents after query surgery (pseudo batch ref/query split).
+
+    Set ``run_mapqc=False`` for plumbing-only checks (joint latent build) on small synthetic data.
+    """
+    from scvi.external import CytoANVI
+    from scvi.external.cytoanvi import mapping_qc
+
+    if run_mapqc:
+        mapping_qc._require_mapqc()
+
+    work, is_ref = _assign_mapqc_pseudo_samples(adata, batch_key=batch_key, seed=seed)
+    ref_adata = work[is_ref].copy()
+    query_adata = work[~is_ref].copy()
+    true_query = np.asarray(work.obs[labels_key].astype(str))[~is_ref]
+
+    ref_model, _ = train_cytoanvi(
+        ref_adata,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
+        batch_key=batch_key,
+        sample_key=sample_key,
+        nan_layer=nan_layer,
+        n_latent=n_latent,
+        max_epochs=max_epochs,
+    )
+
+    query_train = query_adata.copy()
+    query_train.obs[labels_key] = unlabeled_category
+    query_model = CytoANVI.load_query_data(query_train, ref_model)
+    query_model.train(max_epochs=min(50, max_epochs), plan_kwargs={"weight_decay": 0.0})
+
+    joint = mapping_qc.build_mapqc_anndata(
+        query_model,
+        ref_adata,
+        query_adata,
+        sample_key=MAPQC_SAMPLE_KEY,
+    )
+    out = {
+        "task": "b9_mapqc",
+        "seed": seed,
+        "max_epochs": max_epochs,
+        "n_reference": int(ref_adata.n_obs),
+        "n_query": int(query_adata.n_obs),
+        "joint_n_obs": int(joint.n_obs),
+        "emb_key": mapping_qc.DEFAULT_EMB_KEY,
+        "run_mapqc": run_mapqc,
+        "query_label_transfer": metrics.label_transfer_metrics(
+            true_query, np.asarray(query_model.predict())
+        ),
+    }
+    if not run_mapqc:
+        out["status"] = "plumbing_only"
+        out["note"] = (
+            "Joint latent AnnData built; mapQC skipped (use run_mapqc=True on real case/control data)."
+        )
+        return out
+
+    mapping_qc.run_mapqc_on_joint(
+        joint,
+        sample_key=MAPQC_SAMPLE_KEY,
+        n_nhoods=n_nhoods,
+        k_min=k_min,
+        k_max=k_max,
+        grouping_key=labels_key,
+        seed=seed,
+        verbose=False,
+        min_n_cells=5,
+    )
+    out.update(
+        {
+            "status": "mapqc_complete",
+            "n_nhoods": n_nhoods,
+            "k_min": k_min,
+            "k_max": k_max,
+            "query_control_mapqc": mapping_qc.query_control_mapqc_rate(
+                joint,
+                control_value="control",
+                case_control_key=MAPQC_STATUS_KEY,
+            ),
+            "note": "Requires pip install scvi-tools[cytoanvi-mapping-qc].",
+        }
+    )
+    return out

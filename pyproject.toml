@@ -100,6 +100,8 @@ dataloaders = ["lamindb>=1.12.1", "cellxgene-census", "tiledbsoma", "tiledbsoma_
 diagvi = ["torch_geometric", "geomloss"]
 # for CytoANVI treeArches / scHPL hierarchy learning
 cytoanvi-hierarchy = ["scHPL"]
+# for CytoANVI query-to-reference mapping QC (mapQC)
+cytoanvi-mapping-qc = ["mapqc"]
 # for mlflow
 mlflow = ["mlflow","psutil","GPUtil","nvidia-ml-py"]
 # for rapids

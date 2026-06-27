@@ -57,7 +57,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip wheel uv
-          python -m uv pip install --system "scvi-tools[tests,cytoanvi-hierarchy] @ ."
+          python -m uv pip install --system "scvi-tools[tests,cytoanvi-hierarchy,cytoanvi-mapping-qc] @ ."
 
       - name: Run pytest
         env:

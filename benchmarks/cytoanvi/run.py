@@ -23,6 +23,7 @@ from benchmarks.common.seeds import run_multiseed, save_json
 
 from . import data as data_mod
 from . import tasks as task_mod
+from .paired_rna_cytof import task_b7_multimodal_integration
 
 
 def _load(
@@ -63,6 +64,11 @@ def _load(
             annotate=not require_annotated_nunez,
         )
         return merged, merged, None
+    if dataset == "paired-rna-cytof":
+        from .paired_rna_cytof import make_synthetic_paired_rna_cytof
+
+        rna, cy, _markers = make_synthetic_paired_rna_cytof(seed=0)
+        return rna, cy, None
     raise ValueError(dataset)
 
 
@@ -89,14 +95,19 @@ def _run_tasks(args, p1, p2, unlab, seed):
         "seed": seed,
         "max_epochs": args.max_epochs,
     }
+    b1_kw = {
+        **kw,
+        "n_samples_per_label": args.n_samples_per_label,
+        "reduce_lr_on_plateau": args.reduce_lr_on_plateau,
+    }
     b2_kw = {**kw, "subsample_per_batch": args.subsample_per_batch}
     results = {"seed": seed, "max_epochs": args.max_epochs}
-    tasks = ["b1", "b2", "b3", "b4", "b5", "b6", "b8"] if args.task == "all" else [args.task]
+    tasks = ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"] if args.task == "all" else [args.task]
 
     for t in tasks:
         print(f"\n=== running {t} (seed={seed}) ===")
         if t == "b1":
-            results["b1"] = task_mod.task_b1_label_transfer(p1, **kw)
+            results["b1"] = task_mod.task_b1_label_transfer(p1, **b1_kw)
         elif t == "b2":
             results["b2"] = task_mod.task_b2_integration(p1, **b2_kw)
         elif t == "b3":
@@ -137,20 +148,53 @@ def _run_tasks(args, p1, p2, unlab, seed):
                 max_epochs=args.max_epochs,
                 lambdas=lambdas,
             )
+        elif t == "b7":
+            if args.dataset != "paired-rna-cytof":
+                print("  skipped (requires --dataset paired-rna-cytof)")
+                continue
+            print(
+                "  B7 uses batch_key=modality, sample_key=sample_id, labels_key=celltype "
+                "(ignores --batch-key / --labels-key / --sample-key)"
+            )
+            results["b7"] = task_b7_multimodal_integration(
+                p1,
+                p2,
+                labels_key="celltype",
+                unlabeled_category=unlab,
+                batch_key="modality",
+                sample_key="sample_id",
+                seed=seed,
+                max_epochs=args.max_epochs,
+            )
         elif t == "b8":
             b8_kw = {**kw}
             if args.hierarchy_edges is not None:
                 with open(args.hierarchy_edges, encoding="utf-8") as fh:
                     b8_kw["hierarchy_edges"] = json.load(fh)
             results["b8"] = task_mod.task_b8_hce_label_transfer(p1, **b8_kw)
+        elif t == "b9":
+            run_mapqc = args.mapqc_run or args.dataset != "synthetic"
+            results["b9"] = task_mod.task_b9_mapqc(
+                p1,
+                labels_key=args.labels_key,
+                unlabeled_category=unlab,
+                batch_key=args.batch_key,
+                sample_key=args.sample_key,
+                seed=seed,
+                max_epochs=args.max_epochs,
+                n_nhoods=args.mapqc_n_nhoods,
+                k_min=args.mapqc_k_min,
+                k_max=args.mapqc_k_max,
+                run_mapqc=run_mapqc,
+            )
         print(json.dumps(results.get(t), indent=2))
     return results
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", choices=["synthetic", "roider", "roider-full", "nunez"], required=True)
-    ap.add_argument("--task", choices=["b1", "b2", "b3", "b4", "b5", "b6", "b8", "all"], default="all")
+    ap.add_argument("--dataset", choices=["synthetic", "roider", "roider-full", "nunez", "paired-rna-cytof"], required=True)
+    ap.add_argument("--task", choices=["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "all"], default="all")
     ap.add_argument("--data-dir", default="benchmarks/cytoanvi/data")
     ap.add_argument("--labels-key", default="labels")
     ap.add_argument("--batch-key", default="batch")
@@ -177,6 +221,14 @@ def main():
         default=None,
         help="B8: JSON file with parent→children hierarchy edges (observed labels only)",
     )
+    ap.add_argument("--mapqc-n-nhoods", type=int, default=3, help="B9: mapQC neighborhoods")
+    ap.add_argument("--mapqc-k-min", type=int, default=5, help="B9: mapQC minimum neighborhood size")
+    ap.add_argument("--mapqc-k-max", type=int, default=15, help="B9: mapQC maximum neighborhood size")
+    ap.add_argument(
+        "--mapqc-run",
+        action="store_true",
+        help="B9: force mapQC scoring on synthetic (default: plumbing-only on synthetic)",
+    )
     ap.add_argument("--leiden-resolution", type=float, default=None, help="Leiden r (default: 1.0 roider-full, 0.05 nunez)")
     ap.add_argument("--max-cells", type=int, default=100_000, help="Nuñez: subsample cap")
     ap.add_argument(
@@ -184,6 +236,18 @@ def main():
         type=int,
         default=None,
         help="roider-full: cap patients while ingest matures (default: all paired)",
+    )
+    ap.add_argument(
+        "--n-samples-per-label",
+        type=int,
+        default=None,
+        help="B1: balanced labeled-cell sampling per class per minibatch (CytoANVI only)",
+    )
+    ap.add_argument(
+        "--reduce-lr-on-plateau",
+        action="store_true",
+        default=False,
+        help="B1: enable ReduceLROnPlateau for CytoANVI classifier-head stability",
     )
     ap.add_argument("--inspect", action="store_true")
     ap.add_argument("--out", default=None)

@@ -56,24 +56,25 @@ def validate_reachability_matrix(matrix: np.ndarray, n_labels: int) -> None:
         raise ValueError("reachability matrix must be reflexive (diagonal entries are 1).")
     # Transitivity: if i reaches j and j reaches k, then i reaches k.
     reach = arr.astype(bool)
-    for i in range(n_labels):
-        for j in range(n_labels):
-            if not reach[i, j]:
-                continue
-            for k in range(n_labels):
-                if reach[j, k] and not reach[i, k]:
-                    raise ValueError(
-                        "reachability matrix is not transitive "
-                        f"(class {j} reachable from {i}, {k} from {j}, but not {k} from {i})."
-                    )
+    closure = (reach @ reach) > 0  # bool: True where any shared intermediate j exists
+    violations = closure & ~reach
+    if violations.any():
+        i, k = np.argwhere(violations)[0]
+        # Recover a witness j: any j where reach[i,j] and reach[j,k].
+        js = np.where(reach[i] & reach[:, k])[0]
+        j = int(js[0])
+        raise ValueError(
+            "reachability matrix is not transitive "
+            f"(class {j} reachable from {i}, {k} from {j}, but not {k} from {i})."
+        )
     # Antisymmetry on distinct indices.
-    for i in range(n_labels):
-        for j in range(i + 1, n_labels):
-            if reach[i, j] and reach[j, i]:
-                raise ValueError(
-                    "reachability matrix is not antisymmetric "
-                    f"(classes {i} and {j} are mutually reachable)."
-                )
+    off_diag = reach & reach.T & ~np.eye(n_labels, dtype=bool)
+    if off_diag.any():
+        i, j = np.argwhere(off_diag)[0]
+        raise ValueError(
+            "reachability matrix is not antisymmetric "
+            f"(classes {i} and {j} are mutually reachable)."
+        )
 
 
 def build_reachability_matrix(

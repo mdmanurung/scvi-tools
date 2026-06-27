@@ -55,7 +55,8 @@ class TrainRunner:
         max_epochs to train for
     accelerator
         Supports passing different accelerator types ("cpu", "gpu", "tpu", "ipu", "hpu",
-        "mps, "auto") as well as custom accelerator instances.
+        "mps", "auto") as well as custom accelerator instances. Defaults to "gpu"; raises
+        an error if no GPU is available rather than falling back to CPU.
     devices
         The devices to use. Can be set to a positive number (int or str), a sequence of
         device indices (list or str), the value -1 to indicate all available devices should
@@ -87,7 +88,7 @@ class TrainRunner:
         training_plan: pl.LightningModule,
         data_splitter: SemiSupervisedDataSplitter | DataSplitter,
         max_epochs: int,
-        accelerator: str = "auto",
+        accelerator: str = "gpu",
         devices: int | list[int] | str = "auto",
         trainer_config: KwargsLike | None = None,
         **trainer_kwargs,

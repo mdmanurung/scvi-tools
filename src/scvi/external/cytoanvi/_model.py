@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import warnings
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
@@ -27,11 +28,10 @@ from scvi.utils import setup_anndata_dsp
 
 from ._continual import ContinualUpdate, CytoANVIContinualTrainingPlan
 from ._hce import build_reachability_matrix, validate_reachability_matrix
-from ._module import CytoANVAE
+from ._module import CytoANVAE, _NON_DATA_INFERENCE_KEYS
 from ._uncertainty import compute_uncertainty_scores
 
 if TYPE_CHECKING:
-    from typing import Literal
 
     from anndata import AnnData
 
@@ -108,6 +108,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     - Optional hierarchical CE: :meth:`set_hierarchy` / :meth:`predict_hierarchical` (flat CE when
       no matrix is set). Optional scHPL treeArches helpers:
       ``scvi.external.cytoanvi.hierarchy`` (requires ``scvi-tools[cytoanvi-hierarchy]``).
+    - Optional query-mapping QC: :meth:`score_query_mapping` wraps
+      ``scvi.external.cytoanvi.mapping_qc`` (requires ``scvi-tools[cytoanvi-mapping-qc]``).
     """
 
     _module_cls = CytoANVAE
@@ -124,7 +126,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         encode_backbone_only: bool | None = None,
         encoder_marker_list: list | None = None,
         linear_classifier: bool = False,
-        y_prior: str | torch.Tensor | None = "uniform",
+        y_prior: Literal["uniform", "empirical"] | torch.Tensor | None = "uniform",
         hierarchy_edges: dict[str, list[str]] | None = None,
         reachability_matrix: np.ndarray | torch.Tensor | None = None,
         **model_kwargs,
@@ -202,8 +204,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         )
 
         if hierarchy_edges is not None:
-            self._apply_hierarchy(hierarchy_edges=hierarchy_edges)
+            self.set_hierarchy(hierarchy_edges)
         elif reachability_tensor is not None:
+            # Buffer already registered by CytoANVAE.__init__; only set the numpy mirror here.
             self.hierarchy_reachability_ = reachability_tensor.detach().cpu().numpy()
 
         self._model_summary_string = (
@@ -222,6 +225,17 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         init_locals.pop("reachability_matrix", None)
         self.init_params_ = self._get_init_params(init_locals)
 
+    @contextlib.contextmanager
+    def _eval_mode(self):
+        """Context manager: put ``self.module`` in eval mode and restore on exit."""
+        was_training = self.module.training
+        self.module.eval()
+        try:
+            yield
+        finally:
+            if was_training:
+                self.module.train()
+
     def _sync_encoder_marker_mask_attr(self) -> None:
         """Persist backbone mask on the model for save/load and path-only query prep."""
         enc = getattr(self.module, "encoder_marker_mask", None)
@@ -232,18 +246,6 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     def _observed_label_names(self) -> list[str]:
         """Return observed label category names (excluding the unlabeled category)."""
         return list(self._label_mapping[: self.n_labels])
-
-    def _apply_hierarchy(
-        self,
-        hierarchy_edges: dict[str, list[str]] | None = None,
-        reachability_matrix: np.ndarray | torch.Tensor | None = None,
-    ) -> None:
-        if hierarchy_edges is not None:
-            self.set_hierarchy(hierarchy_edges)
-        elif reachability_matrix is not None:
-            self.set_hierarchy(reachability_matrix)
-        else:
-            raise ValueError("Provide hierarchy_edges or reachability_matrix.")
 
     def set_hierarchy(self, edges: dict[str, list[str]] | np.ndarray | torch.Tensor) -> None:
         """Set the label hierarchy used for HCE training and hierarchical prediction.
@@ -278,8 +280,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 else np.asarray(edges)
             )
             validate_reachability_matrix(matrix, n_labels)
-        tensor = torch.as_tensor(matrix, dtype=torch.float32, device=self.module.device)
-        self.module.reachability_matrix_ = tensor
+        tensor = torch.as_tensor(matrix, dtype=torch.float32)
+        self.module._set_reachability(tensor)
         self.hierarchy_reachability_ = np.asarray(matrix, dtype=np.float32)
 
     @torch.inference_mode()
@@ -324,17 +326,15 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         if len(indices) == 0:
             return np.array([]) if not soft else pd.DataFrame(index=adata.obs_names[indices])
 
-        was_training = self.module.training
-        self.module.eval()
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
         y_pred = []
-        try:
+        with self._eval_mode():
             for tensors in scdl:
                 inference_inputs = self.module._get_inference_input(tensors)
                 data_inputs = {
                     key: inference_inputs[key]
                     for key in inference_inputs.keys()
-                    if key not in ["batch_index", "cont_covs", "cat_covs", "panel_index"]
+                    if key not in _NON_DATA_INFERENCE_KEYS
                 }
                 batch = tensors[REGISTRY_KEYS.BATCH_KEY]
                 cont_key = REGISTRY_KEYS.CONT_COVS_KEY
@@ -359,9 +359,6 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                     else:
                         pred = pred.argmax(dim=1)
                 y_pred.append(pred.detach().cpu())
-        finally:
-            if was_training:
-                self.module.train()
 
         y_pred = torch.cat(y_pred).numpy()
         if not soft:
@@ -389,13 +386,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     @torch.inference_mode()
     def get_latent_representation(self, *args, **kwargs):
         """Compute latent representation with the module in eval mode."""
-        was_training = self.module.training
-        self.module.eval()
-        try:
+        with self._eval_mode():
             return super().get_latent_representation(*args, **kwargs)
-        finally:
-            if was_training:
-                self.module.train()
 
     @classmethod
     def _encoder_mask_from_reference(
@@ -460,7 +452,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         return adata[idx].copy()
 
     def _resolve_y_prior(
-        self, y_prior: str | torch.Tensor | None, n_labels: int
+        self, y_prior: Literal["uniform", "empirical"] | torch.Tensor | None, n_labels: int
     ) -> torch.Tensor | None:
         """Resolve ``y_prior`` into a ``(1, n_labels)`` tensor, or ``None`` for a uniform prior."""
         if y_prior is None or (isinstance(y_prior, str) and y_prior == "uniform"):
@@ -512,9 +504,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         cytoanvi_kwargs = dict(cytoanvi_kwargs)
         init_params = cytovi_model.init_params_
-        non_kwargs = init_params["non_kwargs"]
-        kwargs = init_params["kwargs"]
-        kwargs = {k: v for (i, j) in kwargs.items() for (k, v) in j.items()}
+        non_kwargs = deepcopy(init_params["non_kwargs"])
+        kwargs = deepcopy(init_params["kwargs"])
+        kwargs = {k: v for (_i, j) in kwargs.items() for (k, v) in j.items()}
         for k, v in {**non_kwargs, **kwargs}.items():
             if k in cytoanvi_kwargs:
                 warnings.warn(
@@ -527,6 +519,14 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         # `adata` is not a constructor kwarg to forward.
         non_kwargs.pop("adata", None)
 
+        inherited_kwargs = {**non_kwargs, **kwargs}
+        if inherited_kwargs.get("latent_distribution", "normal") != "normal":
+            raise NotImplementedError(
+                "CytoANVI.from_cytovi_model only supports inherited "
+                "latent_distribution='normal'; train the CytoVI model with "
+                "latent_distribution='normal' before warm-starting CytoANVI."
+            )
+
         if adata is None:
             adata = cytovi_model.adata
         else:
@@ -535,12 +535,19 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         cytovi_registry = cytovi_model.adata_manager.registry
         cytovi_setup_args = deepcopy(cytovi_registry[_SETUP_ARGS_KEY])
         cytovi_labels_key = cytovi_setup_args.get("labels_key")
-        if labels_key is None and cytovi_labels_key is None:
+        if cytovi_labels_key is None and labels_key is None:
             raise ValueError(
                 "A `labels_key` is necessary as the CytoVI model was initialized without one."
             )
-        if labels_key is not None:
-            cytovi_setup_args.update({"labels_key": labels_key})
+        if cytovi_labels_key is not None:
+            if labels_key is None:
+                labels_key = cytovi_labels_key
+            elif labels_key != cytovi_labels_key:
+                raise ValueError(
+                    "Cannot warm-start CytoANVI with a different labels_key than the "
+                    f"pretrained CytoVI setup ({labels_key!r} != {cytovi_labels_key!r})."
+                )
+        cytovi_setup_args.update({"labels_key": labels_key})
 
         setup_method_name = cytovi_registry.get(_SETUP_METHOD_NAME, "setup_anndata")
         setup_method = getattr(cls, setup_method_name)
@@ -552,7 +559,36 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         cytoanvi_model = cls(adata, **non_kwargs, **kwargs, **cytoanvi_kwargs)
         cytovi_state_dict = cytovi_model.module.state_dict()
-        cytoanvi_model.module.load_state_dict(cytovi_state_dict, strict=False)
+        load_result = cytoanvi_model.module.load_state_dict(cytovi_state_dict, strict=False)
+        allowed_missing_prefixes = (
+            "classifier.",
+            "encoder_z2_z1.",
+            "decoder_z1_z2.",
+        )
+        allowed_missing_keys = {"y_prior", "reachability_matrix_"}
+        unexpected = set(load_result.unexpected_keys)
+        disallowed_missing = {
+            key
+            for key in load_result.missing_keys
+            if key not in allowed_missing_keys
+            and not any(key.startswith(prefix) for prefix in allowed_missing_prefixes)
+        }
+        disallowed_unexpected = {
+            key for key in unexpected if not key.startswith("prior_")
+        }
+        if disallowed_missing or disallowed_unexpected:
+            raise RuntimeError(
+                "Unexpected CytoVI -> CytoANVI state transfer mismatch. "
+                f"Missing keys: {sorted(disallowed_missing)}; unexpected keys: "
+                f"{sorted(disallowed_unexpected)}."
+            )
+        cytoanvi_state_dict = cytoanvi_model.module.state_dict()
+        for key, cytovi_value in cytovi_state_dict.items():
+            if key in unexpected:
+                continue
+            cytoanvi_value = cytoanvi_state_dict[key]
+            if cytoanvi_value.shape == cytovi_value.shape:
+                torch.testing.assert_close(cytoanvi_value, cytovi_value)
         cytoanvi_model.was_pretrained = True
 
         return cytoanvi_model
@@ -754,6 +790,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         control_adata: AnnData | None = None,
         combine_type: str = "product",
         freeze_classifier: bool = True,
+        seed: int = 0,
         **load_query_kwargs,
     ):
         """Continual case-control update: scArches surgery + Experience Replay + modified EWC.
@@ -784,6 +821,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             ``"additive"``.
         freeze_classifier
             Whether to freeze the classifier during surgery (passed to ``load_query_data``).
+        seed
+            RNG seed for the Fisher subsampling and replay-buffer ordering. Two calls with the
+            same inputs and the same ``seed`` produce identical ``importances`` and replay batches.
         load_query_kwargs
             Additional keyword args for :meth:`~scvi.model.base.ArchesMixin.load_query_data`.
 
@@ -817,7 +857,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         # One module owns the whole update (anchor, both Fishers, combine rule, replay buffer).
         model.module.continual = ContinualUpdate.configure(
-            reference_model, model, replay_adata, control_adata, combine_type=combine_type
+            reference_model, model, replay_adata, control_adata, combine_type=combine_type, seed=seed
         )
         # Persisted across save/load (replay buffer excluded); reattached in CytoANVAE.on_load.
         model.continual_update_state_ = model.module.continual.persistable_state()
@@ -877,26 +917,33 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         indices=None,
         batch_size: int | None = None,
         tta_rep: int = 50,
+        mode: str = "latent",
     ) -> np.ndarray:
         """Per-cell Bregman-Information uncertainty via test-time augmentation.
 
-        High scores flag cells whose latent embedding is unstable under feature masking — a proxy
+        High scores flag cells whose embedding/logits are unstable under feature masking — a proxy
         for novelty / out-of-distribution query cells (e.g. disease-specific states absent from the
         reference). Useful before trusting :meth:`predict` on a mapped query.
 
-        ``tta_rep`` is the number of TTA augmentations used to estimate the Bregman Information;
-        more reps give a more stable estimate at linear cost. The default (50) balances stability
-        and cost; the paper used ~200.
+        Parameters
+        ----------
+        tta_rep
+            Number of TTA augmentations for estimating Bregman Information. More reps give a
+            more stable estimate at linear cost. The default (50) balances stability and cost.
+        mode
+            ``"latent"`` (default): BI computed over encoder mean vectors (``n_latent`` dims).
+            ``"logit"``: BI computed over classifier logit vectors (``n_labels`` dims) — the
+            canonical Bregman-Variance-Decomposition-on-logits formulation.
         """
+        if mode not in {"latent", "logit"}:
+            raise ValueError("mode must be one of {'latent', 'logit'}.")
         self._check_if_trained(warn=False)
         adata = self._validate_anndata(adata)
-        was_training = self.module.training
-        self.module.eval()
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
         scores = []
         nan_key = CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK
         enc_mask = getattr(self.module, "encoder_marker_mask", None)
-        try:
+        with self._eval_mode():
             for tensors in scdl:
                 inference_inputs = self.module._get_inference_input(tensors)
                 nan_mask = None
@@ -908,10 +955,38 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                         nan_mask = full_mask
                 scores.append(
                     compute_uncertainty_scores(
-                        inference_inputs, self.module, tta_rep=tta_rep, nan_mask=nan_mask
+                        inference_inputs, self.module, tta_rep=tta_rep,
+                        nan_mask=nan_mask, mode=mode,
                     )
                 )
-        finally:
-            if was_training:
-                self.module.train()
-        return torch.cat(scores).numpy()
+        return torch.cat(scores).cpu().numpy()
+
+    def score_query_mapping(
+        self,
+        reference_adata: AnnData,
+        query_adata: AnnData,
+        *,
+        sample_key: str,
+        n_nhoods: int,
+        k_min: int,
+        k_max: int,
+        **kwargs,
+    ) -> AnnData:
+        """Run mapQC on CytoANVI latents after query-to-reference mapping.
+
+        Requires ``pip install scvi-tools[cytoanvi-mapping-qc]``. Reference cells should be
+        controls only; the query must include matched control cells. Returns the joint AnnData
+        with ``mapqc_score`` written to ``obs`` (query cells only).
+        """
+        from scvi.external.cytoanvi import mapping_qc
+
+        return mapping_qc.run_mapqc_on_cytoanvi(
+            self,
+            reference_adata,
+            query_adata,
+            sample_key=sample_key,
+            n_nhoods=n_nhoods,
+            k_min=k_min,
+            k_max=k_max,
+            **kwargs,
+        )

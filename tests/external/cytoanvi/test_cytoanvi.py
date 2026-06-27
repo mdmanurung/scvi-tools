@@ -1,8 +1,13 @@
 import os
+from copy import deepcopy
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
+from scvi.data._constants import _SETUP_ARGS_KEY
 from scvi.data import synthetic_iid
 from scvi.external import CYTOVI, CytoANVI
 from scvi.external import cytovi as cytovi_pp
@@ -99,6 +104,20 @@ def test_cytoanvi_from_cytovi_reproduces_latent(adata):
         cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY
     )
     assert cytoanvi_model.was_pretrained
+    assert cytoanvi_model.n_labels == adata.obs[LABELS_KEY].nunique() - 1
+    assert cytoanvi_model.module.classifier.classifier[-1].out_features == cytoanvi_model.n_labels
+
+    cytovi_state = cytovi_model.module.state_dict()
+    cytoanvi_state = cytoanvi_model.module.state_dict()
+    for key in (
+        "z_encoder.encoder.fc_layers.Layer 0.0.weight",
+        "decoder.px_decoder.fc_layers.Layer 0.0.weight",
+    ):
+        assert key in cytovi_state
+        assert key in cytoanvi_state
+        torch.testing.assert_close(cytoanvi_state[key], cytovi_state[key])
+        assert cytoanvi_state[key].data_ptr() != cytovi_state[key].data_ptr()
+
     # before any fine-tuning, the shared encoder reproduces the CytoVI latent space.
     # the model isn't fit yet, so flip the trained flag and put the module in eval mode
     # (get_latent_representation does not force eval; an untrained module is still in train
@@ -111,6 +130,246 @@ def test_cytoanvi_from_cytovi_reproduces_latent(adata):
 
     cytoanvi_model.train(max_epochs=1)
     assert cytoanvi_model.is_trained
+    assert UNLABELED not in set(cytoanvi_model.predict())
+
+
+def test_cytoanvi_from_cytovi_model_uses_cytovi_labels_key_by_default(adata):
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+
+    cytoanvi_model = CytoANVI.from_cytovi_model(
+        cytovi_model, unlabeled_category=UNLABELED, labels_key=None
+    )
+
+    assert cytoanvi_model.adata_manager.registry[_SETUP_ARGS_KEY]["labels_key"] == LABELS_KEY
+
+
+def test_cytoanvi_from_cytovi_model_requires_labels_key_without_cytovi_labels(adata):
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+
+    with pytest.raises(ValueError, match="labels_key"):
+        CytoANVI.from_cytovi_model(cytovi_model, unlabeled_category=UNLABELED, labels_key=None)
+
+
+def test_cytoanvi_from_cytovi_model_rejects_mismatched_labels_key(adata):
+    adata.obs["other_labels"] = adata.obs[LABELS_KEY].astype(str).to_numpy()
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+
+    with pytest.raises(ValueError, match="different labels_key"):
+        CytoANVI.from_cytovi_model(
+            cytovi_model, unlabeled_category=UNLABELED, labels_key="other_labels"
+        )
+
+
+def test_cytoanvi_from_cytovi_model_accepts_compatible_adata(adata):
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+    compatible = adata.copy()
+
+    cytoanvi_model = CytoANVI.from_cytovi_model(
+        cytovi_model,
+        unlabeled_category=UNLABELED,
+        labels_key=LABELS_KEY,
+        adata=compatible,
+    )
+
+    assert cytoanvi_model.adata is compatible
+    assert cytoanvi_model.was_pretrained
+
+
+def test_cytoanvi_from_cytovi_model_preserves_setup_args(adata):
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+    original_non_kwargs = dict(cytovi_model.init_params_["non_kwargs"])
+    original_kwargs = deepcopy(cytovi_model.init_params_["kwargs"])
+    original_setup_args = deepcopy(cytovi_model.adata_manager.registry[_SETUP_ARGS_KEY])
+
+    CytoANVI.from_cytovi_model(
+        cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY
+    )
+
+    assert cytovi_model.init_params_["non_kwargs"] == original_non_kwargs
+    assert cytovi_model.init_params_["kwargs"] == original_kwargs
+    assert cytovi_model.adata_manager.registry[_SETUP_ARGS_KEY] == original_setup_args
+
+
+def test_cytoanvi_from_cytovi_model_rejects_ln_latent_before_setup(adata):
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10, latent_distribution="ln")
+    cytovi_model.train(max_epochs=1)
+    original_setup_args = deepcopy(cytovi_model.adata_manager.registry[_SETUP_ARGS_KEY])
+
+    with pytest.raises(NotImplementedError, match="latent_distribution='normal'"):
+        CytoANVI.from_cytovi_model(
+            cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY
+        )
+
+    assert cytovi_model.adata_manager.registry[_SETUP_ARGS_KEY] == original_setup_args
+
+
+def test_cytoanvi_from_cytovi_model_query_save_roundtrip(adata, save_path):
+    CYTOVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        sample_key=SAMPLE_KEY,
+    )
+    cytovi_model = CYTOVI(adata, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+    ref = CytoANVI.from_cytovi_model(
+        cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY
+    )
+    ref.train(max_epochs=1)
+
+    path = os.path.join(save_path, "warmstart_ref")
+    ref.save(path, overwrite=True, save_anndata=True)
+    reloaded = CytoANVI.load(path)
+    assert reloaded.n_labels == ref.n_labels
+
+    query = _make_adata()
+    query.obs[LABELS_KEY] = UNLABELED
+    q_from_model = CytoANVI.load_query_data(query.copy(), ref)
+    q_from_model.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
+    assert q_from_model.predict().shape == (query.n_obs,)
+
+    q_from_path = CytoANVI.load_query_data(query.copy(), path)
+    q_from_path.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
+    assert q_from_path.predict().shape == (query.n_obs,)
+
+
+def test_cytoanvi_from_cytovi_model_multipanel_prepare_query_preserves_nan_layer(save_path):
+    a1 = _make_adata(n_genes=30, n_batches=1)
+    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1.obs_names = "a1_" + a1.obs_names
+    a2.obs_names = "a2_" + a2.obs_names
+    merged = cytovi_pp.merge_batches([a1, a2])
+    assert NAN_LAYER_KEY in merged.layers
+
+    CYTOVI.setup_anndata(
+        merged,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        nan_layer=NAN_LAYER_KEY,
+    )
+    cytovi_model = CYTOVI(merged, n_latent=10)
+    cytovi_model.train(max_epochs=1)
+    ref = CytoANVI.from_cytovi_model(
+        cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY
+    )
+    ref.train(max_epochs=1)
+    path = os.path.join(save_path, "warmstart_multipanel_ref")
+    ref.save(path, overwrite=True, save_anndata=True)
+
+    backbone = list(ref.adata.var_names[ref.encoder_marker_mask_])
+    query = _make_adata()[:, backbone].copy()
+    query.obs[LABELS_KEY] = UNLABELED
+    CytoANVI.prepare_query_anndata(query, path)
+
+    assert list(query.var_names) == list(ref.adata.var_names)
+    assert NAN_LAYER_KEY in query.layers
+
+
+def test_cytoanvi_query_missing_labels_column_becomes_unlabeled(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=1)
+    query = _make_adata()
+    del query.obs[LABELS_KEY]
+
+    q = CytoANVI.load_query_data(query, ref)
+    q.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
+    assert q.predict().shape == (query.n_obs,)
+    assert (q.adata.obs[LABELS_KEY] == UNLABELED).all()
+
+
+def test_cytoanvi_query_known_partial_labels_trains(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=1)
+    query = _make_adata()
+    query.obs[LABELS_KEY] = query.obs[LABELS_KEY].astype(str)
+    query.obs.loc[query.obs.index[: query.n_obs // 2], LABELS_KEY] = UNLABELED
+
+    q = CytoANVI.load_query_data(query, ref)
+    q.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
+    assert q.predict().shape == (query.n_obs,)
+
+
+def test_cytoanvi_query_new_unseen_label_raises(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(adata, n_latent=10)
+    ref.train(max_epochs=1)
+    query = _make_adata()
+    query.obs[LABELS_KEY] = UNLABELED
+    query.obs.iloc[0, query.obs.columns.get_loc(LABELS_KEY)] = "new_unseen_label"
+
+    with pytest.raises(ValueError, match="new_unseen_label|Category"):
+        CytoANVI.load_query_data(query, ref)
 
 
 def test_cytoanvi_surgery(adata):
@@ -264,6 +523,22 @@ def test_cytoanvi_get_uncertainty(adata):
     unc = model.get_uncertainty(tta_rep=3)
     assert unc.shape == (adata.n_obs,)
     assert np.all(np.isfinite(unc))
+
+
+def test_cytoanvi_get_uncertainty_rejects_invalid_mode(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+
+    with pytest.raises(ValueError, match="mode must be"):
+        model.get_uncertainty(tta_rep=3, mode="probability")
 
 
 def test_cytoanvi_continual_update(adata):
@@ -770,6 +1045,25 @@ def test_cytoanvi_uncertainty_multipanel():
 
 
 def test_example_reference_query_runs():
-    from scvi.external.cytoanvi import example_reference_query
+    example_path = (
+        Path(__file__).parents[3]
+        / "docs"
+        / "tutorials"
+        / "notebooks"
+        / "cytometry"
+        / "cytoanvi_example_reference_query.py"
+    )
+    spec = spec_from_file_location("cytoanvi_example_reference_query", example_path)
+    example_reference_query = module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(example_reference_query)
 
     example_reference_query.main(max_epochs=2)
+
+
+def test_vignette_warmstart_section_runs():
+    from vignettes.cytoanvi_showcase import section_warmstart
+
+    result = section_warmstart(max_epochs=1)
+    assert result["dataset"] == "synthetic_warmstart"
+    assert result["max_epochs"] == 1

@@ -10,6 +10,7 @@ vignettes use. Plan: `notes/2026-06-10-cytoanvi-benchmark-plan.md`.
   (iLISI-like), ARI/NMI/silhouette bio-conservation, novelty AUROC, concordance.
 - `baselines.py` — CytoVI latent + k-NN label transfer (the vignette's method).
 - `tasks.py` — B1 (label transfer), B2 (integration), B3 (panel-divergent map), B5 (novelty).
+- `paired_rna_cytof.py` — B7 paired scRNA+CyTOF integration (scennep + CytoANVI, Plan A).
 - `run.py` — CLI.
 
 ## Smoke test (no download — proves the plumbing)
@@ -21,6 +22,20 @@ PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
 ```
 
 Requires `scib-metrics` (and `python-igraph` + `leidenalg` for some scib metrics).
+
+### B7 — paired RNA + CyTOF (scennep + CytoANVI)
+
+```bash
+PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
+  -m benchmarks.cytoanvi.run --dataset paired-rna-cytof --task b7 --max-epochs 30
+```
+
+Primary metric: **RNA macro-F1** on paired-sample RNA cells after label transfer via `predict()`.
+Secondary: scib batch mixing on `X_CytoANVI` (`batch_key=modality`).
+
+B7 ignores global `--batch-key`, `--labels-key`, and `--sample-key` (Plan A columns are fixed).
+
+Vignette: `python vignettes/rna_cytof_cocluster.py --smoke` (writes `.scratch/paired_cytoanvi/merged.h5ad`).
 
 ## Real data
 
@@ -89,7 +104,9 @@ and run with the discovered keys:
 | B4 | continual vs plain surgery (pseudo batch split) | `load_query_data_with_replay`, `select_replay_by_uncertainty` | plain `load_query_data` |
 | B5 | flags a held-out (novel) cell type | `get_uncertainty` | — |
 | B6 | λ (`ewc_importance`) sweep | continual plan kwargs | — |
+| B7 | paired scRNA+CyTOF label transfer (RNA macro-F1 on shared samples) | `prepare_paired_cytoanvi`, `predict` | — |
 | B8 | flat CE vs HCE on held-out labels | `set_hierarchy`, `predict`, `predict_hierarchical` | flat CE on same holdout |
+| B9 | mapQC on query controls after surgery | `score_query_mapping` / `mapping_qc` | low control `mapqc_score > 2` rate |
 
 Use `--require-annotated-nunez` for Nuñez runs that must use manual tutorial labels (not Leiden proxy).
 
@@ -99,3 +116,13 @@ PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytoanvi.run \
   --dataset synthetic --task b8 --max-epochs 50 --seed 0
 ```
 Pass `--hierarchy-edges path/to/edges.json` for real-data ontologies (parent→children dict).
+
+B9 smoke (plumbing on synthetic; full mapQC on real data):
+```bash
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytoanvi.run \
+  --dataset synthetic --task b9 --max-epochs 50 --seed 0
+# Force mapQC on synthetic (may fail — for debugging only):
+PYTHONPATH=src:. $ENV/bin/python -m benchmarks.cytoanvi.run \
+  --dataset synthetic --task b9 --max-epochs 50 --mapqc-run
+```
+Real cohort: omit `--mapqc-run` on non-synthetic datasets (mapQC enabled automatically).

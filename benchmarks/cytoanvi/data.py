@@ -136,18 +136,39 @@ def _leiden_labels(adata, labels_key: str = "cell_type", resolution: float = 1.0
 def _subsample_batches(adata, batch_key: str, max_cells: int, seed: int = 0):
     """Stratified subsample (paper uses 100k total; scib uses 10k per batch)."""
     import numpy as np
+    import scipy.sparse as sp
+    import anndata as ad
 
     rng = np.random.default_rng(seed)
     batch = np.asarray(adata.obs[batch_key].astype(str))
     n_batch = len(np.unique(batch))
     per = max(1, max_cells // n_batch)
-    keep = []
+    mask = np.zeros(len(batch), dtype=bool)
     for b in np.unique(batch):
         idx = np.where(batch == b)[0]
         if len(idx) > per:
             idx = rng.choice(idx, size=per, replace=False)
-        keep.append(idx)
-    return adata[np.sort(np.concatenate(keep))].copy()
+        mask[idx] = True
+    idx = np.where(mask)[0]
+
+    # scipy 1.17 + numpy 2.x regression: anndata's copy-of-view calls
+    # _subset_sparse which passes a (row_array, col_array) 2-tuple to scipy,
+    # triggering _get_arrayXarray → csr_sample_values, which rejects int64 scalars.
+    # Fix: bypass anndata's copy-of-view entirely. Use 1-D row indexing on the
+    # parent CSR (mat.tocsr()[idx]) which goes through _get_submatrix →
+    # csr_row_index (no int64 issue), then densify the tiny cytometry matrices.
+    def _row_subset(mat, idx):
+        if sp.issparse(mat):
+            return np.asarray(mat.tocsr()[idx].todense())
+        return mat[idx]
+
+    return ad.AnnData(
+        X=_row_subset(adata.X, idx),
+        obs=adata.obs.iloc[idx].copy(),
+        var=adata.var.copy(),
+        layers={k: _row_subset(v, idx) for k, v in adata.layers.items()} or None,
+        obsm={k: v[idx] for k, v in adata.obsm.items()} or None,
+    )
 
 
 def load_nunez(
@@ -274,7 +295,7 @@ def load_roider_full(
             "python -m benchmarks.common.ingest --extract-roider"
         )
 
-    inv = inventory_roider(raw)
+    inventory_roider(raw)
     by_patient: dict[str, dict[str, Path]] = {}
     for path in raw.rglob("*.fcs"):
         if "Compensation" in path.name or "__MACOSX" in str(path):

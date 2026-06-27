@@ -17,8 +17,7 @@ Query-novelty (test-time-augmentation) uncertainty is a separate concern and liv
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import torch
@@ -46,16 +45,17 @@ def fisher_importances(
 ) -> list[tuple[str, torch.Tensor]]:
     """Fisher-style parameter importances = mean squared ELBO gradient over ``adata``.
 
-    Estimated on an unfrozen copy of ``model`` so every parameter gets a gradient. Returns CPU
-    tensors keyed by parameter name (CPU so they pickle cleanly for save/load; the EWC penalty
-    moves them to the live device on use).
+    Runs on the live ``model`` without a deepcopy: ``requires_grad`` flags are snapshotted,
+    temporarily set to ``True`` for all params, then restored in a ``finally`` block. Grads are
+    accumulated into a separate ``importances`` dict and cleared afterward — the live optimizer
+    state and parameter *values* are never modified.
+
+    Returns CPU tensors keyed by parameter name (CPU so they pickle cleanly for save/load; the EWC
+    penalty moves them to the live device on use).
 
     Uses the **unsupervised ELBO** only (no labelled minibatch / classification term). For large
     references, subsamples to ``max_cells`` cells before estimation.
     """
-    model = deepcopy(model)
-    for p in model.module.parameters():
-        p.requires_grad = True
     adata = model._validate_anndata(adata)
     if max_cells is not None and adata.n_obs > max_cells:
         rng = np.random.default_rng(seed)
@@ -64,20 +64,38 @@ def fisher_importances(
     logger.info("Estimating Fisher importances on %d cells.", adata.n_obs)
     scdl = model._make_data_loader(adata=adata, batch_size=batch_size)
 
+    # Snapshot requires_grad so we can restore the caller's freeze state afterward.
+    grad_flags = {name: p.requires_grad for name, p in model.module.named_parameters()}
+    for p in model.module.parameters():
+        p.requires_grad = True
+
     importances = dict(zerolike_params_dict(model.module))
-    model.module.eval()
+    was_training = model.module.training
+    model.module.eval()  # eval() outside the grad context: disables dropout/BN updates
     n_batches = 0
-    for tensors in scdl:
-        tensors = {k: v.to(model.device) for k, v in tensors.items()}
-        model.module.zero_grad()
-        inf = model.module.inference(**model.module._get_inference_input(tensors))
-        gen = model.module.generative(**model.module._get_generative_input(tensors, inf))
-        loss = model.module.loss(tensors, inf, gen).loss
-        loss.backward()
+    try:
+        # enable_grad guards against an outer torch.inference_mode() context; raw (unclipped)
+        # gradients are required here — gradient clipping must NOT apply to this pass.
+        with torch.enable_grad():
+            for tensors in scdl:
+                tensors = {k: v.to(model.device) for k, v in tensors.items()}
+                model.module.zero_grad()
+                inf = model.module.inference(**model.module._get_inference_input(tensors))
+                gen = model.module.generative(**model.module._get_generative_input(tensors, inf))
+                loss = model.module.loss(tensors, inf, gen).loss
+                loss.backward()
+                for name, p in model.module.named_parameters():
+                    if p.grad is not None and name in importances:
+                        importances[name] += p.grad.detach().pow(2)
+                n_batches += 1
+    finally:
+        # Restore requires_grad flags and clear accumulated grads so the caller's optimizer
+        # state is unaffected.
         for name, p in model.module.named_parameters():
-            if p.grad is not None and name in importances:
-                importances[name] += p.grad.detach().pow(2)
-        n_batches += 1
+            p.requires_grad = grad_flags.get(name, p.requires_grad)
+        model.module.zero_grad(set_to_none=True)
+        if was_training:
+            model.module.train()
     n_batches = max(n_batches, 1)
     return [(k, (v / n_batches).detach().cpu()) for k, v in importances.items()]
 
@@ -101,9 +119,13 @@ class ContinualUpdate:
         old_params: list[tuple[str, torch.Tensor]],
         importances: list[tuple[str, torch.Tensor]],
         ctrl_importances: list[tuple[str, torch.Tensor]] | None = None,
-        combine_type: str = "product",
+        combine_type: Literal["product", "additive"] = "product",
         replay_batches: list[dict[str, torch.Tensor]] | None = None,
     ):
+        if combine_type not in ("product", "additive"):
+            raise ValueError(
+                f"combine_type must be 'product' or 'additive'; got {combine_type!r}."
+            )
         self.old_params = old_params
         self.importances = importances
         self.ctrl_importances = ctrl_importances
@@ -117,7 +139,8 @@ class ContinualUpdate:
         query_model,
         replay_adata: AnnData,
         control_adata: AnnData | None,
-        combine_type: str = "product",
+        combine_type: Literal["product", "additive"] = "product",
+        seed: int = 0,
     ) -> ContinualUpdate:
         """Build the update at surgery time.
 
@@ -125,20 +148,50 @@ class ContinualUpdate:
         the query-control Fisher from ``query_model`` (controls may carry query batches, so their
         importances are computed on the batch-extended query model), and materializes the replay
         buffer via the query model's loader.
+
+        ``seed`` controls the Fisher subsampling and replay-buffer ordering so that two calls with
+        the same inputs and the same seed produce identical ``importances`` and ``replay_batches``.
         """
         old_params = [
             (k, p.detach().cpu().clone()) for k, p in reference_model.module.named_parameters()
         ]
-        importances = fisher_importances(reference_model, replay_adata)
+        importances = fisher_importances(reference_model, replay_adata, seed=seed)
         ctrl_importances = (
-            fisher_importances(query_model, control_adata) if control_adata is not None else None
+            fisher_importances(query_model, control_adata, seed=seed)
+            if control_adata is not None
+            else None
         )
         replay_val = query_model._validate_anndata(replay_adata)
-        replay_dl = query_model._make_data_loader(adata=replay_val, batch_size=256, shuffle=True)
+        # Deterministic ordering via an explicit seeded permutation rather than shuffle=True,
+        # which would draw from the global RNG and produce non-reproducible replay buffers.
+        perm = np.random.default_rng(seed).permutation(len(replay_val))
+        replay_dl = query_model._make_data_loader(
+            adata=replay_val, indices=perm, batch_size=256, shuffle=False
+        )
         replay_batches = [
             {k: v.detach().cpu() for k, v in tensors.items()} for tensors in replay_dl
         ]
         return cls(old_params, importances, ctrl_importances, combine_type, replay_batches)
+
+    def to_device(self, device) -> None:
+        """Pre-load the constant anchor/Fisher tensors onto ``device`` once before training.
+
+        Called from :meth:`CytoANVIContinualTrainingPlan.on_train_start` so that
+        :meth:`penalty` reads from an already-resident cache rather than re-`.to(device)`-ing
+        constant tensors every training step.  The ``_dev_*`` dicts are excluded from
+        :meth:`persistable_state` and from pickling (see ``__getstate__``).
+        """
+        self._dev_old: dict[str, torch.Tensor] = {k: v.to(device) for k, v in self.old_params}
+        self._dev_imps: dict[str, torch.Tensor] = {k: v.to(device) for k, v in self.importances}
+        self._dev_ctrl: dict[str, torch.Tensor] | None = (
+            {k: v.to(device) for k, v in self.ctrl_importances}
+            if self.ctrl_importances is not None
+            else None
+        )
+
+    def __getstate__(self) -> dict:
+        """Exclude device-cached tensors from pickling (they are derived from CPU state)."""
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_dev")}
 
     def penalty(self, module: torch.nn.Module) -> torch.Tensor:
         """EWC drift penalty ``sum_k w_k (theta_k - theta_k^ref)^2`` against ``module``'s params.
@@ -149,19 +202,36 @@ class ContinualUpdate:
         """
         device = module.device
         cur = dict(module.named_parameters())
-        imps = dict(self.importances)
-        ctrl = dict(self.ctrl_importances) if self.ctrl_importances is not None else None
+        # Use device-cached dicts (built by to_device) when available; fall back to per-call
+        # .to(device) when penalty is invoked outside training (e.g. evaluation, Fisher pass).
+        # NOTE: use `is not None` rather than truthiness — empty dicts are falsy but valid.
+        _cached_old = getattr(self, "_dev_old", None)
+        old: dict[str, torch.Tensor] = _cached_old if _cached_old is not None else dict(self.old_params)
+        _cached_imps = getattr(self, "_dev_imps", None)
+        imps: dict[str, torch.Tensor] = _cached_imps if _cached_imps is not None else dict(self.importances)
+        _cached_ctrl = getattr(self, "_dev_ctrl", None)
+        # _dev_ctrl itself can be None when ctrl_importances is None, so we check the attribute
+        # existence separately from the None-meaning-"no control Fisher" case.
+        ctrl: dict[str, torch.Tensor] | None
+        if hasattr(self, "_dev_ctrl"):
+            ctrl = _cached_ctrl  # may legitimately be None (no control Fisher)
+        else:
+            ctrl = dict(self.ctrl_importances) if self.ctrl_importances is not None else None
         penalty = torch.zeros((), device=device)
-        for name, saved in self.old_params:
+        for name, saved in old.items():
             p = cur.get(name)
             imp = imps.get(name)
             if p is None or imp is None or p.size() != saved.size():
                 continue
+            # Fallback .to(device) is a no-op when tensors are already on the target device.
             saved = saved.to(device)
             w = imp.to(device)
             if ctrl is not None and name in ctrl:
                 c = ctrl[name].to(device)
-                w = w * c if self.combine_type == "product" else w + c
+                if self.combine_type == "product":
+                    w = w * c
+                else:
+                    w = w + c
             penalty = penalty + (w * (p - saved).pow(2)).sum()
         return penalty
 
@@ -189,13 +259,20 @@ class ContinualUpdate:
     @classmethod
     def from_persistable_state(cls, state: dict) -> ContinualUpdate:
         """Rebuild from :meth:`persistable_state` (replay buffer left empty)."""
-        return cls(
-            old_params=state["old_params"],
-            importances=state["importances"],
-            ctrl_importances=state.get("ctrl_importances"),
-            combine_type=state.get("combine_type", "product"),
-            replay_batches=None,
-        )
+        combine_type = state.get("combine_type", "product")
+        try:
+            return cls(
+                old_params=state["old_params"],
+                importances=state["importances"],
+                ctrl_importances=state.get("ctrl_importances"),
+                combine_type=combine_type,
+                replay_batches=None,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Saved model has invalid combine_type {combine_type!r}; was the model saved "
+                "with an older pre-validation version?"
+            ) from exc
 
 
 class CytoANVIContinualTrainingPlan(SemiSupervisedTrainingPlan):
@@ -214,10 +291,20 @@ class CytoANVIContinualTrainingPlan(SemiSupervisedTrainingPlan):
     def __init__(self, module, n_classes: int, *, ewc_importance: float = 1.0, **kwargs):
         super().__init__(module, n_classes, **kwargs)
         self.loss_kwargs.update({"ewc_importance": ewc_importance})
+        # Manual optimization so gradient clipping is applied inside training_step
+        # alongside the composite EWC+replay loss; Trainer(gradient_clip_val=...) is
+        # incompatible with manual mode — use plan_kwargs["gradient_clip_norm"] instead.
+        self.automatic_optimization = False
 
     def forward(self, *args, **kwargs):
         """Route the forward pass through the module's replay/EWC forward (ELBO + EWC penalty)."""
         return self.module._replay_forward(*args, **kwargs)
+
+    def on_train_start(self) -> None:
+        """Pre-load Fisher/anchor tensors to the training device once, before the first step."""
+        cont = getattr(self.module, "continual", None)
+        if cont is not None:
+            cont.to_device(self.module.device)
 
     def _next_replay_batch(self, batch_idx: int):
         """Cycle through the continual update's replay-buffer minibatches, on the module device."""
@@ -248,6 +335,30 @@ class CytoANVIContinualTrainingPlan(SemiSupervisedTrainingPlan):
             _, _, replay_out = self.module(replay_batch, loss_kwargs={"kl_weight": self.kl_weight})
             loss = loss + replay_out.loss
 
+        opt = self.optimizers()
+        opt.zero_grad()
+        self.manual_backward(loss)
+        if self.gradient_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(
+                filter(lambda p: p.requires_grad, self.module.parameters()),
+                self.gradient_clip_norm,
+            )
+        opt.step()
+
         self.log("train_loss", loss, on_epoch=True, batch_size=loss_output.n_obs_minibatch)
         self.compute_and_log_metrics(loss_output, self.train_metrics, "train")
         return loss
+
+    def on_train_epoch_end(self):
+        """Step the LR scheduler at epoch end (manual-optimization mode)."""
+        if "validation" in self.lr_scheduler_metric or not self.reduce_lr_on_plateau:
+            return
+        sch = self.lr_schedulers()
+        sch.step(self.trainer.callback_metrics[self.lr_scheduler_metric])
+
+    def on_validation_epoch_end(self) -> None:
+        """Step the LR scheduler after validation (manual-optimization mode)."""
+        if not self.reduce_lr_on_plateau or "validation" not in self.lr_scheduler_metric:
+            return
+        sch = self.lr_schedulers()
+        sch.step(self.trainer.callback_metrics[self.lr_scheduler_metric])

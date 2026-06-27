@@ -1,26 +1,26 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
 from torch.distributions import kl_divergence as kl
 
+from scvi import REGISTRY_KEYS
 from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
 from scvi.external.cytovi._module import CytoVAE
 from scvi.module._classifier import Classifier
 from scvi.module._utils import broadcast_labels
-from scvi import REGISTRY_KEYS
 from scvi.module.base import LossOutput, SupervisedModuleClass, auto_move_data
 from scvi.nn import Decoder, Encoder
 
 from ._continual import ContinualUpdate
 from ._hce import hierarchical_cross_entropy_loss
 
-if TYPE_CHECKING:
-    from typing import Literal
+_NON_DATA_INFERENCE_KEYS = frozenset({"batch_index", "cont_covs", "cat_covs", "panel_index"})
 
+if TYPE_CHECKING:
     from torch.distributions import Distribution
 
 
@@ -170,6 +170,13 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         )
         self.register_buffer("reachability_matrix_", reachability_tensor)
 
+    def _set_reachability(self, tensor: torch.Tensor | None) -> None:
+        """Re-register the reachability buffer, keeping it in state_dict and device-aware."""
+        if tensor is None:
+            self.register_buffer("reachability_matrix_", None)
+        else:
+            self.register_buffer("reachability_matrix_", tensor.to(self.device))
+
     def loss(
         self,
         tensors: dict[str, torch.Tensor],
@@ -189,6 +196,10 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         px: Distribution = generative_outputs["px"]
         qz1: Distribution = inference_outputs["qz"]
         z1: torch.Tensor = inference_outputs["z"]
+        if z1.dim() != 2:
+            raise ValueError(
+                f"CytoANVAE.loss expects 2D z1 (n_samples==1); got shape {tuple(z1.shape)}."
+            )
         x: torch.Tensor = tensors[CYTOVI_REGISTRY_KEYS.X_KEY]
 
         if CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK in tensors.keys():
@@ -259,7 +270,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         data_inputs = {
             key: inference_inputs[key]
             for key in inference_inputs.keys()
-            if key not in ["batch_index", "cont_covs", "cat_covs", "panel_index"]
+            if key not in _NON_DATA_INFERENCE_KEYS
         }
 
         y = labelled_dataset[REGISTRY_KEYS.LABELS_KEY]
@@ -290,9 +301,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             self.continual = ContinualUpdate.from_persistable_state(state)
         hierarchy = getattr(model, "hierarchy_reachability_", None)
         if hierarchy is not None:
-            self.reachability_matrix_ = torch.as_tensor(
-                hierarchy, dtype=torch.float32, device=self.device
-            )
+            self._set_reachability(torch.as_tensor(hierarchy, dtype=torch.float32))
 
     def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):
         """Standard CytoANVI loss plus the EWC penalty scaled by ``ewc_importance``."""

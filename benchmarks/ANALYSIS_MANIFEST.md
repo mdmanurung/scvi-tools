@@ -12,7 +12,7 @@ Tracks benchmark tasks and their current status.
 | B4: Continual update | `run.py --task b4` | F1 drift | Static CytoVI | roider-smoke only | drift 0.0 plumbing only (F-008); blocked by real case/control data |
 | B5: Novelty detection | `run.py --task b5` | AUROC | — | roider-e1000 3-seed ✓ (seeds 0/1/2 complete; multiseed JSON written) | best_auroc 0.833±0.122; mean_auroc 0.462±0.075; n_fdr_sig 5.0; 2/13 types pass ≥0.70 (Ttox EM3 0.776±0.071, Tfh 0.724±0.258); Tpr near-threshold 0.693±0.027; bimodal confirmed (F-007, F-010) |
 | B6: λ sweep | `run.py --task b6` | F1 vs λ | — | roider-smoke only | λ=1.0 best (0.888); plumbing only (F-008) |
-| B8: HCE vs flat CE | `run.py --task b8` | Macro-F1 | Flat CE | seed-0 ✓ seed-1 ✓; seed-2 job-25108052 RUNNING (kills at 24h ~17:41 CEST epoch~400); recovery job-25128164 RUNNING gpu14 (12h, →~01:00 Jul 1, definitive path) | Δ_hier_vs_flat = +0.0876±0.0014 (seeds 0+1; leaf-held subset); flat_ce 0.979±0.0003; seed 2 needed for pub gate (F-011) |
+| B8: HCE vs flat CE | `run.py --task b8` | Macro-F1 | Flat CE | nunez-full-e1000 3-seed ✓ (job-25128164 complete 18:45 CEST Jun 30) | Δ_hier_vs_flat = +0.0862±0.0027 ✅ pub-gate; flat_ce 0.9783±0.0011; direct HCE −0.0984±0.0851 (expected) (F-011) |
 | B9: mapQC | `run.py --task b9` | mapqc_score | Low control | BLOCKED (mapqc not installed) | — |
 
 ## CytoVI benchmarks (`benchmarks/cytovi/`)

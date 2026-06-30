@@ -112,5 +112,7 @@ Comparison within dataset remains fair (same batch_size for CytoANVI and CytoVI 
 - `smoke_b3_roider.slurm` → NEW: 20-epoch timing smoke + Leiden cluster count (gates Phase 3b sizing).
 - `phase3b_b5sweep_roider.slurm` → NEW: B5 sweep only, 48 h placeholder; resize from smoke test.
 
-**Status:** Submit `smoke_b3_roider.slurm` first to measure epoch time and Leiden cluster count,
-then resubmit B3 and size/submit B5 sweep.
+**Status:** `smoke_b3_roider.slurm` submitted as SLURM job **25129287** (gpu-long, Priority queue,
+2026-06-30 ~20:40 CEST). Awaiting start; once complete, review epoch timing + Leiden cluster
+count, then submit `phase3_b3b5_roider.slurm` (B3 full-cohort 3 seeds) and size/submit
+`phase3b_b5sweep_roider.slurm` (B5 holdout sweep).

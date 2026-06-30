@@ -9,8 +9,8 @@ Tracks future work items, ideas, and planned improvements.
 | Tune and document CytoVI-specific default λ after B6 sweep | medium | open | analysis | 2026-06-18 | mdmanurung | — |
 | Push feat/cytoanvi branch + upstream PR | high | open | infrastructure | 2026-06-18 | mdmanurung | — |
 | B9 mapQC on query controls after surgery | medium | blocked | validation | 2026-06-29 | mdmanurung | — |
-| Roider Phase-3 smoke test then resubmit (B3/B5 full-cohort) | critical | open | analysis | 2026-06-29 | mdmanurung | — |
-| Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | open | analysis | 2026-06-29 | mdmanurung | — |
+| Roider Phase-3 smoke test then resubmit (B3/B5 full-cohort) | critical | in_progress | analysis | 2026-06-29 | mdmanurung | — |
+| Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | done | analysis | 2026-06-29 | mdmanurung | — |
 | Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | Fix ruff lint findings on cytoanvi package | medium | done | infrastructure | 2026-06-29 | mdmanurung | — |
 | Fix B5 AUROC SE formula (Wilcoxon numerator missing — FDR all-significant) | critical | done | analysis | 2026-06-30 | mdmanurung | — |

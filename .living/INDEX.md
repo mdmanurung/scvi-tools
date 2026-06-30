@@ -9,7 +9,7 @@
 | File | Contents |
 |------|----------|
 | [decisions.md](decisions.md) | Architecture and design decisions (D-001…D-007, D-XXX) |
-| [learnings.md](learnings.md) | Gotchas, bugs, edge cases (L-001…L-023) |
+| [learnings.md](learnings.md) | Gotchas, bugs, edge cases (L-001…L-024) |
 | [conventions.md](conventions.md) | Active conventions crystallized from learnings (C-001…C-003) |
 | [conventions/bioinformatics/](conventions/bioinformatics/analysis-conventions.md) | Bioinformatics domain conventions (BIO-01…BIO-10) |
 | [findings/FINDINGS_REGISTRY.md](findings/FINDINGS_REGISTRY.md) | Empirical results registry (F-001…F-011) |
@@ -46,6 +46,7 @@
 | lambda, ewc, continual | L-020, D-003, F-008 |
 | figshare, slurm, environment | L-014 |
 | nunez, annotation, leakage, knn, proxy-labels, b1 | L-022 |
+| nunez, max-cells, benchmark, default-value, run.py | L-024 |
 | preprocessing, arcsinh, cofactor, file-location | L-023 |
 | B5, novelty, auroc, bimodal | L-015, F-007, F-010 |
 | transductive, leakage, evaluation | L-016 |

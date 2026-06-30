@@ -10,7 +10,7 @@ Tracks benchmark tasks and their current status.
 | B2: Integration | `run.py --task b2` | scib bio/batch | CytoVI latent | roider-e1000 3-seed ✓; nunez-r005-e1000 3-seed ✓; roider-full PENDING | Roider batch Δ−0.006 ✅; bio +0.108 gain; Nuñez batch Δ−0.005 ✅ (F-004, F-005) |
 | B3: Cross-panel mapping | `run.py --task b3` | Concordance | CytoVI k-NN | roider-e1000 3-seed ✓; roider-full PENDING | p2 concordance 0.877±0.012 ✅ gate (F-006) |
 | B4: Continual update | `run.py --task b4` | F1 drift | Static CytoVI | roider-smoke only | drift 0.0 plumbing only (F-008); blocked by real case/control data |
-| B5: Novelty detection | `run.py --task b5` | AUROC | — | seed-0 ✓ (FDR-patched); seed-1 RUNNING 6/13 types (→~17:38 CEST); seed-2 RUNNING 6/13 types (→~17:38 CEST) | best 0.744 ✅ gate (Tfh); mean 0.467 concerning; bimodal 4/13 types ≥0.70 (F-007, F-010); multiseed pending |
+| B5: Novelty detection | `run.py --task b5` | AUROC | — | roider-e1000 3-seed ✓ (seeds 0/1/2 complete; multiseed JSON written) | best_auroc 0.833±0.122; mean_auroc 0.462±0.075; n_fdr_sig 5.0; 2/13 types pass ≥0.70 (Ttox EM3 0.776±0.071, Tfh 0.724±0.258); Tpr near-threshold 0.693±0.027; bimodal confirmed (F-007, F-010) |
 | B6: λ sweep | `run.py --task b6` | F1 vs λ | — | roider-smoke only | λ=1.0 best (0.888); plumbing only (F-008) |
 | B8: HCE vs flat CE | `run.py --task b8` | Macro-F1 | Flat CE | seed-0 ✓ seed-1 ✓; seed-2 job-25108052 RUNNING (kills at 24h ~17:41 CEST epoch~400); recovery job-25128164 RUNNING gpu14 (12h, →~01:00 Jul 1, definitive path) | Δ_hier_vs_flat = +0.0876±0.0014 (seeds 0+1; leaf-held subset); flat_ce 0.979±0.0003; seed 2 needed for pub gate (F-011) |
 | B9: mapQC | `run.py --task b9` | mapqc_score | Low control | BLOCKED (mapqc not installed) | — |

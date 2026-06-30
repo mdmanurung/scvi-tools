@@ -114,9 +114,8 @@ def task_b1_label_transfer(
         hm_full = masked.copy()
         hm_full[hm_unlab_mask] = hm_pred_unlab
         harmony_result = metrics.label_transfer_metrics(true[held], hm_full[held])
-    except (ImportError, ValueError, KeyError) as e:
+    except (ImportError, ValueError, KeyError, IndexError) as e:
         # Harmony is an optional baseline; missing package or config errors should not abort B1.
-        # Any other exception is a code bug and should propagate.
         import traceback; traceback.print_exc()
         harmony_result = {"error": str(e)}
 

@@ -110,7 +110,8 @@ def harmony_latent_and_knn(
 
     meta_df = adata.obs[[batch_key]].copy().astype(str)
     ho = hm.run_harmony(Z_pca, meta_df, batch_key, random_state=seed, verbose=False)
-    Z_harmony = ho.Z_corr.T  # (n_cells, n_components)
+    # harmonypy ≥0.2.0 returns Z_corr as (n_cells, n_components); older versions as (n_components, n_cells).
+    Z_harmony = ho.Z_corr.T if ho.Z_corr.shape[0] == n_comp else ho.Z_corr
 
     labels = np.asarray(adata.obs[labels_key].astype(str))
     labelled = labels != unlabeled_category

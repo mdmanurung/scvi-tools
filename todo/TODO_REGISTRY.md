@@ -1,0 +1,22 @@
+# TODO Registry
+
+Tracks future work items, ideas, and planned improvements.
+
+| Title | Priority | Status | Category | Date | Author | File |
+|-------|----------|--------|----------|------|--------|------|
+| Full Nuñez/Roider benchmarks at max_epochs=1000 | critical | open | analysis | 2026-06-10 | mdmanurung | [b-track-full-benchmarks.md](b-track-full-benchmarks.md) |
+| Real case/control axis for B4 biological validation | high | open | analysis | 2026-06-18 | mdmanurung | — |
+| Tune and document CytoVI-specific default λ after B6 sweep | medium | open | analysis | 2026-06-18 | mdmanurung | — |
+| Push feat/cytoanvi branch + upstream PR | high | open | infrastructure | 2026-06-18 | mdmanurung | — |
+| B9 mapQC on query controls after surgery | medium | blocked | validation | 2026-06-29 | mdmanurung | — |
+| Roider Phase-3 smoke test then resubmit (B3/B5 full-cohort) | critical | open | analysis | 2026-06-29 | mdmanurung | — |
+| Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | open | analysis | 2026-06-29 | mdmanurung | — |
+| Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
+| Fix ruff lint findings on cytoanvi package | medium | done | infrastructure | 2026-06-29 | mdmanurung | — |
+| Fix B5 AUROC SE formula (Wilcoxon numerator missing — FDR all-significant) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
+| Fix unseeded np.random.choice in test_hierarchy_schpl_mock.py | low | done | testing | 2026-06-30 | mdmanurung | — |
+| Fix NAN_LAYER local redefinition in tasks_imputation.py (DRY violation) | low | done | infrastructure | 2026-06-30 | mdmanurung | — |
+| Regenerate B5 result JSONs after AUROC SE fix (existing values are wrong) | critical | open | analysis | 2026-06-30 | mdmanurung | — |
+| Install `mapqc` in conda env before next SLURM submission (unblocks B9) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
+| USER ACTION: scancel stale jobs 25102610 25102547 (25102546 already gone) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
+| Monitor B1 Nuñez reversal on full-cohort run (F-003: Δ−0.013 on vignette) | high | open | validation | 2026-06-29 | mdmanurung | — |

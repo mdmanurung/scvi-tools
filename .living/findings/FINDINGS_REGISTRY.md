@@ -1,0 +1,18 @@
+# Findings Registry
+
+Empirical observations, validated/invalidated hypotheses, and quantitative results from this project.
+
+**Validity caveat key**: `vignette-100` = subsampled data, 100 epochs; `vignette-e1000` = subsampled data, 1000 epochs; `roider-e1000` = `--dataset roider` (≈5k cells), 1000 epochs, 3 seeds; `nunez-r005-e1000` = Nuñez subsampled r=0.05, 1000 epochs, 3 seeds; `roider-smoke` = `--dataset roider`, smoke; `b8-synthetic-smoke` = tiny synthetic data. **None of these are publication-grade** as of 2026-06-29. Publication gate requires `roider-full` / `nunez-full` at max_epochs=1000, ≥3 seeds.
+
+| ID | Claim | Status | Topic | Validity | Tags | Last Updated |
+|----|-------|--------|-------|----------|------|--------------|
+| F-001 | CytoANVI B1 Roider macro-F1 0.925±0.009 vs kNN 0.810±0.025 (Δ+0.115, 3 seeds) | NOT pub-grade | [label-transfer-accuracy.md](label-transfer-accuracy.md) | vignette-100 | B1, macro-F1, roider, label-transfer | 2026-06-29 |
+| F-002 | B1 Roider e1000 3-seed: CytoANVI 0.908±0.008 vs kNN 0.787±0.039 (Δ+0.121) — passes ≥+0.03 gate | NOT pub-grade | [label-transfer-accuracy.md](label-transfer-accuracy.md) | roider-e1000 | B1, macro-F1, roider, label-transfer | 2026-06-29 |
+| F-003 | B1 Nuñez r0.05 e1000 3-seed: CytoANVI 0.954±0.032 vs kNN 0.967±0.004 (Δ−0.013, reversal) — FAILS gate | NOT pub-grade | [label-transfer-accuracy.md](label-transfer-accuracy.md) | nunez-r005-e1000 | B1, macro-F1, nunez, label-transfer, reversal | 2026-06-29 |
+| F-004 | B2 Roider e1000 3-seed: CytoANVI bio=0.737±0.003 vs CytoVI 0.628±0.013 (+0.108); batch 0.792±0.014 vs 0.798±0.007 (Δ−0.006, passes ±0.05 gate) | NOT pub-grade | [label-transfer-accuracy.md](label-transfer-accuracy.md) | roider-e1000 | B2, scib, batch-mixing, bio-conservation | 2026-06-29 |
+| F-005 | B2 Nuñez r0.05 e1000 3-seed: CytoANVI bio=0.769±0.010 vs CytoVI 0.760±0.011 (+0.009); batch 0.799±0.002 vs 0.804±0.001 (Δ−0.005, passes ±0.05 gate) | NOT pub-grade | [label-transfer-accuracy.md](label-transfer-accuracy.md) | nunez-r005-e1000 | B2, scib, nunez, batch-mixing | 2026-06-29 |
+| F-006 | B3 Roider e1000 3-seed: p1 holdout macro-F1 0.917±0.018; p2 concordance 0.877±0.012 — passes ≥0.80 gate | NOT pub-grade | [cross-panel-mapping.md](cross-panel-mapping.md) | roider-e1000 | B3, cross-panel, concordance | 2026-06-29 |
+| F-007 | B5 Roider e1000 seed-0: best AUROC 0.744 (Tfh, passes ≥0.70), mean AUROC 0.467; bimodal — 4/13 types ≥0.70, 9/13 below (3 below 0.20) | NOT pub-grade | [cross-panel-mapping.md](cross-panel-mapping.md) | roider-e1000 | B5, novelty, auroc, uncertainty, bimodal | 2026-06-29 |
+| F-008 | B4/B6: replay drift 0.0 for all λ on pseudo split; best macro-F1 λ=1.0 (0.888) — plumbing only | NOT pub evidence | [continual-update.md](continual-update.md) | roider-smoke | B4, B6, ewc, lambda, continual | 2026-06-29 |
+| F-009 | B8 synthetic: flat CE 0.295, HCE 0.166 on tiny data (expected; prior harness had bugs L-012/L-013) | invalid (pre-fix) | [continual-update.md](continual-update.md) | b8-synthetic-smoke | B8, hce, hierarchical | 2026-06-29 |
+| F-010 | B5 Roider e1000 seed-0 per-type AUROC: Tfh 0.744, Treg CD69+ 0.741, Tpr 0.710, Ttox EM3 0.702 pass; Treg CD69- 0.131, Ttox EM2 0.097, Tdp 0.269 fail badly — similar subtypes confounded | NOT pub-grade | [cross-panel-mapping.md](cross-panel-mapping.md) | roider-e1000 | B5, novelty, auroc, per-type, confounding | 2026-06-29 |

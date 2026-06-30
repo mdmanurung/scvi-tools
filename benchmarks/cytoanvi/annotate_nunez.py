@@ -157,6 +157,59 @@ def annotate_with_cytovi_tutorial(
     return adata, model
 
 
+def annotate_inductive_knn(
+    adata,
+    *,
+    batch_key: str = "batch",
+    reference_batch: str | int = 0,
+    labels_key: str = "cell_type",
+    latent_key: str = "X_CytoVI",
+    n_neighbors: int = 15,
+):
+    """Re-annotate query batch inductively: kNN from reference batch labels to query batch.
+
+    Avoids the transductive leakage in joint Leiden where query-batch cells' proxy labels are
+    derived from their own latent representation. Uses the existing ``labels_key`` column in
+    ``adata.obs`` for the reference batch (no Leiden re-run), so cluster ID→cell type mapping
+    is preserved correctly. Requires ``adata.obsm[latent_key]`` to be pre-computed.
+
+    Reference batch labels are kept as-is; query batch labels are replaced by kNN predictions
+    from the reference batch latent space.
+    """
+    from sklearn.neighbors import KNeighborsClassifier
+
+    batch = adata.obs[batch_key].astype(str)
+    ref_str = str(reference_batch)
+    ref_mask = (batch == ref_str).to_numpy()
+    qry_mask = ~ref_mask
+
+    if labels_key not in adata.obs.columns:
+        raise ValueError(
+            f"'{labels_key}' not found in adata.obs. "
+            "Run annotate_with_cytovi_tutorial first to compute reference labels."
+        )
+
+    latent = np.asarray(adata.obsm[latent_key])
+    ref_latent = latent[ref_mask]
+    qry_latent = latent[qry_mask]
+    ref_cell_types = adata.obs[labels_key].astype(str).to_numpy()[ref_mask]
+
+    # kNN classifier: reference latent → query labels (inductive, no batch 1 leakage)
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors, metric="euclidean", n_jobs=-1)
+    knn.fit(ref_latent, ref_cell_types)
+    qry_cell_types = knn.predict(qry_latent)
+
+    all_labels = adata.obs[labels_key].astype(str).to_numpy().copy()
+    all_labels[qry_mask] = qry_cell_types
+
+    adata.obs[labels_key] = all_labels
+    adata.obs[labels_key] = adata.obs[labels_key].astype("category")
+    adata.uns.setdefault("nunez_annotation", {})["method"] = "inductive_knn"
+    adata.uns["nunez_annotation"]["reference_batch"] = ref_str
+    adata.uns["nunez_annotation"]["n_neighbors"] = n_neighbors
+    return adata
+
+
 def main():
     """CLI entry point — parse arguments and run annotation."""
     ap = argparse.ArgumentParser(description=__doc__)
@@ -180,17 +233,53 @@ def main():
         help="Fail instead of merging Leiden clusters >10 into nearest 0–10",
     )
     ap.add_argument("--metadata-out", default=None, help="Optional JSON sidecar with label counts")
+    ap.add_argument(
+        "--inductive",
+        action="store_true",
+        help=(
+            "Use inductive kNN annotation (Leiden on reference batch only, kNN to query batch). "
+            "Avoids transductive leakage of joint Leiden. Use --load-latent to skip CytoVI retraining."
+        ),
+    )
+    ap.add_argument(
+        "--load-latent",
+        default=None,
+        help=(
+            "Path to an existing h5ad with X_CytoVI already computed. "
+            "When provided with --inductive, CytoVI training is skipped entirely."
+        ),
+    )
     args = ap.parse_args()
 
-    adata = load_nunez_merged(args.data_dir)
-    adata, _model = annotate_with_cytovi_tutorial(
-        adata,
-        max_epochs=args.max_epochs,
-        leiden_resolution=args.leiden_resolution,
-        seed=args.seed,
-        merge_extra_clusters=not args.no_merge_extra_clusters,
-        model_checkpoint=args.model_checkpoint,
-    )
+    if args.inductive and args.load_latent:
+        # Fast path: existing h5ad already has X_CytoVI + batch 0 labels.
+        # Keep batch 0 labels as-is; replace batch 1 labels with kNN predictions.
+        print(f"Loading existing latent from {args.load_latent} (skipping CytoVI training)")
+        adata = sc.read_h5ad(args.load_latent)
+        adata = annotate_inductive_knn(adata)
+    elif args.inductive:
+        # Full path: train CytoVI first, then assign batch 0 labels via joint Leiden,
+        # then replace batch 1 labels with inductive kNN.
+        adata = load_nunez_merged(args.data_dir)
+        adata, _model = annotate_with_cytovi_tutorial(
+            adata,
+            max_epochs=args.max_epochs,
+            leiden_resolution=args.leiden_resolution,
+            seed=args.seed,
+            merge_extra_clusters=not args.no_merge_extra_clusters,
+            model_checkpoint=args.model_checkpoint,
+        )
+        adata = annotate_inductive_knn(adata)
+    else:
+        adata = load_nunez_merged(args.data_dir)
+        adata, _model = annotate_with_cytovi_tutorial(
+            adata,
+            max_epochs=args.max_epochs,
+            leiden_resolution=args.leiden_resolution,
+            seed=args.seed,
+            merge_extra_clusters=not args.no_merge_extra_clusters,
+            model_checkpoint=args.model_checkpoint,
+        )
 
     out_path = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)

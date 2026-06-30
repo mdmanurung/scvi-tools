@@ -27,6 +27,14 @@ from benchmarks.common.training import NAN_LAYER, SCALED_LAYER  # noqa: F401 —
 
 FIGSHARE = {name: fig_id for name, (fig_id, _) in _VIGNETTE.items()}
 
+# Entity split for B4/B6 continual-update tasks using the Roider BNHL cohort.
+# FL+DLBCL are used as the reference atlas; MCL+rLN are the novel query entities added in Phase 2.
+# Requires ``adata.obs["Entity"]`` populated by ``benchmarks.common.roider_metadata.annotate_roider_obs``.
+BNHL_CONTINUAL_SPLIT: dict[str, list[str]] = {
+    "ref": ["FL", "DLBCL"],
+    "query": ["MCL", "rLN"],
+}
+
 # Repo-root ``data/`` (sibling of ``benchmarks/``) — common drop location for downloaded files.
 _REPO_DATA = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, "data")
@@ -240,6 +248,40 @@ def _subset_roider_patients(merged, max_patients: int | None):
         return merged
     keep = sorted(merged.obs["PatientID"].astype(str).unique())[:max_patients]
     return merged[merged.obs["PatientID"].astype(str).isin(keep)].copy()
+
+
+def _split_by_entity(
+    adata,
+    ref_entities: list[str],
+    query_entities: list[str],
+    *,
+    entity_key: str = "Entity",
+):
+    """Split ``adata`` into reference and query subsets by entity label.
+
+    Parameters
+    ----------
+    adata
+        AnnData with ``adata.obs[entity_key]`` populated (e.g. by
+        :func:`benchmarks.common.roider_metadata.annotate_roider_obs`).
+    ref_entities
+        Entity labels that belong to the reference atlas (e.g. ``["FL", "DLBCL"]``).
+    query_entities
+        Entity labels that belong to the novel query (e.g. ``["MCL", "rLN"]``).
+    entity_key
+        Column in ``adata.obs`` containing entity labels. Defaults to ``"Entity"`` (Roider
+        convention).
+
+    Returns
+    -------
+    ref_adata, query_adata : tuple of AnnData copies
+        Cells with entity in ``ref_entities`` and ``query_entities`` respectively.
+        Cells whose entity is not in either list are silently excluded.
+    """
+    entity = adata.obs[entity_key].astype(str)
+    ref = adata[entity.isin(ref_entities)].copy()
+    query = adata[entity.isin(query_entities)].copy()
+    return ref, query
 
 
 def load_roider_full(

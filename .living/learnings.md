@@ -162,6 +162,13 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **structural_mitigation_candidate**: annotate_nunez.py --inductive flag
 **Body**: The standard CytoVI-tutorial annotation runs Leiden on the joint latent (batch 0 + batch 1 together), then maps clusters to PBMC types. This is transductively leaky for B1 (label transfer from batch 0 → batch 1): batch 1 cells participate in the clustering that defines their own proxy labels. Fix: `annotate_inductive_knn()` keeps batch 0 labels from joint Leiden unchanged, fits kNN on batch 0 latent, predicts batch 1 labels from batch 0 structure alone. Result: 2,135/100k batch 1 cells (2.1%) received updated labels; batch 0 unchanged. The original joint-Leiden cluster ID→cell type dict (`NUNEZ_TUTORIAL_ANNOTATION`) must NOT be re-applied on a batch-0-only re-run of Leiden — cluster integer IDs are not stable across different cell subsets. Use existing labels from joint-Leiden on batch 0, then kNN-transfer. Committed e4170054; `data/nunez_annotated.h5ad` replaced; leaky backup at `data/nunez_annotated_leaky_v1.h5ad`.
 
+### L-023 — [2026-06-30] `transform_arcsinh` lives in `cytovi/_preprocessing.py`, not `benchmarks/common/preprocessing.py`
+**Category**: gotcha
+**Tags**: preprocessing, arcsinh, cofactor, cytovi, file-location
+**mitigation_type**: ambient-awareness
+**structural_mitigation_candidate**: 
+**Body**: The `transform_arcsinh()` function (cofactor-aware arcsinh normalization) is defined in `src/scvi/external/cytovi/_preprocessing.py`. The review checklist (P4-E) incorrectly pointed to `benchmarks/common/preprocessing.py`, which has an unrelated `ARCSINH_COFACTORS` constant dict but not the function itself. The distinction: `benchmarks/common/preprocessing.py` stores dataset-level cofactor configs; `cytovi/_preprocessing.py` implements the transformation and now carries the `technology` guard param. Source: grep-based discovery, session 2026-06-30.
+
 ### L-014 — [2026-06-01] Figshare egress returns HTTP 202 / 0 bytes in dev env; no pip in SLURM queue
 **Category**: infra
 **Tags**: figshare, data-download, slurm, mapqc, environment

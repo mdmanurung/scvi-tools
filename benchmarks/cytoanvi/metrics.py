@@ -43,6 +43,55 @@ def concordance(pred_a, pred_b) -> dict:
     return {"agreement": float((pred_a == pred_b).mean()), "n": int(len(pred_a))}
 
 
+def precision_at_specificity(
+    uncertainty: np.ndarray,
+    is_novel: np.ndarray,
+    *,
+    specificity: float = 0.95,
+    uncertainty_ref: np.ndarray | None = None,
+) -> dict:
+    """Novelty-detection precision when the threshold is set to achieve ``specificity`` on reference.
+
+    The threshold T is the ``specificity``-th quantile of ``uncertainty_ref`` (or the non-novel
+    subset of ``uncertainty`` when ``uncertainty_ref`` is not provided). Cells with
+    ``uncertainty > T`` are predicted novel.
+
+    Parameters
+    ----------
+    uncertainty
+        Per-cell uncertainty scores for all evaluated cells.
+    is_novel
+        Boolean mask — True for cells that are truly novel (held-out type).
+    specificity
+        Target specificity on reference cells (fraction correctly below threshold).
+    uncertainty_ref
+        If provided, use this separate reference uncertainty distribution to set T instead of
+        the non-novel subset of ``uncertainty``.
+
+    Returns
+    -------
+    dict with keys: threshold, specificity, precision, recall, n_predicted_novel
+    """
+    from cytoanvi._uncertainty import get_uncertainty_threshold
+
+    uncertainty = np.asarray(uncertainty, dtype=float)
+    is_novel = np.asarray(is_novel, dtype=bool)
+    ref_scores = np.asarray(uncertainty_ref, dtype=float) if uncertainty_ref is not None else uncertainty[~is_novel]
+    threshold = get_uncertainty_threshold(ref_scores, specificity=specificity)
+    pred_novel = uncertainty > threshold
+    tp = int((pred_novel & is_novel).sum())
+    fp = int((pred_novel & ~is_novel).sum())
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+    recall = float(tp / is_novel.sum()) if is_novel.sum() > 0 else float("nan")
+    return {
+        "threshold": threshold,
+        "specificity": specificity,
+        "precision": precision,
+        "recall": recall,
+        "n_predicted_novel": tp + fp,
+    }
+
+
 def rna_macro_f1_paired(
     adata,
     preds,

@@ -9,6 +9,7 @@ is sensitive to which markers are seen — a proxy for novelty / out-of-distribu
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 
@@ -64,6 +65,45 @@ def bregman_information_lse(zs: torch.Tensor, axis: int = 0, class_axis: int = -
     e_of_lse = zs.logsumexp(dim=class_axis).mean(axis)
     lse_of_e = zs.mean(axis).unsqueeze(axis).logsumexp(dim=class_axis).squeeze(axis)
     return e_of_lse - lse_of_e
+
+
+def get_uncertainty_threshold(
+    uncertainty_ref: np.ndarray,
+    specificity: float = 0.95,
+) -> float:
+    """Return the uncertainty threshold that achieves ``specificity`` on reference cells.
+
+    The threshold T is set to the ``specificity``-th quantile of ``uncertainty_ref``, so that
+    at most ``(1 - specificity)`` fraction of reference-type cells are flagged as novel when
+    calling ``model.get_uncertainty(query_adata) > T``.
+
+    Parameters
+    ----------
+    uncertainty_ref
+        Per-cell uncertainty scores for held-out **reference** cells (same type seen during
+        training). Typically obtained via :meth:`~cytoanvi.CytoANVI.get_uncertainty` on a
+        held-out split of the reference dataset.
+    specificity
+        Desired specificity: fraction of reference cells correctly retained below the threshold.
+        Default 0.95 (flag at most 5 % of reference cells as novel).
+
+    Returns
+    -------
+    float
+        Uncertainty threshold T.
+
+    Examples
+    --------
+    >>> ref_unc = model.get_uncertainty(ref_adata)
+    >>> T = get_uncertainty_threshold(ref_unc, specificity=0.95)
+    >>> is_novel = model.get_uncertainty(query_adata) > T
+    """
+    arr = np.asarray(uncertainty_ref, dtype=float)
+    if arr.ndim != 1:
+        raise ValueError(f"uncertainty_ref must be 1-D; got shape {arr.shape}")
+    if not (0.0 < specificity < 1.0):
+        raise ValueError(f"specificity must be in (0, 1); got {specificity}")
+    return float(np.quantile(arr, specificity))
 
 
 def compute_uncertainty_scores(

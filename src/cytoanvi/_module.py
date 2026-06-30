@@ -308,7 +308,15 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
     def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):
         """Standard CytoANVI loss plus the EWC penalty scaled by ``ewc_importance``."""
         loss_kwargs = dict(loss_kwargs or {})
-        ewc_importance = loss_kwargs.pop("ewc_importance", 0.0)
+        ewc_importance = loss_kwargs.pop("ewc_importance", None)
+        if ewc_importance is None:
+            if self.continual is not None:
+                raise ValueError(
+                    "CytoANVI has an active continual update but ewc_importance was not "
+                    "supplied.  Pass plan_kwargs={'ewc_importance': λ} to train() or "
+                    "ContinualUpdate.update() to enable the EWC penalty."
+                )
+            ewc_importance = 0.0
         losses = self.loss(tensors, inference_outputs, generative_outputs, **loss_kwargs)
         # None continual = base path: the EWC penalty contributes nothing.
         penalty = self.continual.penalty(self) if self.continual is not None else 0.0

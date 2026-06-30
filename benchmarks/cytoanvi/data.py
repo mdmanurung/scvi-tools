@@ -20,14 +20,12 @@ import urllib.request
 
 import numpy as np
 
-FIGSHARE = {
-    "roider_p1.h5ad": "56891468",
-    "roider_p2.h5ad": "56891471",
-    "Nunez_PBMCs_batch1.fcs": "55982654",
-    "Nunez_PBMCs_batch2.fcs": "55982657",
-}
-SCALED_LAYER = "scaled"
-NAN_LAYER = "_nan_mask"
+# Single source for Figshare IDs and layer constants — imported from the common modules.
+# data.py re-exports them so callers that historically imported from here still work.
+from benchmarks.common.fetch_data import VIGNETTE as _VIGNETTE
+from benchmarks.common.training import NAN_LAYER, SCALED_LAYER  # noqa: F401 — re-export
+
+FIGSHARE = {name: fig_id for name, (fig_id, _) in _VIGNETTE.items()}
 
 # Repo-root ``data/`` (sibling of ``benchmarks/``) — common drop location for downloaded files.
 _REPO_DATA = os.path.abspath(

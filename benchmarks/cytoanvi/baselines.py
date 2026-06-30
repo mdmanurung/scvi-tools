@@ -96,6 +96,7 @@ def harmony_latent_and_knn(
     n_neighbors: int = 20,
     n_pca_components: int = 30,
     layer: str = SCALED_LAYER,
+    seed: int = 0,
 ):
     """PCA → Harmony batch correction → kNN label transfer.
 
@@ -105,10 +106,10 @@ def harmony_latent_and_knn(
 
     X = _get_dense(adata, layer)
     n_comp = min(n_pca_components, X.shape[1] - 1, X.shape[0] - 1)
-    Z_pca = PCA(n_components=n_comp, random_state=0).fit_transform(X)
+    Z_pca = PCA(n_components=n_comp, random_state=seed).fit_transform(X)
 
     meta_df = adata.obs[[batch_key]].copy().astype(str)
-    ho = hm.run_harmony(Z_pca, meta_df, batch_key, random_state=0, verbose=False)
+    ho = hm.run_harmony(Z_pca, meta_df, batch_key, random_state=seed, verbose=False)
     Z_harmony = ho.Z_corr.T  # (n_cells, n_components)
 
     labels = np.asarray(adata.obs[labels_key].astype(str))

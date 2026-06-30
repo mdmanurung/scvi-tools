@@ -16,6 +16,7 @@ def mask_augment(
     x: torch.Tensor,
     mask_percentage: float = 0.5,
     nan_mask: torch.Tensor | None = None,
+    generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Randomly zero a fixed fraction of features per cell.
 
@@ -24,6 +25,8 @@ def mask_augment(
     candidates for masking — per-cell missing backbone markers are never perturbed.
 
     Default 0.5 matches the paper's TTA (mask 50% of genes per perturbation).
+    ``generator`` is forwarded to ``torch.randperm`` so TTA draws are reproducible when a seeded
+    generator is supplied (e.g. in tests).
     """
     if nan_mask is None:
         _, feature_dim = x.shape
@@ -34,7 +37,7 @@ def mask_augment(
                 torch.ones(feature_dim - num_masked, dtype=torch.bool),
             ]
         )
-        mask = mask[torch.randperm(mask.size(0))]
+        mask = mask[torch.randperm(mask.size(0), generator=generator)]
         mask = mask.unsqueeze(0).expand(x.shape[0], -1).to(x.device)
         return x * mask
 
@@ -69,6 +72,7 @@ def compute_uncertainty_scores(
     tta_rep: int = 10,
     nan_mask: torch.Tensor | None = None,
     mode: str = "latent",
+    generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Per-cell Bregman-Information uncertainty over ``tta_rep`` mask-augmented draws.
 
@@ -79,11 +83,14 @@ def compute_uncertainty_scores(
         mean — the original formulation. ``"logit"``: BI computed over the
         ``n_labels``-dimensional classifier logits (canonical BVD-on-logits). Both use
         the LSE generator; the difference is which representation is stacked.
+    generator
+        Optional ``torch.Generator`` for reproducible TTA masking.  When ``None`` (default),
+        draws are non-deterministic (production behaviour).
     """
     input_x = inference_inputs["x"]
     all_draws = []
     for _ in range(tta_rep):
-        aug_x = mask_augment(input_x, nan_mask=nan_mask)
+        aug_x = mask_augment(input_x, nan_mask=nan_mask, generator=generator)
         if mode == "logit":
             draw = module.classify(
                 aug_x,

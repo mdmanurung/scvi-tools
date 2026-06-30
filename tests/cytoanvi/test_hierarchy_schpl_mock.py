@@ -7,41 +7,13 @@ from cytoanvi import CytoANVI, hierarchy
 from scvi.data import synthetic_iid
 from scvi.external import cytovi as cytovi_pp
 
+from conftest import MockTreeNode, ScalarNameTreeNode  # noqa: F401
+
 SCALED_LAYER_KEY = "scaled"
 BATCH_KEY = "batch"
 LABELS_KEY = "labels"
 SAMPLE_KEY = "sample_key"
 UNLABELED = "label_0"
-
-
-class MockTreeNode:
-    """Minimal stand-in for scHPL TreeNode: root -> T -> CD4, CD8 leaves."""
-
-    def __init__(self, name, descendants=None):
-        self.name = name if isinstance(name, (list, tuple)) else [name]
-        self.descendants = list(descendants or [])
-        self.ancestor = None
-        for child in self.descendants:
-            child.ancestor = self
-
-    def get_leaves(self):
-        if not self.descendants:
-            return [self]
-        leaves = []
-        for child in self.descendants:
-            leaves.extend(child.get_leaves())
-        return leaves
-
-
-class ScalarNameTreeNode(MockTreeNode):
-    """Mock scHPL node variant whose ``name`` is already a scalar string."""
-
-    def __init__(self, name, descendants=None):
-        self.name = name
-        self.descendants = list(descendants or [])
-        self.ancestor = None
-        for child in self.descendants:
-            child.ancestor = self
 
 
 def _mock_schpl_tree():

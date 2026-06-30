@@ -105,3 +105,27 @@ by one-off SLURM job **25104249** using
 `.scratch/cytoanvi-benchmark/slurm/recover_nunez_b2_s2.slurm`. Downstream B8 was queued as
 **25104252** with dependency `afterok:25104249`; do not run manifest aggregation until recovery
 completes and the JSON validates.
+
+### 2026-06-30 — Nuñez B2 seed-2 recovery completed; B8 3-seed done
+
+Nuñez B2 seed-2 recovery (job 25104249) and B8 seed-2 recovery (job 25108052) completed. B8
+multiseed aggregate: `nunez_b8_multiseed.json` — Δ_hier_vs_flat = **+0.0862±0.0027** (pub-gate ✅,
+F-011). B2 all 3 seeds present.
+
+### 2026-06-30 — B1 inductive relaunch after annotation + harmony fix
+
+The Nuñez B1 result (`nunez_b1_s{0,1,2}.json`) was computed with transductive kNN (L-022: labels
+leaked through Leiden clustering on the full labeled data). Relaunched with inductive kNN annotation
+fix (`annotate_nunez.py --require-annotated-nunez --max-cells 100000`) as:
+
+- PID 1520357 (scvi env): CRASHED at harmony baseline after CytoANVI training (epoch ~300/1000).
+  Root cause: harmonypy 0.2.0 returns `Z_corr` as `(n_cells, n_components)` but code applied `.T`
+  unconditionally; fix in commit e8a6d5f9.
+- PID 2539861 (scvi-test env): KILLED pre-emptively (would have crashed on same harmony bug).
+- PID 3186154 (scvi-test env, v3 restart): RUNNING at epoch 117/1000 (~14.7s/epoch), no NaN,
+  train_loss stable at ~-81.4. ETA seed-0: ~01:35 CEST Jul 1; all 3 seeds: ~09:45 CEST Jul 1.
+  Output: `.scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_s012_v3.log`
+  JSON when complete: `.scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_multiseed.json`
+
+Harmony fix details: L-025, commit e8a6d5f9 (`baselines.py` shape-aware transpose +
+`tasks.py` IndexError catch).

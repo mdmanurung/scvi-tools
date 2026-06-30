@@ -6,7 +6,7 @@ Tracks benchmark tasks and their current status.
 
 | Task | File | Measures | Baseline | Status | Result |
 |------|------|----------|----------|--------|--------|
-| B1: Label transfer | `run.py --task b1` | Macro-F1 | CytoVI k-NN | roider-e1000 3-seed ✓; nunez-inductive-e1000 RUNNING (PID 1520357 seed-0 epoch~375/1000 @20:48 CEST Jun 30; ETA seed-0 done ~23:20; all 3 seeds ~08:00 CEST Jul 1); roider-full PENDING | Roider Δ+0.121±0.040 ✅ gate; Nuñez Δ−0.013 ❌ FAILS on leaky labels (F-003, L-022); re-run in progress with inductive kNN annotation fix |
+| B1: Label transfer | `run.py --task b1` | Macro-F1 | CytoVI k-NN | roider-e1000 3-seed ✓; nunez-inductive-e1000 RUNNING (PID 3186154, seed-0 epoch~98/1000 @21:32 CEST Jun 30; ~14s/epoch; ETA all-3 seeds ~08:45 CEST Jul 1); roider-full PENDING | Roider Δ+0.121±0.040 ✅ gate; Nuñez rerun after harmony fix (L-025, commit e8a6d5f9); prior runs (1520357/2539861) crashed on harmonypy 0.2.0 Z_corr transposition |
 | B2: Integration | `run.py --task b2` | scib bio/batch | CytoVI latent | roider-e1000 3-seed ✓; nunez-r005-e1000 3-seed ✓; roider-full PENDING | Roider batch Δ−0.006 ✅; bio +0.108 gain; Nuñez batch Δ−0.005 ✅ (F-004, F-005) |
 | B3: Cross-panel mapping | `run.py --task b3` | Concordance | CytoVI k-NN | roider-e1000 3-seed ✓; roider-full PENDING (smoke test job 25129287 RUNNING, Leiden=47 clusters); B3 submission gated on smoke epoch timing | p2 concordance 0.877±0.012 ✅ gate (F-006) |
 | B4: Continual update | `run.py --task b4` | F1 drift | Static CytoVI | roider-smoke only | drift 0.0 plumbing only (F-008); blocked by real case/control data |

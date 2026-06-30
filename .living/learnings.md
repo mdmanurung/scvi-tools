@@ -176,6 +176,13 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **structural_mitigation_candidate**: 
 **Body**: `benchmarks/cytoanvi/run.py` and `benchmarks/cytoanvi/data.load_nunez_data()` both default to `max_cells=100_000`. Any B1/B2 Nuñez run launched WITHOUT an explicit `--max-cells` flag uses the same 100k subsample as one launched with `--max-cells 100000`. This meant two seemingly different B1 processes (PID 1520357 without explicit flag, PID 2539861 with `--max-cells 100000` explicit) were in fact running identical workloads and the "race condition" on the shared output JSON was benign. Implication: the Nuñez full-dataset cell count at 100k may miss rare populations; if publication gate requires the genuine full cohort, set `--max-cells None` (or increase the cap in `data.py`).
 
+### L-025 — [2026-06-30] harmonypy ≥0.2.0 returns `Z_corr` as (n_cells, n_components), not (n_components, n_cells)
+**Category**: bug
+**Tags**: baselines, harmonypy, b1-inductive, transposition, environment
+**mitigation_type**: fix
+**structural_mitigation_candidate**: yes — add shape convention check whenever wrapping harmonypy
+**Body**: `harmony_latent_and_knn` in `baselines.py` applied `.T` to `ho.Z_corr` assuming old convention (n_components, n_cells). harmonypy 0.2.0 (both scvi and scvi-test envs) returns (n_cells, n_components) already — `.T` produces (n_components, n_cells) = (21, 100000), and boolean indexing with a (100000,) mask raises `IndexError`. Also, `IndexError` was not caught in the `tasks.py` try/except, killing the entire multiseed run. Fix: use `ho.Z_corr.T if ho.Z_corr.shape[0] == n_comp else ho.Z_corr`. Commit: e8a6d5f9.
+
 ### L-014 — [2026-06-01] Figshare egress returns HTTP 202 / 0 bytes in dev env; no pip in SLURM queue
 **Category**: infra
 **Tags**: figshare, data-download, slurm, mapqc, environment

@@ -5,6 +5,8 @@ Each task returns a plain dict of metrics; run.py serializes them to JSON.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
@@ -100,6 +102,7 @@ def task_b1_label_transfer(
             labels_key,
             unlabeled_category,
             batch_key=batch_key,
+            seed=seed,
         )
         hm_full = masked.copy()
         hm_full[hm_unlab_mask] = hm_pred_unlab
@@ -216,7 +219,11 @@ def task_b3_panel_divergent(
     merged = cytovi.merge_batches([p1.copy(), p2.copy()], batch_key="panel_batch")
     labels = np.asarray(merged.obs[labels_key].astype(str))
     is_p2 = np.isin(merged.obs_names, p2.obs_names)
-    held = _holdout(labels, unlabeled_category, holdout_frac, seed) & ~is_p2
+    # Compute holdout on p1 cells only so the RNG state is independent of p2 contents.
+    p1_idx = np.where(~is_p2)[0]
+    p1_held = _holdout(labels[p1_idx], unlabeled_category, holdout_frac, seed)
+    held = np.zeros(len(labels), dtype=bool)
+    held[p1_idx] = p1_held
     masked = labels.copy()
     masked[held | is_p2] = unlabeled_category
     merged.obs[labels_key] = masked
@@ -255,7 +262,7 @@ def task_b3_panel_divergent(
     )
     knn_full = masked.copy()
     knn_full[unlab_mask] = knn_pred_unlab
-    out["p2_concordance_vs_knn"] = metrics.concordance(pred[is_p2], knn_full[is_p2])
+    out["p2_inter_method_agreement_vs_knn"] = metrics.concordance(pred[is_p2], knn_full[is_p2])
     return out
 
 
@@ -301,6 +308,10 @@ def task_b5_novelty(
         "seed": seed,
         "max_epochs": max_epochs,
         "holdout_type": holdout_type,
+        # uncertainty scored on the full adata (novel cells included) — calibration is
+        # transductive: the training set did not contain the held-out type, but uncertainty
+        # is measured on the same merged object.  Flag so consumers know the evaluation mode.
+        "b5_evaluation_mode": "calibration_transductive",
         "latent": metrics.novelty_auroc(unc_latent, is_novel),
         "logit": metrics.novelty_auroc(unc_logit, is_novel),
         **metrics.novelty_auroc(unc_latent, is_novel),  # top-level for backward compat
@@ -383,18 +394,30 @@ def _split_reference_query(
     query_batch_values: list[str],
     seed: int = 0,
 ):
-    """Pseudo case/control split: query batches vs reference batches (plumbing validation)."""
+    """Pseudo case/control split: query batches vs reference batches (plumbing validation).
+
+    Returns ``(ref, query, fallback_used)`` where ``fallback_used`` is ``True`` when the
+    batch-based split was too small and a random 70/30 permutation was used instead.
+    """
     batch = np.asarray(adata.obs[batch_key].astype(str))
     is_query = np.isin(batch, query_batch_values)
     ref = adata[~is_query].copy()
     query = adata[is_query].copy()
     if ref.n_obs < 64 or query.n_obs < 64:
+        warnings.warn(
+            f"_split_reference_query: batch-based split yielded ref={ref.n_obs} / "
+            f"query={query.n_obs} cells — falling back to random 70/30 permutation. "
+            "Results are NOT a real case-control test.",
+            UserWarning,
+            stacklevel=2,
+        )
         rng = np.random.default_rng(seed)
         perm = rng.permutation(adata.n_obs)
         cut = int(0.7 * adata.n_obs)
         ref = adata[perm[:cut]].copy()
         query = adata[perm[cut:]].copy()
-    return ref, query
+        return ref, query, True
+    return ref, query, False
 
 
 def _replay_latent_drift(ref_model, updated_model, replay_adata):
@@ -433,7 +456,7 @@ def _b4_setup(
     query_batch_values = list(query_batch_values)
 
     labels = np.asarray(adata.obs[labels_key].astype(str))
-    ref_adata, query_adata = _split_reference_query(
+    ref_adata, query_adata, _fallback_split = _split_reference_query(
         adata, batch_key=batch_key, query_batch_values=query_batch_values, seed=seed
     )
     # Build true_query in query_adata.obs_names order to handle the permuted-fallback branch
@@ -478,6 +501,7 @@ def _b4_setup(
         "replay": replay,
         "query_batch_values": query_batch_values,
         "train_extra": train_extra,
+        "_fallback_split": _fallback_split,
     }
 
 
@@ -575,6 +599,7 @@ def task_b4_continual(
         "n_replay": int(replay.n_obs),
         "n_control": int(control.n_obs),
         "query_batch_values": list(_setup["query_batch_values"]),
+        "_fallback_split": _setup["_fallback_split"],
         "note": "Pseudo case/control via batch split — validates plumbing, not biology.",
         "plain_surgery": {
             "replay_latent_drift": _replay_latent_drift(ref_model, plain, replay),

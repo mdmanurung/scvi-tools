@@ -68,7 +68,7 @@ def _summarize_single_task(task: str, payload: dict[str, Any]) -> dict[str, Any]
                     out[f"{model}_{metric}"] = value
     elif task == "b3":
         out["p1_holdout_macro_f1"] = _get(payload, "p1_holdout", "macro_f1")
-        out["p2_concordance"] = _get(payload, "p2_concordance_vs_knn", "agreement")
+        out["p2_concordance"] = _get(payload, "p2_inter_method_agreement_vs_knn", "agreement")
     elif task == "b4":
         out["plain_replay_latent_drift"] = _get(
             payload, "plain_surgery", "replay_latent_drift"

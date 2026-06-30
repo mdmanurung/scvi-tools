@@ -12,7 +12,7 @@ Tracks benchmark tasks and their current status.
 | B4: Continual update | `run.py --task b4` | F1 drift | Static CytoVI | roider-smoke only | drift 0.0 plumbing only (F-008); blocked by real case/control data |
 | B5: Novelty detection | `run.py --task b5` | AUROC | — | seed-0 ✓ (FDR-patched); seeds 1+2 RUNNING (PIDs 1411611/1418691) | best 0.744 ✅ gate (Tfh); mean 0.467 concerning; bimodal 4/13 types ≥0.70 (F-007, F-010); multiseed pending |
 | B6: λ sweep | `run.py --task b6` | F1 vs λ | — | roider-smoke only | λ=1.0 best (0.888); plumbing only (F-008) |
-| B8: HCE vs flat CE | `run.py --task b8` | Macro-F1 | Flat CE | seed-0 ✓ seed-1 ✓; seed-2 RUNNING nvidia2 epoch~400/1000 (PID 1054336) | seeds 0/1 done; multiseed pending seed-2 completion |
+| B8: HCE vs flat CE | `run.py --task b8` | Macro-F1 | Flat CE | seed-0 ✓ seed-1 ✓; seed-2 RUNNING nvidia2 epoch~302/1000 (SLURM 25108052); ~3h remaining | Δ_hier_vs_flat = +0.0876±0.0014 (seeds 0+1; leaf-held subset); flat_ce 0.979±0.0003; seed 2 needed for pub gate (F-011) |
 | B9: mapQC | `run.py --task b9` | mapqc_score | Low control | BLOCKED (mapqc not installed) | — |
 
 ## CytoVI benchmarks (`benchmarks/cytovi/`)

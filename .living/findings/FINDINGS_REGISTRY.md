@@ -2,7 +2,7 @@
 
 Empirical observations, validated/invalidated hypotheses, and quantitative results from this project.
 
-**Validity caveat key**: `vignette-100` = subsampled data, 100 epochs; `vignette-e1000` = subsampled data, 1000 epochs; `roider-e1000` = `--dataset roider` (≈5k cells), 1000 epochs, 3 seeds; `nunez-r005-e1000` = Nuñez subsampled r=0.05, 1000 epochs, 3 seeds; `roider-smoke` = `--dataset roider`, smoke; `b8-synthetic-smoke` = tiny synthetic data. **None of these are publication-grade** as of 2026-06-29. Publication gate requires `roider-full` / `nunez-full` at max_epochs=1000, ≥3 seeds.
+**Validity caveat key**: `vignette-100` = subsampled data, 100 epochs; `vignette-e1000` = subsampled data, 1000 epochs; `roider-e1000` = `--dataset roider` (≈5k cells), 1000 epochs, 3 seeds; `nunez-r005-e1000` = Nuñez subsampled r=0.05, 1000 epochs, 3 seeds; `roider-smoke` = `--dataset roider`, smoke; `b8-synthetic-smoke` = tiny synthetic data; `nunez-full-e1000-2seed` = Nuñez full cohort 200k cells, max_epochs=1000, 2 seeds (seed 2 pending). **None of these are publication-grade** as of 2026-06-29. Publication gate requires `roider-full` / `nunez-full` at max_epochs=1000, ≥3 seeds.
 
 | ID | Claim | Status | Topic | Validity | Tags | Last Updated |
 |----|-------|--------|-------|----------|------|--------------|
@@ -16,3 +16,4 @@ Empirical observations, validated/invalidated hypotheses, and quantitative resul
 | F-008 | B4/B6: replay drift 0.0 for all λ on pseudo split; best macro-F1 λ=1.0 (0.888) — plumbing only | NOT pub evidence | [continual-update.md](continual-update.md) | roider-smoke | B4, B6, ewc, lambda, continual | 2026-06-29 |
 | F-009 | B8 synthetic: flat CE 0.295, HCE 0.166 on tiny data (expected; prior harness had bugs L-012/L-013) | invalid (pre-fix) | [continual-update.md](continual-update.md) | b8-synthetic-smoke | B8, hce, hierarchical | 2026-06-29 |
 | F-010 | B5 Roider e1000 seed-0 per-type AUROC: Tfh 0.744, Treg CD69+ 0.741, Tpr 0.710, Ttox EM3 0.702 pass; Treg CD69- 0.131, Ttox EM2 0.097, Tdp 0.269 fail badly — similar subtypes confounded | NOT pub-grade | [cross-panel-mapping.md](cross-panel-mapping.md) | roider-e1000 | B5, novelty, auroc, per-type, confounding | 2026-06-29 |
+| F-011 | B8 Nuñez full e1000 seeds 0+1: HCE hierarchical decoding Δ+0.0876±0.0014 over flat CE on leaf-held subset; flat CE leaf macro_f1=0.979; seed 2 pending for pub-gate | NOT pub-grade (2-seed) | [continual-update.md](continual-update.md) | nunez-full-e1000-2seed | B8, hce, hierarchical, nunez, leaf-held | 2026-06-30 |

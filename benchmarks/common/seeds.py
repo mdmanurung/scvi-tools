@@ -37,7 +37,7 @@ def _summarize_numeric(per_seed: dict[str, dict]) -> dict:
     out = {}
     for k, vals in flat.items():
         arr = np.asarray(vals)
-        out[k] = {"mean": float(arr.mean()), "std": float(arr.std(ddof=0)), "n": len(vals)}
+        out[k] = {"mean": float(arr.mean()), "std": float(arr.std(ddof=1)), "n": len(vals)}
     return out
 
 

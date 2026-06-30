@@ -10,27 +10,27 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
 #### Added
 
 - Add support for rapids-singlecell, {pr}`3811`.
-- Add {class}`scvi.external.CytoANVI`, a semi-supervised, annotation-aware extension of
+- Add {class}`cytoanvi.CytoANVI`, a semi-supervised, annotation-aware extension of
     {class}`scvi.external.CYTOVI` (cell-type classifier head + partially-observed-label objective,
     scANVI-style) with `from_cytovi_model` and scArches query mapping, including a panel-aware
     `prepare_query_anndata` that pads markers absent from the query antibody panel and masks them
     via CytoVI's `nan_layer` (instead of treating padded zeros as observed intensities). Includes a
-    continual
-    case-control update (`load_query_data_with_replay`: experience replay of reference cells plus a
-    modified EWC penalty with Hadamard-product reference/query-control Fisher importances) and
-    `get_uncertainty` (test-time-augmentation Bregman Information), following the comparative-atlas
-    (cscanvi) paper. The continual update is owned by a single `ContinualUpdate` module whose EWC
-    anchor and Fisher importances persist across `save`/`load` (the session-scoped replay buffer is
-    not persisted).     Adds `select_replay_by_uncertainty`, saved-model panel prep via
-    `encoder_marker_mask_`, and benchmark tasks B4/B6.
+    continual case-control update (`load_query_data_with_replay`: experience replay of reference
+    cells plus a modified EWC penalty with Hadamard-product reference/query-control Fisher
+    importances) and `get_uncertainty` (test-time-augmentation Bregman Information), following the
+    comparative-atlas (cscanvi) paper. The continual update is owned by a single `ContinualUpdate`
+    module whose EWC anchor and Fisher importances persist across `save`/`load` (the session-scoped
+    replay buffer is not persisted). Adds `select_replay_by_uncertainty`, saved-model panel prep
+    via `encoder_marker_mask_`, and benchmark tasks B4/B6. Install with
+    `pip install cytoanvi` (standalone package, not `scvi.external`).
 - Add optional hierarchical cross-entropy (HCE) for CytoANVI via explicit reachability matrix
     (`set_hierarchy`, `predict_hierarchical`; flat CE remains default). Add optional
-    `cytoanvi-hierarchy` extra (`pip install scvi-tools[cytoanvi-hierarchy]`) with scHPL
-    treeArches helpers in `scvi.external.cytoanvi.hierarchy` (`learn_hierarchy`,
+    `cytoanvi-hierarchy` extra (`pip install cytoanvi[hierarchy]`) with scHPL
+    treeArches helpers in `cytoanvi.hierarchy` (`learn_hierarchy`,
     `update_hierarchy`, `predict_schpl`, `set_hierarchy_from_schpl`,
-    `run_tree_arches_pipeline`).
-- Add optional mapQC query-mapping QC for CytoANVI (`pip install scvi-tools[cytoanvi-mapping-qc]`)
-    with helpers in `scvi.external.cytoanvi.mapping_qc` and :meth:`~scvi.external.CytoANVI.score_query_mapping`.
+    `run_tree_arches_pipeline`, `latent_to_anndata`).
+- Add optional mapQC query-mapping QC for CytoANVI (`pip install cytoanvi[mapping-qc]`)
+    with helpers in `cytoanvi.mapping_qc` and :meth:`~cytoanvi.CytoANVI.score_query_mapping`.
     Benchmark task B9 compares control mapQC rates after query surgery.
 
 #### Fixed

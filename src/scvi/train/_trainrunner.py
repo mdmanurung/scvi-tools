@@ -88,7 +88,7 @@ class TrainRunner:
         training_plan: pl.LightningModule,
         data_splitter: SemiSupervisedDataSplitter | DataSplitter,
         max_epochs: int,
-        accelerator: str = "gpu",
+        accelerator: str = "auto",
         devices: int | list[int] | str = "auto",
         trainer_config: KwargsLike | None = None,
         **trainer_kwargs,

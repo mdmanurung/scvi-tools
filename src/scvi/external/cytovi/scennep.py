@@ -205,6 +205,11 @@ def scennep(
             f"Cannot run PCA: n_obs={work.n_obs}, n_vars={work.n_vars} — need both >= 2."
         )
 
+    # Save raw expression before z-scoring — sc.pp.scale modifies work.X in-place, so
+    # pseudobulk must use the pre-scale values, not the z-scores used for PCA/SNN.
+    _raw = work.X
+    orig_expr = np.asarray(_raw.todense() if sparse.issparse(_raw) else _raw, dtype=np.float64)
+
     sc.pp.scale(work, zero_center=True, max_value=10)
     sc.tl.pca(work, n_comps=max_comps, svd_solver="arpack")
     selected_npcs = min(_select_npcs(work, pc_explained, npcs), max_comps)
@@ -216,11 +221,7 @@ def scennep(
         distance=distance,
     )
 
-    expr = work.X
-    if sparse.issparse(expr):
-        expr = np.asarray(expr.todense())
-    else:
-        expr = np.asarray(expr, dtype=np.float64)
+    expr = orig_expr
 
     pseudobulk = _pseudobulk_expression(
         expr,

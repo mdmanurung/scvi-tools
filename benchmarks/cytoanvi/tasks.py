@@ -18,7 +18,14 @@ from benchmarks.common.training import (
 )
 
 from . import metrics
-from .baselines import cytovi_latent_and_knn, harmony_latent_and_knn, raw_marker_knn
+from .baselines import (
+    cytovi_latent_and_knn,
+    flowsom_knn,
+    harmony_latent_and_knn,
+    phenograph_knn,
+    raw_marker_knn,
+    xgboost_classifier,
+)
 
 
 def _holdout(labels, unlabeled_category, frac, seed):
@@ -113,6 +120,33 @@ def task_b1_label_transfer(
         import traceback; traceback.print_exc()
         harmony_result = {"error": str(e)}
 
+    try:
+        xgb_pred_unlab, _, xgb_unlab_mask = xgboost_classifier(work, labels_key, unlabeled_category, seed=seed)
+        xgb_full = masked.copy()
+        xgb_full[xgb_unlab_mask] = xgb_pred_unlab
+        xgboost_result = metrics.label_transfer_metrics(true[held], xgb_full[held])
+    except (ImportError, ValueError, KeyError) as e:
+        import traceback; traceback.print_exc()
+        xgboost_result = {"error": str(e)}
+
+    try:
+        pg_pred_unlab, _, pg_unlab_mask = phenograph_knn(work, labels_key, unlabeled_category, seed=seed)
+        pg_full = masked.copy()
+        pg_full[pg_unlab_mask] = pg_pred_unlab
+        phenograph_result = metrics.label_transfer_metrics(true[held], pg_full[held])
+    except (ImportError, ValueError, KeyError) as e:
+        import traceback; traceback.print_exc()
+        phenograph_result = {"error": str(e)}
+
+    try:
+        fsom_pred_unlab, _, fsom_unlab_mask = flowsom_knn(work, labels_key, unlabeled_category, seed=seed)
+        fsom_full = masked.copy()
+        fsom_full[fsom_unlab_mask] = fsom_pred_unlab
+        flowsom_result = metrics.label_transfer_metrics(true[held], fsom_full[held])
+    except (ImportError, ValueError, KeyError) as e:
+        import traceback; traceback.print_exc()
+        flowsom_result = {"error": str(e)}
+
     return {
         "task": "b1_label_transfer",
         "seed": seed,
@@ -123,6 +157,9 @@ def task_b1_label_transfer(
         "cytovi_knn": metrics.label_transfer_metrics(true[held], knn_full[held]),
         "raw_marker_knn": metrics.label_transfer_metrics(true[held], raw_full[held]),
         "harmony_knn": harmony_result,
+        "xgboost": xgboost_result,
+        "phenograph": phenograph_result,
+        "flowsom": flowsom_result,
     }
 
 

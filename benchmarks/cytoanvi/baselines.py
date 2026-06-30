@@ -122,3 +122,152 @@ def harmony_latent_and_knn(
     else:
         pred_unlabeled = np.array([], dtype=object)
     return pred_unlabeled, Z_harmony, unlabeled_mask
+
+
+def xgboost_classifier(
+    adata,
+    labels_key: str,
+    unlabeled_category: str,
+    seed: int = 0,
+    layer: str = SCALED_LAYER,
+):
+    """XGBoost supervised classifier directly on scaled markers.
+
+    Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
+
+    Requires: ``pip install xgboost``
+    """
+    try:
+        from xgboost import XGBClassifier
+    except ImportError:
+        raise ImportError("xgboost is required: pip install xgboost")
+    from sklearn.preprocessing import LabelEncoder
+
+    X = _get_dense(adata, layer)
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    labelled = labels != unlabeled_category
+
+    le = LabelEncoder().fit(labels[labelled])
+    clf = XGBClassifier(random_state=seed, eval_metric="mlogloss", verbosity=0)
+    clf.fit(X[labelled], le.transform(labels[labelled]))
+
+    unlabeled_mask = ~labelled
+    if unlabeled_mask.any():
+        pred_unlabeled = le.inverse_transform(clf.predict(X[unlabeled_mask]))
+    else:
+        pred_unlabeled = np.array([], dtype=object)
+    return pred_unlabeled, X, unlabeled_mask
+
+
+def phenograph_knn(
+    adata,
+    labels_key: str,
+    unlabeled_category: str,
+    k: int = 30,
+    seed: int = 0,
+    layer: str = SCALED_LAYER,
+):
+    """Phenograph community detection → majority-vote label assignment.
+
+    Clusters all cells (labeled + unlabeled) jointly, then assigns each
+    community the plurality label from labeled cells in that community.
+    Orphan communities (no labeled cells) fall back to kNN on markers.
+
+    Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
+
+    Requires: ``pip install phenograph``
+    """
+    try:
+        import phenograph
+    except ImportError:
+        raise ImportError("phenograph is required: pip install phenograph")
+
+    X = _get_dense(adata, layer)
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    labelled = labels != unlabeled_category
+
+    communities, _, _ = phenograph.cluster(X, k=k, seed=seed)
+
+    fallback_knn = KNeighborsClassifier(n_neighbors=min(5, int(labelled.sum())))
+    fallback_knn.fit(X[labelled], labels[labelled])
+
+    comm_to_label: dict[int, str] = {}
+    for c in np.unique(communities):
+        if c < 0:
+            continue
+        in_comm = (communities == c) & labelled
+        if in_comm.any():
+            vals, counts = np.unique(labels[in_comm], return_counts=True)
+            comm_to_label[c] = vals[np.argmax(counts)]
+
+    unlabeled_mask = ~labelled
+    if unlabeled_mask.any():
+        preds = []
+        for i in np.where(unlabeled_mask)[0]:
+            c = int(communities[i])
+            preds.append(comm_to_label[c] if c in comm_to_label else fallback_knn.predict(X[[i]])[0])
+        pred_unlabeled = np.array(preds, dtype=object)
+    else:
+        pred_unlabeled = np.array([], dtype=object)
+    return pred_unlabeled, X, unlabeled_mask
+
+
+def flowsom_knn(
+    adata,
+    labels_key: str,
+    unlabeled_category: str,
+    xdim: int = 10,
+    ydim: int = 10,
+    n_metaclusters: int = 20,
+    seed: int = 0,
+    layer: str = SCALED_LAYER,
+):
+    """FlowSOM SOM + hierarchical metaclustering → majority-vote label assignment.
+
+    Builds a self-organizing map on all cells in marker space, metaclusters
+    the SOM nodes via agglomerative clustering, then assigns each metacluster
+    the plurality label from labeled cells in that metacluster.
+    Metaclusters with no labeled cells fall back to kNN on markers.
+
+    Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
+
+    Requires: ``pip install pyFlowSOM``
+    """
+    try:
+        from pyFlowSOM import map_data_to_nodes, som
+    except ImportError:
+        raise ImportError("pyFlowSOM is required: pip install pyFlowSOM")
+    from sklearn.cluster import AgglomerativeClustering
+
+    X = _get_dense(adata, layer)
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    labelled = labels != unlabeled_category
+
+    fsom = som(X, xdim=xdim, ydim=ydim, seed=seed)
+    node_per_cell = map_data_to_nodes(X, fsom)
+
+    node_repr = fsom["codes"]
+    n_meta = min(n_metaclusters, len(node_repr))
+    meta_per_node = AgglomerativeClustering(n_clusters=n_meta).fit_predict(node_repr)
+    metacluster_per_cell = meta_per_node[node_per_cell]
+
+    fallback_knn = KNeighborsClassifier(n_neighbors=min(5, int(labelled.sum())))
+    fallback_knn.fit(X[labelled], labels[labelled])
+
+    meta_to_label: dict[int, str] = {}
+    for c in range(n_meta):
+        in_meta = (metacluster_per_cell == c) & labelled
+        if in_meta.any():
+            vals, counts = np.unique(labels[in_meta], return_counts=True)
+            meta_to_label[c] = vals[np.argmax(counts)]
+
+    unlabeled_mask = ~labelled
+    if unlabeled_mask.any():
+        preds = []
+        for i in np.where(unlabeled_mask)[0]:
+            c = int(metacluster_per_cell[i])
+            preds.append(meta_to_label[c] if c in meta_to_label else fallback_knn.predict(X[[i]])[0])
+        pred_unlabeled = np.array(preds, dtype=object)
+    else:
+        pred_unlabeled = np.array([], dtype=object)
+    return pred_unlabeled, X, unlabeled_mask

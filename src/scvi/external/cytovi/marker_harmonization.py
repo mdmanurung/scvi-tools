@@ -94,7 +94,16 @@ def collapse_cd45_markers(
     *,
     cd45_columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Collapse CD45RA/CD45RO into a single CD45 column (element-wise max)."""
+    """Collapse CD45RA/CD45RO into a single CD45 column (element-wise max).
+
+    .. warning::
+        CD45RA and CD45RO are T-cell differentiation markers that distinguish naive
+        (CD45RA+) from memory (CD45RO+) T cells.  Collapsing them into a single CD45 max
+        column **permanently loses that distinction** in the resulting expression matrix.
+        Only call this function when cross-panel harmonization requires a shared CD45
+        backbone and the downstream analysis does not need to resolve naive vs memory T
+        cells.  If in doubt, keep CD45RA and CD45RO as separate columns.
+    """
     cols = cd45_columns or [c for c in ("CD45", "CD45RA", "CD45RO") if c in expr_df.columns]
     if not cols:
         return expr_df

@@ -115,7 +115,9 @@ def task_a3_imputation(
 
         x = np.asarray(train_adata.layers[SCALED_LAYER])
         midx = list(train_adata.var_names).index(marker)
-        knn_imp = KNNImputer(n_neighbors=knn_neighbors).fit_transform(x)[holdout_idx, midx]
+        # Inductive KNN: fit on reference cells only, then predict holdout — never sees
+        # holdout values during neighbor search (fixes the transductive data-leakage bug).
+        knn_imp = KNNImputer(n_neighbors=knn_neighbors).fit(x[~holdout]).transform(x[holdout_idx])[:, midx]
 
         true = np.asarray(merged.layers[SCALED_LAYER][holdout_idx, list(merged.var_names).index(marker)])
         valid = np.isfinite(true) & np.isfinite(cytovi_imp) & np.isfinite(knn_imp)

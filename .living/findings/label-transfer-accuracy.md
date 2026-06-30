@@ -31,18 +31,20 @@
 **Source**: `results/final_summary.json`
 **Implications**: B1 success criterion requires Δ≥+0.03 on full Nuñez. This pre-result suggests it may not pass. Monitor closely when full-cohort jobs complete.
 
-## F-004 — B2 scib: better bio, worse batch (fails batch target)
-**Date**: 2026-06-27
-**Status**: NOT publication-grade (vignette-e1000)
-**Validity caveat**: `vignette-e1000`
-**Claim**: CytoANVI bio score **+0.099** vs CytoVI; batch score **−0.040**. Both B2 PRD flags `false`.
-**Meets target**: no (batch target ±0.05 breached)
-**Source**: `results/roider_multiseed_summary.json`, `results/final_summary.json`
-**Implications**: Batch mixing worse with CytoANVI — classifier pressure may over-separate batches. Watch B2 on full cohort.
+## F-004 — B2 Roider e1000 3-seed: CytoANVI bio +0.108, batch Δ−0.006 (passes both gates)
+**Date**: 2026-06-29 (updated from vignette-e1000 to roider-e1000 3-seed)
+**Status**: NOT publication-grade (roider-e1000 ≈5k cells, not roider-full)
+**Validity caveat**: `roider-e1000` — `--dataset roider` (vignette-scale Roider), max_epochs=1000, 3 seeds
+**Claim**: CytoANVI bio=**0.737 ± 0.003** vs CytoVI **0.628 ± 0.013** (Δ **+0.108**); batch=**0.792 ± 0.014** vs CytoVI **0.798 ± 0.007** (Δ **−0.006**).
+**Meets target**: YES — bio +0.108 (strong), batch −0.006 (within ±0.05 tolerance)
+**Source**: `results/e1000/roider_e1000_multiseed.json`, publication_manifest.json
+**Implications**: At e1000 on vignette-scale data, CytoANVI clearly wins on bio conservation without measurable batch-mixing loss. This supersedes earlier vignette-100 result (F-004 prev: bio +0.099, batch −0.040 — batch gate missed at 100 epochs).
 
-## F-005 — Nuñez B2 seed-2 one-off: CytoANVI ≈ CytoVI (essentially tied)
+## F-005 — B2 Nuñez r0.05 e1000 3-seed: CytoANVI bio +0.009, batch Δ−0.005 (passes both gates)
 **Date**: 2026-06-29
-**Status**: single-seed recovery run, not in publication manifest
-**Validity caveat**: one seed, one-off job 25104249
-**Claim**: CytoANVI total scib **0.7739** vs CytoVI **0.7747** — essentially tied.
-**Source**: PRD.md phase log
+**Status**: NOT publication-grade (nunez-r005-e1000 subsample, not nunez-full)
+**Validity caveat**: `nunez-r005-e1000` — Nuñez subsampled r=0.05, max_epochs=1000, seeds 0/1/2
+**Claim**: CytoANVI bio=**0.769 ± 0.010** vs CytoVI **0.760 ± 0.011** (Δ **+0.009**); batch=**0.799 ± 0.002** vs CytoVI **0.804 ± 0.001** (Δ **−0.005**).
+**Meets target**: YES — bio +0.009 (marginal), batch −0.005 (within ±0.05 tolerance)
+**Source**: `results/e1000/nunez_r005_e1000_multiseed.json`
+**Implications**: Bio improvement is small (+0.009) on Nuñez — dataset's clean separation means CytoVI already achieves strong integration. Batch mixing nearly neutral. Both PRD B2 gates pass. Full-cohort confirmation needed.

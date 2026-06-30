@@ -16,7 +16,7 @@ Tracks future work items, ideas, and planned improvements.
 | Fix B5 AUROC SE formula (Wilcoxon numerator missing — FDR all-significant) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Fix unseeded np.random.choice in test_hierarchy_schpl_mock.py | low | done | testing | 2026-06-30 | mdmanurung | — |
 | Fix NAN_LAYER local redefinition in tasks_imputation.py (DRY violation) | low | done | infrastructure | 2026-06-30 | mdmanurung | — |
-| Regenerate B5 result JSONs after AUROC SE fix (existing values are wrong) | critical | open | analysis | 2026-06-30 | mdmanurung | — |
+| Regenerate B5 result JSONs after AUROC SE fix (existing values are wrong) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Install `mapqc` in conda env before next SLURM submission (unblocks B9) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | USER ACTION: scancel stale jobs 25102610 25102547 (25102546 already gone) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | Monitor B1 Nuñez reversal on full-cohort run (F-003: Δ−0.013 on vignette) | high | open | validation | 2026-06-29 | mdmanurung | — |

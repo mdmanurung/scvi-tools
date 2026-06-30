@@ -44,11 +44,14 @@ def summarize_multiseed(path: Path, data: dict[str, Any] | None = None) -> dict[
                 out[f"{task}_{model}_batch"] = batch
 
     p1_f1 = _get(summary, "b3.p1_holdout.macro_f1")
-    p2_conc = _get(summary, "b3.p2_concordance_vs_knn.agreement")
+    # New JSONs use p2_inter_method_agreement_vs_knn; old JSONs use p2_concordance_vs_knn.
+    p2_conc = _get(summary, "b3.p2_inter_method_agreement_vs_knn.agreement") or _get(
+        summary, "b3.p2_concordance_vs_knn.agreement"
+    )
     if p1_f1:
         out["b3_p1_holdout_macro_f1"] = p1_f1
     if p2_conc:
-        out["b3_p2_concordance"] = p2_conc
+        out["b3_p2_inter_method_agreement"] = p2_conc
 
     return out
 
@@ -68,7 +71,10 @@ def _summarize_single_task(task: str, payload: dict[str, Any]) -> dict[str, Any]
                     out[f"{model}_{metric}"] = value
     elif task == "b3":
         out["p1_holdout_macro_f1"] = _get(payload, "p1_holdout", "macro_f1")
-        out["p2_concordance"] = _get(payload, "p2_inter_method_agreement_vs_knn", "agreement")
+        # New JSONs use p2_inter_method_agreement_vs_knn; old JSONs use p2_concordance_vs_knn.
+        _new = _get(payload, "p2_inter_method_agreement_vs_knn", "agreement")
+        _old = _get(payload, "p2_concordance_vs_knn", "agreement")
+        out["p2_inter_method_agreement"] = _new if _new is not None else _old
     elif task == "b4":
         out["plain_replay_latent_drift"] = _get(
             payload, "plain_surgery", "replay_latent_drift"

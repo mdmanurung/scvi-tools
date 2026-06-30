@@ -50,7 +50,7 @@ def _make_adata(n_genes=30, n_batches=2, n_labels=3):
         n_labels=n_labels,
         rna_dist="normal",
     )
-    adata.obs[SAMPLE_KEY] = np.random.choice(["group_a", "group_b"], size=adata.shape[0])
+    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(["group_a", "group_b"], size=adata.shape[0])
     adata.layers["raw"] = adata.X.copy()
     cytovi_pp.transform_arcsinh(adata)
     cytovi_pp.scale(adata)

@@ -10,10 +10,9 @@ import numpy as np
 from scipy.stats import pearsonr, spearmanr
 from sklearn.impute import KNNImputer
 
-from benchmarks.common.training import SCALED_LAYER, train_cytovi
+from benchmarks.common.training import NAN_LAYER, SCALED_LAYER, train_cytovi
 
 DEFAULT_EXCLUDE_MARKERS = ("CXCR3", "PD-1", "PD1")
-NAN_LAYER = "_nan_mask"
 MASK_BATCH = "pseudo_1"
 
 

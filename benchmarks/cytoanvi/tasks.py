@@ -352,8 +352,8 @@ def task_b5_holdout_sweep(
     aurocs = [per_type[ht]["auroc"] for ht in valid_types]
 
     # BH FDR over per-type AUROCs: normal approximation z = (AUROC - 0.5) / se,
-    # se = sqrt(1 / (12 * n_novel * n_ref)).  Two-sided alternative not needed —
-    # we only care about AUROC > 0.5 (detectable novelty), so use one-sided sf.
+    # se = sqrt((n_novel + n_ref + 1) / (12 * n_novel * n_ref))  # Wilcoxon AUC SE.
+    # One-sided sf because we only care about AUROC > 0.5 (detectable novelty).
     fdr_fields: dict = {}
     if len(aurocs) >= 2:
         from scipy.stats import norm
@@ -362,7 +362,7 @@ def task_b5_holdout_sweep(
         all_labels = np.asarray(adata.obs[labels_key].astype(str))
         n_novel_arr = np.array([(all_labels == ht).sum() for ht in valid_types])
         n_ref_arr = adata.n_obs - n_novel_arr
-        se = np.sqrt(1.0 / np.maximum(12 * n_novel_arr * n_ref_arr, 1))
+        se = np.sqrt((n_novel_arr + n_ref_arr + 1) / np.maximum(12 * n_novel_arr * n_ref_arr, 1))
         z = (np.array(aurocs) - 0.5) / se
         p_vals = norm.sf(z)
         _, fdr_q, _, _ = multipletests(p_vals, method="fdr_bh")
@@ -772,6 +772,7 @@ def task_b6_lambda_sweep(
         "seed": seed,
         "max_epochs": max_epochs,
         "lambdas": list(lambdas),
+        "_fallback_split": setup["_fallback_split"],
         "per_lambda": per_lambda,
         "note": "Reports the full λ table; recommend only when replay drift has a unique minimum.",
     }

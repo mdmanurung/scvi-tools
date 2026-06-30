@@ -28,8 +28,7 @@ DEFAULT_PROTEIN_GENE_MAP: dict[str, str] = {
     "CD49a": "ITGA1",
     "CD3": "CD3E",
     "CD20": "MS4A1",
-    "HLADR": "HLA-DRA",
-    "HLA-DR": "HLA-DRA",
+    "HLA-DR": "HLA-DRA",  # HLADR alias dropped; inverse dict kept unambiguous
     "CD56": "NCAM1",
     "CD4": "CD4",
     "CD19": "CD19",

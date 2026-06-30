@@ -155,6 +155,13 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **structural_mitigation_candidate**: 
 **Body**: The scANVI-style classifier in `CytoANVAE` operates on z1, which is derived from the shared backbone markers only. Panel-specific markers (present in p2 but not p1, or absent from the backbone) are encoded in the per-panel head but do not influence the label-transfer classifier. Consequence: cell types defined exclusively by panel-specific markers (e.g., a CD45RA/CD45RO Treg distinction in p2) will under-resolve relative to types also present in backbone space. This is a fundamental design constraint from M1+M2 sharing z1 across panels. Users running B3 with a high-resolution p2 panel should not expect CytoANVI to resolve panel-specific subtypes. Source: `docs/user_guide/models/cytoanvi.md`, D-001.
 
+### L-022 — [2026-06-30] Nuñez joint-Leiden proxy labels are transductively leaky for B1 evaluation
+**Category**: data
+**Tags**: nunez, annotation, leakage, leiden, knn, proxy-labels, b1, transductive
+**mitigation_type**: fix-applied
+**structural_mitigation_candidate**: annotate_nunez.py --inductive flag
+**Body**: The standard CytoVI-tutorial annotation runs Leiden on the joint latent (batch 0 + batch 1 together), then maps clusters to PBMC types. This is transductively leaky for B1 (label transfer from batch 0 → batch 1): batch 1 cells participate in the clustering that defines their own proxy labels. Fix: `annotate_inductive_knn()` keeps batch 0 labels from joint Leiden unchanged, fits kNN on batch 0 latent, predicts batch 1 labels from batch 0 structure alone. Result: 2,135/100k batch 1 cells (2.1%) received updated labels; batch 0 unchanged. The original joint-Leiden cluster ID→cell type dict (`NUNEZ_TUTORIAL_ANNOTATION`) must NOT be re-applied on a batch-0-only re-run of Leiden — cluster integer IDs are not stable across different cell subsets. Use existing labels from joint-Leiden on batch 0, then kNN-transfer. Committed e4170054; `data/nunez_annotated.h5ad` replaced; leaky backup at `data/nunez_annotated_leaky_v1.h5ad`.
+
 ### L-014 — [2026-06-01] Figshare egress returns HTTP 202 / 0 bytes in dev env; no pip in SLURM queue
 **Category**: infra
 **Tags**: figshare, data-download, slurm, mapqc, environment

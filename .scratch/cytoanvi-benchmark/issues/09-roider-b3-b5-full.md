@@ -116,3 +116,23 @@ Comparison within dataset remains fair (same batch_size for CytoANVI and CytoVI 
 2026-06-30 ~20:40 CEST). Awaiting start; once complete, review epoch timing + Leiden cluster
 count, then submit `phase3_b3b5_roider.slurm` (B3 full-cohort 3 seeds) and size/submit
 `phase3b_b5sweep_roider.slurm` (B5 holdout sweep).
+
+### 2026-06-30 — smoke test RUNNING; Leiden count confirmed
+
+Smoke test job **25129287** started at 20:41:58 CEST on `res-hpc-gpu14` (gpu-long, 8h budget).
+
+Early output from log (cytoanvi_smoke_b3_roider_25129287.log):
+- **Leiden clusters at res=1.0: 47**
+- Panel shapes: `p1=(620000, 22)`, `p2=(620000, 22)` (1.24M cells total)
+- B3 seed-0 training started at batch_size=8192; 20-epoch timing pending (log still updating)
+
+**B5 sweep wall-time estimate** (updated for 47 clusters):
+- B5 uses panel-1 only (620k cells); at batch_size=8192: ~76 steps/epoch
+- Estimated ~29 min/cluster; 47 clusters × 29 min = ~23h + 1h data = **~24h total** → fits in 48h
+- `phase3b_b5sweep_roider.slurm` comment updated with Leiden count and revised estimate
+
+**Next steps once smoke test completes:**
+1. Confirm no NaN divergence from smoke log
+2. Read actual epoch timing (epochs 2-10) from smoke log to refine B5 estimate
+3. Submit `phase3_b3b5_roider.slurm` for B3 full-cohort (3 seeds, ~14h)
+4. Submit `phase3b_b5sweep_roider.slurm` for B5 sweep (48h, expect ~24h)

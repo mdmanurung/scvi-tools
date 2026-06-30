@@ -6,9 +6,9 @@ Tracks benchmark tasks and their current status.
 
 | Task | File | Measures | Baseline | Status | Result |
 |------|------|----------|----------|--------|--------|
-| B1: Label transfer | `run.py --task b1` | Macro-F1 | CytoVI k-NN | roider-e1000 3-seed ✓; nunez-inductive-e1000 RUNNING (PID 2539851, seed-0 epoch~94/1000 @~00:30 CEST Jul 1, →~15:00 Jul 1 all 3 seeds); roider-full PENDING | Roider Δ+0.121±0.040 ✅ gate; Nuñez Δ−0.013 ❌ FAILS on leaky labels (F-003, L-022); re-run in progress with inductive kNN annotation fix |
+| B1: Label transfer | `run.py --task b1` | Macro-F1 | CytoVI k-NN | roider-e1000 3-seed ✓; nunez-inductive-e1000 RUNNING (PID 1520357 seed-0 epoch~375/1000 @20:48 CEST Jun 30; ETA seed-0 done ~23:20; all 3 seeds ~08:00 CEST Jul 1); roider-full PENDING | Roider Δ+0.121±0.040 ✅ gate; Nuñez Δ−0.013 ❌ FAILS on leaky labels (F-003, L-022); re-run in progress with inductive kNN annotation fix |
 | B2: Integration | `run.py --task b2` | scib bio/batch | CytoVI latent | roider-e1000 3-seed ✓; nunez-r005-e1000 3-seed ✓; roider-full PENDING | Roider batch Δ−0.006 ✅; bio +0.108 gain; Nuñez batch Δ−0.005 ✅ (F-004, F-005) |
-| B3: Cross-panel mapping | `run.py --task b3` | Concordance | CytoVI k-NN | roider-e1000 3-seed ✓; roider-full PENDING | p2 concordance 0.877±0.012 ✅ gate (F-006) |
+| B3: Cross-panel mapping | `run.py --task b3` | Concordance | CytoVI k-NN | roider-e1000 3-seed ✓; roider-full PENDING (smoke test job 25129287 RUNNING, Leiden=47 clusters); B3 submission gated on smoke epoch timing | p2 concordance 0.877±0.012 ✅ gate (F-006) |
 | B4: Continual update | `run.py --task b4` | F1 drift | Static CytoVI | roider-smoke only | drift 0.0 plumbing only (F-008); blocked by real case/control data |
 | B5: Novelty detection | `run.py --task b5` | AUROC | — | roider-e1000 3-seed ✓ (seeds 0/1/2 complete; multiseed JSON written) | best_auroc 0.833±0.122; mean_auroc 0.462±0.075; n_fdr_sig 5.0; 2/13 types pass ≥0.70 (Ttox EM3 0.776±0.071, Tfh 0.724±0.258); Tpr near-threshold 0.693±0.027; bimodal confirmed (F-007, F-010) |
 | B6: λ sweep | `run.py --task b6` | F1 vs λ | — | roider-smoke only | λ=1.0 best (0.888); plumbing only (F-008) |

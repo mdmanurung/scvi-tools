@@ -1,0 +1,161 @@
+=== B1 Nunez seed 0 ===
+[rank: 0] Seed set to 0
+
+=== running b1 (seed=0) ===
+[34mINFO    [0m Training for [1;36m1000[0m epochs.                                              
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchma ...
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchma ...
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/cuda/__init__.py:371: UserWarning: Found GPU0 NVIDIA TITAN Xp which is of compute capability (CC) 6.1.
+The following list shows the CCs this version of PyTorch was built for and the hardware CCs it supports:
+- 7.5 which supports hardware CC >=7.5,<8.0
+- 8.0 which supports hardware CC >=8.0,<9.0 except {8.7}
+- 8.6 which supports hardware CC >=8.6,<9.0 except {8.7}
+- 9.0 which supports hardware CC >=9.0,<10.0
+- 10.0 which supports hardware CC >=10.0,<11.0 except {10.1}
+- 12.0 which supports hardware CC >=12.0,<13.0
+Please follow the instructions at https://pytorch.org/get-started/locally/ to install a PyTorch release that supports one of these CUDA versions: 12.6
+  _warn_unsupported_code(d, device_cc, code_ccs)
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/cuda/__init__.py:489: UserWarning: 
+NVIDIA TITAN Xp with CUDA capability sm_61 is not compatible with the current PyTorch installation.
+The current PyTorch install supports CUDA capabilities sm_75 sm_80 sm_86 sm_90 sm_100 sm_120.
+If you want to use the NVIDIA TITAN Xp GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/
+
+  queued_call()
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+Exception raised during training. <class 'NameError'> CUDA error: no kernel image is available for execution on the device
+Search for `cudaErrorNoKernelImageForDevice' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Traceback (most recent call last):
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/call.py", line 49, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/trainer.py", line 630, in _fit_impl
+    self._run(model, ckpt_path=ckpt_path, weights_only=weights_only)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/trainer.py", line 1053, in _run
+    self.strategy.setup(self)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/strategies/strategy.py", line 155, in setup
+    self.model_to_device()
+    ~~~~~~~~~~~~~~~~~~~~^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/strategies/single_device.py", line 79, in model_to_device
+    self.model.to(self.root_device)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/utilities/device_dtype_mixin.py", line 59, in to
+    return super().to(*args, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/nn/modules/module.py", line 1384, in to
+    return self._apply(convert)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+    ~~~~~~~~~~~~~^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torchmetrics/metric.py", line 907, in _apply
+    _dummy_tensor = fn(torch.zeros(1, device=self.device))
+                       ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: no kernel image is available for execution on the device
+Search for `cudaErrorNoKernelImageForDevice' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 286, in <module>
+    main()
+    ~~~~^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 275, in main
+    payload = _run_tasks(args, p1, p2, unlab, seeds[0])
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 110, in _run_tasks
+    results["b1"] = task_mod.task_b1_label_transfer(p1, **b1_kw)
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/tasks.py", line 54, in task_b1_label_transfer
+    model, a = train_cytoanvi(
+               ~~~~~~~~~~~~~~^
+        work,
+        ^^^^^
+    ...<8 lines>...
+        reduce_lr_on_plateau=reduce_lr_on_plateau,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/common/training.py", line 97, in train_cytoanvi
+    model.train(
+    ~~~~~~~~~~~^
+        max_epochs=max_epochs,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        plan_kwargs=plan_kw or None,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/external/cytoanvi/_model.py", line 384, in train
+    return super().train(max_epochs=max_epochs, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/model/base/_training_mixin.py", line 488, in train
+    return runner()
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/train/_trainrunner.py", line 223, in __call__
+    self._run_training_core()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/train/_trainrunner.py", line 144, in _run_training_core
+    self.trainer.fit(self.training_plan, self.data_splitter, ckpt_path=self.ckpt_path)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/train/_trainer.py", line 228, in fit
+    super().fit(*args, **kwargs)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/trainer.py", line 584, in fit
+    call._call_and_handle_interrupt(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self,
+        ^^^^^
+    ...<6 lines>...
+        weights_only,
+        ^^^^^^^^^^^^^
+    )
+    ^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/call.py", line 70, in _call_and_handle_interrupt
+    trainer._teardown()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/trainer.py", line 1102, in _teardown
+    self.strategy.teardown()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/strategies/strategy.py", line 536, in teardown
+    self.lightning_module.cpu()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/utilities/device_dtype_mixin.py", line 86, in cpu
+    return super().cpu()
+           ~~~~~~~~~~~^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/nn/modules/module.py", line 1165, in cpu
+    return self._apply(lambda t: t.cpu())
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+    ~~~~~~~~~~~~~^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torchmetrics/metric.py", line 879, in _apply
+    this = super()._apply(fn)
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+    ~~~~~~~~~~~~~^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torchmetrics/metric.py", line 879, in _apply
+    this = super()._apply(fn)
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+    ~~~~~~~~~~~~~^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/torchmetrics/metric.py", line 907, in _apply
+    _dummy_tensor = fn(torch.zeros(1, device=self.device))
+                       ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: no kernel image is available for execution on the device
+Search for `cudaErrorNoKernelImageForDevice' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+

@@ -1,0 +1,35 @@
+=== B1 Nunez seed 0 ===
+[rank: 0] Seed set to 0
+
+=== running b1 (seed=0) ===
+Traceback (most recent call last):
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pandas/core/indexes/base.py", line 3812, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "pandas/_libs/index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7088, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7096, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'labels'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 286, in <module>
+    main()
+    ~~~~^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 275, in main
+    payload = _run_tasks(args, p1, p2, unlab, seeds[0])
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 110, in _run_tasks
+    results["b1"] = task_mod.task_b1_label_transfer(p1, **b1_kw)
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/tasks.py", line 46, in task_b1_label_transfer
+    true = np.asarray(adata.obs[labels_key].astype(str))
+                      ~~~~~~~~~^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pandas/core/frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pandas/core/indexes/base.py", line 3819, in get_loc
+    raise KeyError(key) from err
+KeyError: 'labels'

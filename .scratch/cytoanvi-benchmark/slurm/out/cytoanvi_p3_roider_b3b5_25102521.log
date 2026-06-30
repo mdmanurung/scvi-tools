@@ -1,0 +1,52 @@
+=== B3 Roider seed 0 ===
+/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/data.py:115: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+Backbone markers: CD3, CD4, CD45RA, CD69, CD8, FSC-A, FoxP3, Ki67, PD1, SSC-A
+  merged = cytovi.merge_batches([p1, p2], batch_key="panel_batch")
+/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/external/cytovi/_preprocessing.py:258: UserWarning: Masking layer _nan_mask already exists. Overwriting it.
+  adata = register_nan_layer(
+[rank: 0] Seed set to 0
+
+=== running b3 (seed=0) ===
+/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/tasks.py:201: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+Backbone markers: CD3, CD4, CD45RA, CD69, CD8, FSC-A, FoxP3, Ki67, PD1, SSC-A
+  merged = cytovi.merge_batches([p1.copy(), p2.copy()], batch_key="panel_batch")
+/exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/external/cytovi/_preprocessing.py:258: UserWarning: Masking layer _nan_mask already exists. Overwriting it.
+  adata = register_nan_layer(
+Traceback (most recent call last):
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pandas/core/indexes/base.py", line 3812, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "pandas/_libs/index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7088, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7096, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'labels'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 286, in <module>
+    main()
+    ~~~~^^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 275, in main
+    payload = _run_tasks(args, p1, p2, unlab, seeds[0])
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/run.py", line 117, in _run_tasks
+    results["b3"] = task_mod.task_b3_panel_divergent(
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        p1,
+        ^^^
+    ...<6 lines>...
+        max_epochs=args.max_epochs,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/tasks.py", line 202, in task_b3_panel_divergent
+    labels = np.asarray(merged.obs[labels_key].astype(str))
+                        ~~~~~~~~~~^^^^^^^^^^^^
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pandas/core/frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pandas/core/indexes/base.py", line 3819, in get_loc
+    raise KeyError(key) from err
+KeyError: 'labels'

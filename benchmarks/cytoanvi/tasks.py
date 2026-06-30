@@ -104,7 +104,10 @@ def task_b1_label_transfer(
         hm_full = masked.copy()
         hm_full[hm_unlab_mask] = hm_pred_unlab
         harmony_result = metrics.label_transfer_metrics(true[held], hm_full[held])
-    except Exception as e:  # noqa: BLE001 - optional Harmony baseline should not abort B1.
+    except (ImportError, ValueError, KeyError) as e:
+        # Harmony is an optional baseline; missing package or config errors should not abort B1.
+        # Any other exception is a code bug and should propagate.
+        import traceback; traceback.print_exc()
         harmony_result = {"error": str(e)}
 
     return {
@@ -334,14 +337,42 @@ def task_b5_holdout_sweep(
             n_latent=n_latent,
             batch_size=batch_size,
         )
-    aurocs = [v["auroc"] for v in per_type.values() if not np.isnan(v["auroc"])]
+    valid_types = [ht for ht, v in per_type.items() if not np.isnan(v.get("auroc", float("nan")))]
+    aurocs = [per_type[ht]["auroc"] for ht in valid_types]
+
+    # BH FDR over per-type AUROCs: normal approximation z = (AUROC - 0.5) / se,
+    # se = sqrt(1 / (12 * n_novel * n_ref)).  Two-sided alternative not needed —
+    # we only care about AUROC > 0.5 (detectable novelty), so use one-sided sf.
+    fdr_fields: dict = {}
+    if len(aurocs) >= 2:
+        from scipy.stats import norm
+        from statsmodels.stats.multitest import multipletests
+
+        all_labels = np.asarray(adata.obs[labels_key].astype(str))
+        n_novel_arr = np.array([(all_labels == ht).sum() for ht in valid_types])
+        n_ref_arr = adata.n_obs - n_novel_arr
+        se = np.sqrt(1.0 / np.maximum(12 * n_novel_arr * n_ref_arr, 1))
+        z = (np.array(aurocs) - 0.5) / se
+        p_vals = norm.sf(z)
+        _, fdr_q, _, _ = multipletests(p_vals, method="fdr_bh")
+        sig_types = [ht for ht, q in zip(valid_types, fdr_q) if q < 0.05]
+        fdr_fields = {
+            "auroc_pvalues": {ht: float(p) for ht, p in zip(valid_types, p_vals)},
+            "auroc_fdr_q": {ht: float(q) for ht, q in zip(valid_types, fdr_q)},
+            "n_fdr_significant": len(sig_types),
+            "mean_auroc_fdr_sig": float(np.mean([per_type[ht]["auroc"] for ht in sig_types])) if sig_types else float("nan"),
+        }
+
     return {
         "task": "b5_holdout_sweep",
         "seed": seed,
         "max_epochs": max_epochs,
         "per_type": per_type,
-        "best_auroc": float(max(aurocs)) if aurocs else float("nan"),
         "mean_auroc": float(np.mean(aurocs)) if aurocs else float("nan"),
+        "n_fdr_significant": fdr_fields.get("n_fdr_significant", 0),
+        "mean_auroc_fdr_sig": fdr_fields.get("mean_auroc_fdr_sig", float("nan")),
+        "best_auroc": float(max(aurocs)) if aurocs else float("nan"),
+        **fdr_fields,
     }
 
 

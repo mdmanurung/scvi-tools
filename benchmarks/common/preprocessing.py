@@ -11,9 +11,9 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 PreprocScheme = Literal["minmax", "zscore", "rank"]
 
 ARCSINH_COFACTORS = {
-    "nunez": 2000,
-    "roider": 500,
-    "kreutmair": 2000,
+    "nunez": 5,      # CyTOF standard; benchmarks/cytoanvi/data.py uses cytovi default=5
+    "roider": 500,   # Roider et al. explicit choice; data.py:332 global_scaling_factor=500
+    "kreutmair": 5,  # CyTOF standard; data.py uses cytovi default=5
     "mass_cyt": 10,
     "cite": 5,
     "glass_bcell": 5,

@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from conftest import MockTreeNode as _MockTreeNode  # shared stub; avoids duplicating the class
 from cytoanvi import CytoANVI, hierarchy
 from cytoanvi._hce import build_reachability_matrix
 from scvi.data import synthetic_iid
@@ -13,30 +14,6 @@ SAMPLE_KEY = "sample_key"
 UNLABELED = "label_0"
 N_EPOCHS = 2
 CELLTYPE_BATCH_KEY = "celltype_batch"
-
-
-class _MockTreeNode:
-    """Minimal scHPL/newick TreeNode stand-in for hierarchy unit tests."""
-
-    def __init__(
-        self,
-        name: str | list[str],
-        descendants: list["_MockTreeNode"] | None = None,
-        ancestor: "_MockTreeNode | None" = None,
-    ):
-        self.name = [name] if isinstance(name, str) else list(name)
-        self.descendants = descendants or []
-        self.ancestor = ancestor
-        for child in self.descendants:
-            child.ancestor = self
-
-    def get_leaves(self):
-        if not self.descendants:
-            return [self]
-        leaves = []
-        for child in self.descendants:
-            leaves.extend(child.get_leaves())
-        return leaves
 
 
 def _mock_schpl_tree():

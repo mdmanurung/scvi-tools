@@ -43,7 +43,7 @@ def mask_augment(
 
     # Vectorized: assign random noise to observed entries; unobserved get -1 so they
     # can never be selected as the top-k slots to mask.
-    noise = torch.rand_like(x)
+    noise = torch.rand(x.shape, dtype=x.dtype, device=x.device, generator=generator)
     noise = noise.masked_fill(nan_mask <= 0, -1.0)
     n_obs = (nan_mask > 0).sum(dim=1)
     k = (mask_percentage * n_obs.float()).clamp(min=1).long()

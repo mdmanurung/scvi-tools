@@ -18,7 +18,6 @@ import argparse
 import json
 
 import scvi
-
 from benchmarks.common.seeds import run_multiseed, save_json
 
 from . import data as data_mod
@@ -94,6 +93,7 @@ def _run_tasks(args, p1, p2, unlab, seed):
         "sample_key": args.sample_key,
         "seed": seed,
         "max_epochs": args.max_epochs,
+        "batch_size": args.batch_size,
     }
     b1_kw = {
         **kw,
@@ -102,7 +102,8 @@ def _run_tasks(args, p1, p2, unlab, seed):
     }
     b2_kw = {**kw, "subsample_per_batch": args.subsample_per_batch}
     results = {"seed": seed, "max_epochs": args.max_epochs}
-    tasks = ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"] if args.task == "all" else [args.task]
+    all_tasks = ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"]
+    tasks = all_tasks if args.task == "all" else [args.task]
 
     for t in tasks:
         print(f"\n=== running {t} (seed={seed}) ===")
@@ -123,6 +124,7 @@ def _run_tasks(args, p1, p2, unlab, seed):
                 sample_key=args.sample_key,
                 seed=seed,
                 max_epochs=args.max_epochs,
+                batch_size=args.batch_size,
             )
         elif t == "b5":
             b5_kw = {k: v for k, v in kw.items() if k != "subsample_per_batch"}
@@ -147,6 +149,7 @@ def _run_tasks(args, p1, p2, unlab, seed):
                 seed=seed,
                 max_epochs=args.max_epochs,
                 lambdas=lambdas,
+                batch_size=args.batch_size,
             )
         elif t == "b7":
             if args.dataset != "paired-rna-cytof":
@@ -186,15 +189,25 @@ def _run_tasks(args, p1, p2, unlab, seed):
                 k_min=args.mapqc_k_min,
                 k_max=args.mapqc_k_max,
                 run_mapqc=run_mapqc,
+                batch_size=args.batch_size,
             )
         print(json.dumps(results.get(t), indent=2))
     return results
 
 
 def main():
+    """CLI entry point — parse arguments and dispatch benchmark tasks."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", choices=["synthetic", "roider", "roider-full", "nunez", "paired-rna-cytof"], required=True)
-    ap.add_argument("--task", choices=["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "all"], default="all")
+    ap.add_argument(
+        "--dataset",
+        choices=["synthetic", "roider", "roider-full", "nunez", "paired-rna-cytof"],
+        required=True,
+    )
+    ap.add_argument(
+        "--task",
+        choices=["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "all"],
+        default="all",
+    )
     ap.add_argument("--data-dir", default="benchmarks/cytoanvi/data")
     ap.add_argument("--labels-key", default="labels")
     ap.add_argument("--batch-key", default="batch")
@@ -222,14 +235,19 @@ def main():
         help="B8: JSON file with parent→children hierarchy edges (observed labels only)",
     )
     ap.add_argument("--mapqc-n-nhoods", type=int, default=3, help="B9: mapQC neighborhoods")
-    ap.add_argument("--mapqc-k-min", type=int, default=5, help="B9: mapQC minimum neighborhood size")
-    ap.add_argument("--mapqc-k-max", type=int, default=15, help="B9: mapQC maximum neighborhood size")
+    ap.add_argument("--mapqc-k-min", type=int, default=5, help="B9: mapQC min neighborhood size")
+    ap.add_argument("--mapqc-k-max", type=int, default=15, help="B9: mapQC max neighborhood size")
     ap.add_argument(
         "--mapqc-run",
         action="store_true",
         help="B9: force mapQC scoring on synthetic (default: plumbing-only on synthetic)",
     )
-    ap.add_argument("--leiden-resolution", type=float, default=None, help="Leiden r (default: 1.0 roider-full, 0.05 nunez)")
+    ap.add_argument(
+        "--leiden-resolution",
+        type=float,
+        default=None,
+        help="Leiden r (default: 1.0 roider-full, 0.05 nunez)",
+    )
     ap.add_argument("--max-cells", type=int, default=100_000, help="Nuñez: subsample cap")
     ap.add_argument(
         "--roider-max-patients",
@@ -248,6 +266,16 @@ def main():
         action="store_true",
         default=False,
         help="B1: enable ReduceLROnPlateau for CytoANVI classifier-head stability",
+    )
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help=(
+            "Mini-batch size for CytoVI/CytoANVI training (default: scvi default 128). "
+            "Set to 8192 for large cohorts such as roider-full to avoid NaN divergence "
+            "and reduce per-epoch wall time."
+        ),
     )
     ap.add_argument("--inspect", action="store_true")
     ap.add_argument("--out", default=None)

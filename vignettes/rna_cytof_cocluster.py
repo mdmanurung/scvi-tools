@@ -49,7 +49,7 @@ def run_pipeline(
 ) -> dict:
     import scanpy as sc
 
-    from scvi.external import CytoANVI
+    from cytoanvi import CytoANVI
     from scvi.external.cytovi.paired_cytoanvi import prepare_paired_cytoanvi
 
     out_dir.mkdir(parents=True, exist_ok=True)

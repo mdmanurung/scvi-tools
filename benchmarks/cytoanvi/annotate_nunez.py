@@ -1,4 +1,4 @@
-"""Annotate Nuñez vignette PBMCs with CytoVI-tutorial manual cell types.
+r"""Annotate Nuñez vignette PBMCs with CytoVI-tutorial manual cell types.
 
 The Nuñez FCS files ship **without** cell-type labels. The CytoVI batch-correction tutorial
 trains CytoVI, clusters the latent space (Leiden, resolution 0.4), then maps clusters to eleven
@@ -9,7 +9,7 @@ This script reproduces that workflow and writes a **new** AnnData file (default:
 
 Example::
 
-    PYTHONPATH=src:. python -m benchmarks.cytoanvi.annotate_nunez \\
+    PYTHONPATH=src:. python -m benchmarks.cytoanvi.annotate_nunez \
         --data-dir data --out data/nunez_annotated.h5ad --max-epochs 100
 
 Reference: https://docs.scvi-tools.org/en/latest/tutorials/notebooks/cytometry/CytoVI_batch_correction_tutorial.html
@@ -158,6 +158,7 @@ def annotate_with_cytovi_tutorial(
 
 
 def main():
+    """CLI entry point — parse arguments and run annotation."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data-dir", default="data", help="Directory with Nuñez FCS files")
     ap.add_argument(

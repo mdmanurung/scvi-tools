@@ -116,7 +116,9 @@ def load_roider(data_dir: str, auto_download: bool = True):
     return merged, p1, p2
 
 
-def _leiden_labels(adata, labels_key: str = "cell_type", resolution: float = 1.0, layer: str = SCALED_LAYER):
+def _leiden_labels(
+    adata, labels_key: str = "cell_type", resolution: float = 1.0, layer: str = SCALED_LAYER
+):
     """Leiden clusters as proxy labels (paper: manual annotation of Leiden clusters)."""
     import scanpy as sc
 
@@ -135,9 +137,9 @@ def _leiden_labels(adata, labels_key: str = "cell_type", resolution: float = 1.0
 
 def _subsample_batches(adata, batch_key: str, max_cells: int, seed: int = 0):
     """Stratified subsample (paper uses 100k total; scib uses 10k per batch)."""
+    import anndata as ad
     import numpy as np
     import scipy.sparse as sp
-    import anndata as ad
 
     rng = np.random.default_rng(seed)
     batch = np.asarray(adata.obs[batch_key].astype(str))
@@ -194,13 +196,16 @@ def load_nunez(
             import scanpy as sc
 
             merged = sc.read_h5ad(h5ad_path)
-            if labels_key != "cell_type" and labels_key not in merged.obs and "cell_type" in merged.obs:
+            if (
+                labels_key != "cell_type"
+                and labels_key not in merged.obs
+                and "cell_type" in merged.obs
+            ):
                 merged.obs[labels_key] = merged.obs["cell_type"]
             if max_cells is not None and merged.n_obs > max_cells:
                 merged = _subsample_batches(merged, "batch", max_cells, seed=seed)
             return merged
 
-    import numpy as np
     from scvi.external import cytovi
 
     paths = {}
@@ -255,12 +260,14 @@ def load_roider_full(
 ):
     """Load full Roider cohort from extracted ``data/roider_raw/`` FCS (issue cytovi-benchmark/02).
 
-    Expects ``data/24915633.zip`` extracted via ``python -m benchmarks.common.ingest --extract-roider``.
+    Expects ``data/24915633.zip`` extracted via
+    ``python -m benchmarks.common.ingest --extract-roider``.
     Panel-1 ``cell_type`` labels are Leiden clusters (proxy; not manual gating).
     """
-    import scanpy as sc
-    import anndata as ad
     from pathlib import Path
+
+    import anndata as ad
+    import scanpy as sc
 
     from benchmarks.common.ingest import ROIDER_FCS, inventory_roider
     from scvi.external import cytovi
@@ -274,7 +281,10 @@ def load_roider_full(
         p1 = merged[merged.obs["panel_batch"].astype(str) == "0"].copy()
         p2 = merged[merged.obs["panel_batch"].astype(str) == "1"].copy()
         if annotate_metadata:
-            from benchmarks.common.roider_metadata import annotate_roider_obs, load_patient_entity_map
+            from benchmarks.common.roider_metadata import (
+                annotate_roider_obs,
+                load_patient_entity_map,
+            )
 
             annotate_roider_obs(
                 merged,

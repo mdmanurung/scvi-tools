@@ -50,7 +50,6 @@ import scvi
 
    external.CellAssign
    external.CYTOVI
-   external.CytoANVI
    external.GIMVI
    external.RNAStereoscope
    external.SpatialStereoscope
@@ -72,6 +71,29 @@ import scvi
    external.SysVI
    external.SCVIVA
    external.DIAGVI
+```
+
+## CytoANVI
+
+```{eval-rst}
+.. currentmodule:: cytoanvi
+
+```
+
+```{eval-rst}
+.. autosummary::
+   :toctree: reference/
+   :nosignatures:
+
+   CytoANVI
+   CytoANVAE
+   hierarchy
+   mapping_qc
+```
+
+```{eval-rst}
+.. currentmodule:: scvi
+
 ```
 
 ## Data loading

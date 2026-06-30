@@ -31,8 +31,17 @@ def train_cytovi(
     layer: str = SCALED_LAYER,
     n_latent: int | None = None,
     max_epochs: int = 1000,
+    batch_size: int | None = None,
 ):
-    """Train CYTOVI with paper defaults (MoG prior, Gaussian likelihood, latent heuristic)."""
+    """Train CYTOVI with paper defaults (MoG prior, Gaussian likelihood, latent heuristic).
+
+    Parameters
+    ----------
+    batch_size
+        Mini-batch size passed to the data splitter.  ``None`` preserves scvi's default (128).
+        For large cohorts (>100 k cells) set ``batch_size=8192`` to avoid NaN divergence and
+        reduce per-epoch wall time (~64× fewer gradient steps on roider-full).
+    """
     from scvi.external import CYTOVI
 
     a = adata.copy()
@@ -47,7 +56,10 @@ def train_cytovi(
     CYTOVI.setup_anndata(a, **setup_kw)
     model = CYTOVI(a, n_latent=n_latent)
     # AdversarialTrainingPlan uses manual optimization; clip via plan_kwargs.
-    model.train(max_epochs=max_epochs, plan_kwargs={"gradient_clip_norm": _GRAD_CLIP})
+    train_kw: dict = {"plan_kwargs": {"gradient_clip_norm": _GRAD_CLIP}}
+    if batch_size is not None:
+        train_kw["batch_size"] = batch_size
+    model.train(max_epochs=max_epochs, **train_kw)
     model.module.eval()
     return model, a
 
@@ -65,6 +77,8 @@ def train_cytoanvi(
     max_epochs: int = 1000,
     n_samples_per_label: int | None = None,
     reduce_lr_on_plateau: bool = False,
+    batch_size: int | None = None,
+    hierarchy_edges: dict | None = None,
 ):
     """Train CytoANVI with paper-aligned CYTOVI backbone defaults.
 
@@ -77,8 +91,12 @@ def train_cytoanvi(
     reduce_lr_on_plateau
         Enable LR reduction on plateau (via ``elbo_validation``). Useful for
         stabilizing the classifier head on difficult seeds.
+    batch_size
+        Mini-batch size passed to the data splitter.  ``None`` preserves scvi's default (128).
+        For large cohorts (>100 k cells) set ``batch_size=8192`` to avoid NaN divergence and
+        reduce per-epoch wall time (~64× fewer gradient steps on roider-full).
     """
-    from scvi.external import CytoANVI
+    from cytoanvi import CytoANVI
 
     a = adata.copy()
     CytoANVI.setup_anndata(
@@ -91,15 +109,19 @@ def train_cytoanvi(
         nan_layer=nan_layer,
     )
     model = CytoANVI(a, n_latent=n_latent)
+    if hierarchy_edges is not None:
+        model.set_hierarchy(hierarchy_edges)
     plan_kw = {}
     if reduce_lr_on_plateau:
         plan_kw["reduce_lr_on_plateau"] = True
-    model.train(
-        max_epochs=max_epochs,
-        gradient_clip_val=_GRAD_CLIP,
-        n_samples_per_label=n_samples_per_label,
-        plan_kwargs=plan_kw or None,
-    )
+    train_kw: dict = {
+        "gradient_clip_val": _GRAD_CLIP,
+        "n_samples_per_label": n_samples_per_label,
+        "plan_kwargs": plan_kw or None,
+    }
+    if batch_size is not None:
+        train_kw["batch_size"] = batch_size
+    model.train(max_epochs=max_epochs, **train_kw)
     model.module.eval()
     return model, a
 

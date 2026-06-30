@@ -5,7 +5,6 @@ from scvi.utils import error_on_missing_dependencies
 
 from .cellassign import CellAssign
 from .contrastivevi import ContrastiveVI
-from .cytoanvi import CytoANVI
 from .cytovi import CYTOVI
 from .decipher import Decipher
 from .diagvi import DIAGVI
@@ -45,7 +44,6 @@ __all__ = [
     "RESOLVI",
     "SCVIVA",
     "CYTOVI",
-    "CytoANVI",
     "DIAGVI",
 ]
 

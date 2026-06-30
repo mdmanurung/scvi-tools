@@ -1,6 +1,6 @@
 # CytoANVI
 
-**CytoANVI** (Python class {class}`~scvi.external.CytoANVI`) is a semi-supervised extension of
+**CytoANVI** (Python class {class}`~cytoanvi.CytoANVI`) is a semi-supervised extension of
 {class}`~scvi.external.CYTOVI` for antibody-based single-cell data (flow cytometry, mass cytometry,
 CITE-seq protein). It follows the same design pattern as {class}`~scvi.model.SCANVI` extends
 {class}`~scvi.model.SCVI`: a shared CytoVI protein encoder/decoder plus a classifier head and a
@@ -54,13 +54,13 @@ mapping.
 | Uncertainty | — | `get_uncertainty()` |
 | Continual update | — | `load_query_data_with_replay()` (EWC + replay) |
 
-You can warm-start from a trained CytoVI model with {meth}`~scvi.external.CytoANVI.from_cytovi_model`.
+You can warm-start from a trained CytoVI model with {meth}`~cytoanvi.CytoANVI.from_cytovi_model`.
 
 ## Quick start (label transfer)
 
 ```python
 import scvi
-from scvi.external import CytoANVI
+from cytoanvi import CytoANVI
 
 CytoANVI.setup_anndata(
     adata,
@@ -98,7 +98,7 @@ CyTOF must be arcsinh-transformed and min-max scaled first (see {doc}`/user_guid
 
 ```python
 import scvi
-from scvi.external import CytoANVI
+from cytoanvi import CytoANVI
 from scvi.external.cytovi import prepare_paired_cytoanvi
 
 adata, markers = prepare_paired_cytoanvi(rna, cytof)
@@ -181,12 +181,14 @@ model.train(max_epochs=200)
 
 # Hierarchy-consistent predictions (requires set_hierarchy first)
 hier_pred = model.predict_hierarchical()
-hier_prob = model.predict_hierarchical(soft=True)
+hier_scores = model.predict_hierarchical(soft=True)
 # Leaf labels only (skip coarse parents in argmax)
 hier_leaf = model.predict_hierarchical(leaf_only=True)
 ```
 
-Reachability is persisted across `save`/`load`. The unlabeled category is never a hierarchy node.
+Reachability is persisted across `save`/`load`. Soft hierarchical outputs are
+hierarchy-adjusted scores, not normalized probabilities: an ancestor score includes descendant
+mass. The unlabeled category is never a hierarchy node.
 
 #### When HCE helps
 
@@ -217,7 +219,7 @@ pip install scvi-tools[cytoanvi-hierarchy]
 Import helpers from the optional module (not the top-level `cytoanvi` package):
 
 ```python
-from scvi.external.cytoanvi.hierarchy import (
+from cytoanvi.hierarchy import (
     latent_to_anndata,
     learn_hierarchy,
     update_hierarchy,
@@ -253,7 +255,8 @@ Tutorial: {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial`.
 ### Warm-start from CytoVI
 
 ```python
-from scvi.external import CYTOVI, CytoANVI
+from cytoanvi import CytoANVI
+from scvi.external import CYTOVI
 from scvi.external import cytovi as cytovi_pp
 
 LAYER = "scaled"
@@ -301,7 +304,7 @@ remain valid direct-training examples; they are not the CYTOVI warm-start workfl
 When the query panel differs from the reference (shared backbone + panel-specific markers):
 
 ```python
-query = CytoANVI.prepare_query_anndata(query_adata, reference_model=model)
+query = CytoANVI.prepare_query_anndata(query_adata, reference_model=model, inplace=False)
 query_model = CytoANVI.load_query_data(query, model)
 query_model.train(max_epochs=200)
 query.obs["pred"] = query_model.predict()
@@ -330,7 +333,7 @@ pip install scvi-tools[cytoanvi-mapping-qc]
 Import helpers from the optional module (not the top-level `cytoanvi` package):
 
 ```python
-from scvi.external.cytoanvi.mapping_qc import (
+from cytoanvi.mapping_qc import (
     build_mapqc_anndata,
     evaluate_mapqc,
     run_mapqc_on_cytoanvi,
@@ -364,7 +367,7 @@ atlases. Not applicable to unlabeled panel-only queries without matched controls
 For updating a reference with new query cohorts while limiting catastrophic forgetting (cscanvi-style):
 
 ```python
-from scvi.external import CytoANVI
+from cytoanvi import CytoANVI
 
 # ~20% of reference cells, selected by uncertainty (paper default)
 replay = CytoANVI.select_replay_by_uncertainty(model, reference_adata, fraction=0.2)
@@ -383,6 +386,11 @@ updated.train(max_epochs=200, plan_kwargs={"ewc_importance": 100.0})  # λ — r
 `ewc_importance` (= λ) is **not** a constructor argument; pass it at train time. The paper used
 `λ=100` for scANVI/RNA; CytoVI's intensity likelihood has different Fisher magnitudes, so λ must be
 retuned (see benchmark task B6).
+
+After `save`/`load`, continual models retain the EWC anchor, Fisher importances, and combine rule,
+but they do **not** retain replay batches. Exact replay-resume is not currently supported from a
+loaded model alone; to continue training with replay, rebuild query surgery with
+`load_query_data_with_replay(..., replay_adata=...)`.
 
 See ADR `docs/adr/0002-cytoanvi-continual-follows-paper-not-code.md` for design notes.
 

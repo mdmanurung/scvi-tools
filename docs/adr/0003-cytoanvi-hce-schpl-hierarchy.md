@@ -23,8 +23,7 @@ Both are **opt-in**. Flat cross-entropy remains the default when no reachability
 
 ### scHPL is an optional extra
 
-- treeArches helpers live in `scvi.external.cytoanvi.hierarchy` (not exported from the top-level
-  `cytoanvi` package).
+- treeArches helpers live in the top-level `cytoanvi.hierarchy` module.
 - Functions lazy-import scHPL and raise `ImportError` with
   `pip install scvi-tools[cytoanvi-hierarchy]` when missing.
 - `pyproject.toml` defines `cytoanvi-hierarchy = ["scHPL"]`.

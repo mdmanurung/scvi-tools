@@ -27,10 +27,17 @@ def cytovi_latent_and_knn(
     n_neighbors: int = 20,
     max_epochs: int = 1000,
     n_latent: int | None = None,
+    batch_size: int | None = None,
 ):
     """Train CytoVI, then k-NN-transfer labels in its latent.
 
     Returns ``(pred_for_unlabeled, latent_all, unlabeled_mask)``.
+
+    Parameters
+    ----------
+    batch_size
+        Forwarded to :func:`~benchmarks.common.training.train_cytovi`.  ``None`` preserves
+        scvi's default (128).  Set ``batch_size=8192`` on roider-full to avoid NaN divergence.
     """
     model, a = train_cytovi(
         adata,
@@ -41,6 +48,7 @@ def cytovi_latent_and_knn(
         layer=SCALED_LAYER,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     latent = model.get_latent_representation()
 
@@ -63,7 +71,7 @@ def raw_marker_knn(
     n_neighbors: int = 20,
     layer: str = SCALED_LAYER,
 ):
-    """kNN directly on arcsinh+scaled markers (no VAE).
+    """KNN directly on arcsinh+scaled markers (no VAE).
 
     Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
     """

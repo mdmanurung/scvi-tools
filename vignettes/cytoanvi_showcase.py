@@ -220,12 +220,12 @@ def section_nunez(max_epochs: int, subsample: int, seed: int) -> dict:
     print("\n  → B4 continual update vs plain surgery …", flush=True)
     b4 = task_mod.task_b4_continual(adata, **kw)
     print(
-        f"     plain surgery control drift={b4['plain_surgery']['control_latent_drift']:.4f}  "
+        f"     plain surgery replay drift={b4['plain_surgery']['replay_latent_drift']:.4f}  "
         f"query acc={b4['plain_surgery']['query_label_transfer']['accuracy']:.3f}",
         flush=True,
     )
     print(
-        f"     continual+replay drift={b4['continual_update']['control_latent_drift']:.4f}  "
+        f"     continual+replay drift={b4['continual_update']['replay_latent_drift']:.4f}  "
         f"query acc={b4['continual_update']['query_label_transfer']['accuracy']:.3f}",
         flush=True,
     )
@@ -305,8 +305,9 @@ def section_roider(max_epochs: int, seed: int) -> dict:
 
 def section_warmstart(max_epochs: int = 15) -> dict:
     """Quick warm-start demo: CytoVI → CytoANVI on synthetic data."""
+    from cytoanvi import CytoANVI
     from scvi.data import synthetic_iid
-    from scvi.external import CYTOVI, CytoANVI
+    from scvi.external import CYTOVI
     from scvi.external import cytovi as cytovi_pp
 
     _banner("Section C — Warm-start from CytoVI (synthetic cytometry)")

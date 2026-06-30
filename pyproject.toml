@@ -129,10 +129,10 @@ tutorials = [
 all = ["scvi-tools[dev,docs,tutorials]"]
 
 [tool.hatch.build.targets.wheel]
-packages = ['src/scvi']
+packages = ['src/scvi', 'src/cytoanvi']
 
 [tool.coverage.run]
-source = ["scvi"]
+source = ["scvi", "cytoanvi"]
 omit = [
     "**/test_*.py",
 ]

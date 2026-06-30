@@ -8,7 +8,12 @@ from __future__ import annotations
 import numpy as np
 
 from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
-from benchmarks.common.training import NAN_LAYER, SCALED_LAYER, latent_obsm, train_cytoanvi
+from benchmarks.common.training import (
+    _GRAD_CLIP,
+    NAN_LAYER,
+    latent_obsm,
+    train_cytoanvi,
+)
 
 from . import metrics
 from .baselines import cytovi_latent_and_knn, harmony_latent_and_knn, raw_marker_knn
@@ -41,6 +46,7 @@ def task_b1_label_transfer(
     n_latent=None,
     n_samples_per_label=None,
     reduce_lr_on_plateau=False,
+    batch_size=None,
 ):
     """B1: CytoANVI classifier vs CytoVI k-NN at transferring labels to held-out cells."""
     true = np.asarray(adata.obs[labels_key].astype(str))
@@ -62,6 +68,7 @@ def task_b1_label_transfer(
         max_epochs=max_epochs,
         n_samples_per_label=n_samples_per_label,
         reduce_lr_on_plateau=reduce_lr_on_plateau,
+        batch_size=batch_size,
     )
     cytoanvi_pred = np.asarray(model.predict())
 
@@ -74,6 +81,7 @@ def task_b1_label_transfer(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     knn_full = masked.copy()
     knn_full[unlab_mask] = knn_pred_unlab
@@ -96,7 +104,7 @@ def task_b1_label_transfer(
         hm_full = masked.copy()
         hm_full[hm_unlab_mask] = hm_pred_unlab
         harmony_result = metrics.label_transfer_metrics(true[held], hm_full[held])
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optional Harmony baseline should not abort B1.
         harmony_result = {"error": str(e)}
 
     return {
@@ -123,6 +131,7 @@ def task_b2_integration(
     max_epochs=1000,
     n_latent=None,
     subsample_per_batch=10_000,
+    batch_size=None,
 ):
     """B2: scib-metrics on CytoANVI vs CytoVI latents."""
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -137,6 +146,7 @@ def task_b2_integration(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     anvi_adata = a.copy()
     latent_obsm(anvi_adata, model, obsm_key=LATENT_OBSM)
@@ -150,6 +160,7 @@ def task_b2_integration(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     vi_adata = adata.copy()
     vi_adata.obsm[LATENT_OBSM] = cytovi_latent
@@ -194,6 +205,7 @@ def task_b3_panel_divergent(
     seed=0,
     max_epochs=1000,
     n_latent=None,
+    batch_size=None,
 ):
     """B3: panel-1 reference -> panel-2 query via panel-aware prep + scArches surgery."""
     from scvi.external import cytovi
@@ -215,6 +227,7 @@ def task_b3_panel_divergent(
         nan_layer=NAN_LAYER,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     pred = np.asarray(model.predict())
 
@@ -235,6 +248,7 @@ def task_b3_panel_divergent(
         nan_layer=NAN_LAYER,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     knn_full = masked.copy()
     knn_full[unlab_mask] = knn_pred_unlab
@@ -253,6 +267,7 @@ def task_b5_novelty(
     seed=0,
     max_epochs=1000,
     n_latent=None,
+    batch_size=None,
 ):
     """B5: does get_uncertainty flag a cell type held out of the reference entirely?"""
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -274,6 +289,7 @@ def task_b5_novelty(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     unc_latent = model.get_uncertainty(mode="latent")
     unc_logit = model.get_uncertainty(mode="logit")
@@ -298,6 +314,7 @@ def task_b5_holdout_sweep(
     seed=0,
     max_epochs=1000,
     n_latent=None,
+    batch_size=None,
 ):
     """B5 sweep: AUROC for each cell type held out as novel."""
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -315,6 +332,7 @@ def task_b5_holdout_sweep(
             seed=seed,
             max_epochs=max_epochs,
             n_latent=n_latent,
+            batch_size=batch_size,
         )
     aurocs = [v["auroc"] for v in per_type.values() if not np.isnan(v["auroc"])]
     return {
@@ -348,11 +366,88 @@ def _split_reference_query(
     return ref, query
 
 
-def _control_latent_drift(ref_model, updated_model, control_adata):
-    """Mean per-cell L2 drift of control latents between reference and updated models."""
-    z_ref = ref_model.get_latent_representation(control_adata)
-    z_new = updated_model.get_latent_representation(control_adata)
+def _replay_latent_drift(ref_model, updated_model, replay_adata):
+    """Mean per-cell L2 drift of replay/reference latents after query surgery."""
+    z_ref = ref_model.get_latent_representation(replay_adata)
+    z_new = updated_model.get_latent_representation(replay_adata)
     return float(np.linalg.norm(z_ref - z_new, axis=1).mean())
+
+
+def _b4_setup(
+    adata,
+    *,
+    labels_key: str = "labels",
+    unlabeled_category: str = "Unknown",
+    batch_key: str = "batch",
+    sample_key=None,
+    nan_layer=None,
+    seed: int = 0,
+    max_epochs: int = 1000,
+    n_latent=None,
+    control_frac: float = 0.1,
+    replay_frac: float = 0.2,
+    query_batch_values=None,
+    batch_size=None,
+) -> dict:
+    """Train reference and select replay/control — shared setup for B4 and B6.
+
+    Returns a dict consumed by :func:`task_b4_continual`.  B6 calls this once and passes
+    the result to each per-λ surgery call, avoiding redundant reference retraining.
+    """
+    from cytoanvi import CytoANVI
+
+    if query_batch_values is None:
+        batches = sorted(adata.obs[batch_key].astype(str).unique())
+        query_batch_values = [batches[-1]]
+    query_batch_values = list(query_batch_values)
+
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    ref_adata, query_adata = _split_reference_query(
+        adata, batch_key=batch_key, query_batch_values=query_batch_values, seed=seed
+    )
+    # Build true_query in query_adata.obs_names order to handle the permuted-fallback branch
+    # of _split_reference_query (np.isin returns adata order, not query order).
+    label_by_obs = dict(zip(adata.obs_names, labels, strict=True))
+    true_query = np.asarray([label_by_obs[n] for n in query_adata.obs_names])
+    query_adata = query_adata.copy()
+
+    ref_model, _ = train_cytoanvi(
+        ref_adata,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
+        batch_key=batch_key,
+        sample_key=sample_key,
+        nan_layer=nan_layer,
+        n_latent=n_latent,
+        max_epochs=max_epochs,
+        batch_size=batch_size,
+    )
+
+    # Sample control before blanking labels so control cells retain their true labels.
+    # Cap n_ctrl so it never exceeds the query population (avoids ValueError from
+    # rng.choice(replace=False) when max(16, frac*n) > n for small query sets).
+    n_ctrl = min(max(16, int(control_frac * query_adata.n_obs)), query_adata.n_obs)
+    rng = np.random.default_rng(seed)
+    ctrl_idx = rng.choice(query_adata.n_obs, n_ctrl, replace=False)
+    control = query_adata[ctrl_idx].copy()
+    query_adata.obs[labels_key] = unlabeled_category
+
+    replay = CytoANVI.select_replay_by_uncertainty(ref_model, ref_adata, fraction=replay_frac)
+
+    train_extra: dict = {}
+    if batch_size is not None:
+        train_extra["batch_size"] = batch_size
+
+    return {
+        "ref_model": ref_model,
+        "ref_adata": ref_adata,
+        "query_adata": query_adata,
+        "true_query": true_query,
+        "control": control,
+        "replay": replay,
+        "query_batch_values": query_batch_values,
+        "train_extra": train_extra,
+    }
 
 
 def task_b4_continual(
@@ -369,44 +464,55 @@ def task_b4_continual(
     control_frac=0.1,
     replay_frac=0.2,
     query_batch_values=None,
+    batch_size=None,
+    _setup=None,
 ):
     """B4: continual update vs plain surgery on a pseudo case/control batch split.
 
     Uses one batch as the query cohort and the other as reference (plumbing validation until a
     real case/control cytometry axis is available). Compares ``load_query_data`` vs
-    ``load_query_data_with_replay`` on control-latent drift and query label transfer.
+    ``load_query_data_with_replay`` on replay/reference latent drift and query label transfer.
+
+    Pass ``_setup`` (from :func:`_b4_setup`) to reuse a pre-built reference model and replay
+    buffer — used by :func:`task_b6_lambda_sweep` to avoid retraining across λ values.
     """
-    from scvi.external import CytoANVI
+    from cytoanvi import CytoANVI
 
-    if query_batch_values is None:
-        batches = sorted(adata.obs[batch_key].astype(str).unique())
-        query_batch_values = [batches[-1]]
+    if _setup is None:
+        _setup = _b4_setup(
+            adata,
+            labels_key=labels_key,
+            unlabeled_category=unlabeled_category,
+            batch_key=batch_key,
+            sample_key=sample_key,
+            nan_layer=nan_layer,
+            seed=seed,
+            max_epochs=max_epochs,
+            n_latent=n_latent,
+            control_frac=control_frac,
+            replay_frac=replay_frac,
+            query_batch_values=query_batch_values,
+            batch_size=batch_size,
+        )
 
-    labels = np.asarray(adata.obs[labels_key].astype(str))
-    ref_adata, query_adata = _split_reference_query(
-        adata, batch_key=batch_key, query_batch_values=query_batch_values, seed=seed
+    ref_model = _setup["ref_model"]
+    ref_adata = _setup["ref_adata"]
+    query_adata = _setup["query_adata"]
+    true_query = _setup["true_query"]
+    control = _setup["control"]
+    replay = _setup["replay"]
+    train_extra = _setup["train_extra"]
+
+    # Use .copy() so surgery calls do not mutate the shared query_adata in the setup dict
+    # (load_query_data runs setup_anndata in-place; B6 reuses the same setup across λ).
+    plain = CytoANVI.load_query_data(query_adata.copy(), ref_model)
+    # Plain surgery uses automatic optimization → gradient_clip_val via Trainer.
+    plain.train(
+        max_epochs=min(50, max_epochs),
+        gradient_clip_val=_GRAD_CLIP,
+        plan_kwargs={"weight_decay": 0.0},
+        **train_extra,
     )
-    true_query = labels[np.isin(adata.obs_names, query_adata.obs_names)]
-    query_adata = query_adata.copy()
-    query_adata.obs[labels_key] = unlabeled_category
-
-    ref_model, _ = train_cytoanvi(
-        ref_adata,
-        labels_key=labels_key,
-        unlabeled_category=unlabeled_category,
-        batch_key=batch_key,
-        sample_key=sample_key,
-        nan_layer=nan_layer,
-        n_latent=n_latent,
-        max_epochs=max_epochs,
-    )
-
-    n_ctrl = max(16, int(control_frac * query_adata.n_obs))
-    control = query_adata[:n_ctrl].copy()
-    replay = CytoANVI.select_replay_by_uncertainty(ref_model, ref_adata, fraction=replay_frac)
-
-    plain = CytoANVI.load_query_data(query_adata, ref_model)
-    plain.train(max_epochs=min(50, max_epochs), plan_kwargs={"weight_decay": 0.0})
 
     continual = CytoANVI.load_query_data_with_replay(
         query_adata.copy(),
@@ -414,9 +520,15 @@ def task_b4_continual(
         replay_adata=replay,
         control_adata=control,
     )
+    # Continual uses manual optimization → clip via plan_kwargs["gradient_clip_norm"].
     continual.train(
         max_epochs=min(50, max_epochs),
-        plan_kwargs={"ewc_importance": ewc_importance, "weight_decay": 0.0},
+        plan_kwargs={
+            "ewc_importance": ewc_importance,
+            "weight_decay": 0.0,
+            "gradient_clip_norm": _GRAD_CLIP,
+        },
+        **train_extra,
     )
 
     plain_pred = np.asarray(plain.predict())
@@ -431,14 +543,14 @@ def task_b4_continual(
         "n_query": int(query_adata.n_obs),
         "n_replay": int(replay.n_obs),
         "n_control": int(control.n_obs),
-        "query_batch_values": list(query_batch_values),
+        "query_batch_values": list(_setup["query_batch_values"]),
         "note": "Pseudo case/control via batch split — validates plumbing, not biology.",
         "plain_surgery": {
-            "control_latent_drift": _control_latent_drift(ref_model, plain, control),
+            "replay_latent_drift": _replay_latent_drift(ref_model, plain, replay),
             "query_label_transfer": metrics.label_transfer_metrics(true_query, plain_pred),
         },
         "continual_update": {
-            "control_latent_drift": _control_latent_drift(ref_model, continual, control),
+            "replay_latent_drift": _replay_latent_drift(ref_model, continual, replay),
             "query_label_transfer": metrics.label_transfer_metrics(true_query, cont_pred),
         },
     }
@@ -465,6 +577,7 @@ def task_b8_hce_label_transfer(
     max_epochs=1000,
     n_latent=None,
     hierarchy_edges=None,
+    batch_size=None,
 ):
     """B8: flat CE vs HCE when a user ontology matches observed model labels.
 
@@ -472,8 +585,6 @@ def task_b8_hce_label_transfer(
     ``set_hierarchy`` before training. Also scores ``predict_hierarchical(leaf_only=True)`` on the
     HCE model.
     """
-    from scvi.external import CytoANVI
-
     if hierarchy_edges is None:
         hierarchy_edges = default_synthetic_hierarchy_edges()
 
@@ -494,29 +605,34 @@ def task_b8_hce_label_transfer(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
     flat_pred = np.asarray(flat_model.predict())
 
-    hce_work = work.copy()
-    CytoANVI.setup_anndata(
-        hce_work,
-        layer=SCALED_LAYER,
-        batch_key=batch_key,
+    hce_model, _ = train_cytoanvi(
+        work,
         labels_key=labels_key,
         unlabeled_category=unlabeled_category,
+        batch_key=batch_key,
         sample_key=sample_key,
         nan_layer=nan_layer,
+        n_latent=n_latent,
+        max_epochs=max_epochs,
+        batch_size=batch_size,
+        hierarchy_edges=hierarchy_edges,
     )
-    hce_model = CytoANVI(hce_work, n_latent=n_latent)
-    hce_model.set_hierarchy(hierarchy_edges)
-    hce_model.train(max_epochs=max_epochs)
-    hce_model.module.eval()
     hce_pred = np.asarray(hce_model.predict())
     hier_pred = np.asarray(hce_model.predict_hierarchical(leaf_only=True))
 
     flat_metrics = metrics.label_transfer_metrics(true[held], flat_pred[held])
     hce_metrics = metrics.label_transfer_metrics(true[held], hce_pred[held])
-    hier_metrics = metrics.label_transfer_metrics(true[held], hier_pred[held])
+
+    # predict_hierarchical(leaf_only=True) can never emit internal-node labels, so evaluate
+    # hier_pred only on held cells whose true label is a leaf for a fair comparison.
+    internal_labels = {p for p, ch in hierarchy_edges.items() if ch}
+    leaf_held = held & ~np.isin(true, list(internal_labels))
+    hier_metrics = metrics.label_transfer_metrics(true[leaf_held], hier_pred[leaf_held])
+    flat_leaf_metrics = metrics.label_transfer_metrics(true[leaf_held], flat_pred[leaf_held])
 
     return {
         "task": "b8_hce_label_transfer",
@@ -524,15 +640,16 @@ def task_b8_hce_label_transfer(
         "max_epochs": max_epochs,
         "holdout_frac": holdout_frac,
         "n_held": int(held.sum()),
+        "n_leaf_held": int(leaf_held.sum()),
         "hierarchy_edges": hierarchy_edges,
         "flat_ce": flat_metrics,
         "hce_flat_predict": hce_metrics,
         "hce_hierarchical_predict": hier_metrics,
-        "delta_hce_vs_flat_macro_f1": float(
-            hce_metrics["macro_f1"] - flat_metrics["macro_f1"]
-        ),
+        "delta_hce_vs_flat_macro_f1": float(hce_metrics["macro_f1"] - flat_metrics["macro_f1"]),
+        # delta uses leaf-only subset on both sides: internal-label cells can never be correct
+        # under leaf_only=True, so including them would unfairly penalise hierarchical decoding.
         "delta_hierarchical_vs_flat_macro_f1": float(
-            hier_metrics["macro_f1"] - flat_metrics["macro_f1"]
+            hier_metrics["macro_f1"] - flat_leaf_metrics["macro_f1"]
         ),
     }
 
@@ -549,10 +666,32 @@ def task_b6_lambda_sweep(
     n_latent=None,
     lambdas=None,
     query_batch_values=None,
+    batch_size=None,
+    control_frac=0.1,
+    replay_frac=0.2,
 ):
-    """B6: sweep ``ewc_importance`` (λ) for continual update; report control drift vs query F1."""
+    """B6: sweep ``ewc_importance`` (λ) for continual update; report replay drift vs query F1.
+
+    The reference model and replay buffer are built once (via :func:`_b4_setup`) and shared
+    across all λ values to avoid redundant reference retraining (~N× savings for N lambdas).
+    """
     if lambdas is None:
         lambdas = [0.0, 1.0, 10.0, 100.0, 1000.0]
+    setup = _b4_setup(
+        adata,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled_category,
+        batch_key=batch_key,
+        sample_key=sample_key,
+        nan_layer=nan_layer,
+        seed=seed,
+        max_epochs=max_epochs,
+        n_latent=n_latent,
+        control_frac=control_frac,
+        replay_frac=replay_frac,
+        query_batch_values=query_batch_values,
+        batch_size=batch_size,
+    )
     per_lambda = {}
     for lam in lambdas:
         per_lambda[str(lam)] = task_b4_continual(
@@ -566,22 +705,43 @@ def task_b6_lambda_sweep(
             max_epochs=max_epochs,
             n_latent=n_latent,
             ewc_importance=lam,
-            query_batch_values=query_batch_values,
+            query_batch_values=setup["query_batch_values"],
+            batch_size=batch_size,
+            _setup=setup,
         )["continual_update"]
-    drifts = [v["control_latent_drift"] for v in per_lambda.values()]
+    drifts = np.asarray([v["replay_latent_drift"] for v in per_lambda.values()], dtype=float)
     f1s = [v["query_label_transfer"]["macro_f1"] for v in per_lambda.values()]
-    best_idx = int(np.argmin(drifts))
-    return {
+    out = {
         "task": "b6_lambda_sweep",
         "seed": seed,
         "max_epochs": max_epochs,
         "lambdas": list(lambdas),
         "per_lambda": per_lambda,
-        "recommended_lambda": float(lambdas[best_idx]),
-        "recommended_control_drift": float(drifts[best_idx]),
-        "recommended_query_macro_f1": float(f1s[best_idx]),
-        "note": "Heuristic: λ with lowest control-latent drift; retune on real case/control data.",
+        "note": "Reports the full λ table; recommend only when replay drift has a unique minimum.",
     }
+    finite = np.isfinite(drifts)
+    if not finite.any():
+        out["recommendation_status"] = "no_recommendation"
+        out["recommendation_reason"] = "Replay latent drift is non-finite for all λ values."
+        return out
+    min_drift = float(np.min(drifts[finite]))
+    best_indices = np.flatnonzero(np.isclose(drifts, min_drift, rtol=1e-6, atol=1e-8))
+    if len(best_indices) != 1:
+        out["recommendation_status"] = "no_recommendation"
+        out["recommendation_reason"] = (
+            "Replay latent drift is tied across λ values; no recommended_lambda emitted."
+        )
+        return out
+    best_idx = int(best_indices[0])
+    out.update(
+        {
+            "recommendation_status": "recommended",
+            "recommended_lambda": float(lambdas[best_idx]),
+            "recommended_replay_latent_drift": float(drifts[best_idx]),
+            "recommended_query_macro_f1": float(f1s[best_idx]),
+        }
+    )
+    return out
 
 
 MAPQC_SAMPLE_KEY = "mapqc_sample"
@@ -600,22 +760,24 @@ def _assign_mapqc_pseudo_samples(adata, batch_key: str, seed: int):
     ref_samples = [f"ref_s{i}" for i in range(4)]
     query_samples = [f"query_s{i}" for i in range(2)]
 
-    adata.obs[MAPQC_SAMPLE_KEY] = ""
     ref_idx = np.where(is_ref.to_numpy())[0]
     query_idx = np.where((~is_ref).to_numpy())[0]
-    adata.obs.iloc[ref_idx, adata.obs.columns.get_loc(MAPQC_SAMPLE_KEY)] = np.take(
-        ref_samples, np.arange(len(ref_idx)) % len(ref_samples)
-    )
-    adata.obs.iloc[query_idx, adata.obs.columns.get_loc(MAPQC_SAMPLE_KEY)] = np.take(
+
+    # Build full object-dtype columns and assign whole-column to avoid pandas>=2.0
+    # copy-on-write silent no-ops from chained iloc assignments.
+    sample_col = np.empty(adata.n_obs, dtype=object)
+    sample_col[ref_idx] = np.take(ref_samples, np.arange(len(ref_idx)) % len(ref_samples))
+    sample_col[query_idx] = np.take(
         query_samples, np.arange(len(query_idx)) % len(query_samples)
     )
+    adata.obs[MAPQC_SAMPLE_KEY] = sample_col
 
-    adata.obs[MAPQC_STATUS_KEY] = np.nan
-    adata.obs.iloc[query_idx, adata.obs.columns.get_loc(MAPQC_STATUS_KEY)] = rng.choice(
-        ["control", "case"],
-        size=len(query_idx),
-        p=[0.5, 0.5],
-    )
+    # Preserve rng.choice call order: status is drawn after sample assignment.
+    status_choices = rng.choice(["control", "case"], size=len(query_idx), p=[0.5, 0.5])
+    status_col = np.empty(adata.n_obs, dtype=object)
+    status_col[ref_idx] = np.nan
+    status_col[query_idx] = status_choices
+    adata.obs[MAPQC_STATUS_KEY] = status_col
     return adata, is_ref.to_numpy()
 
 
@@ -633,16 +795,26 @@ def task_b9_mapqc(
     k_min=5,
     k_max=15,
     run_mapqc=True,
+    batch_size=None,
 ):
     """B9: mapQC on CytoANVI latents after query surgery (pseudo batch ref/query split).
 
     Set ``run_mapqc=False`` for plumbing-only checks (joint latent build) on small synthetic data.
     """
-    from scvi.external import CytoANVI
-    from scvi.external.cytoanvi import mapping_qc
+    from cytoanvi import CytoANVI, mapping_qc
 
     if run_mapqc:
-        mapping_qc._require_mapqc()
+        try:
+            mapping_qc._require_mapqc()
+        except ImportError as err:
+            return {
+                "task": "b9_mapqc",
+                "seed": seed,
+                "max_epochs": max_epochs,
+                "status": "blocked",
+                "blocked_reason": str(err),
+                "run_mapqc": run_mapqc,
+            }
 
     work, is_ref = _assign_mapqc_pseudo_samples(adata, batch_key=batch_key, seed=seed)
     ref_adata = work[is_ref].copy()
@@ -658,12 +830,16 @@ def task_b9_mapqc(
         nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
+        batch_size=batch_size,
     )
 
     query_train = query_adata.copy()
     query_train.obs[labels_key] = unlabeled_category
     query_model = CytoANVI.load_query_data(query_train, ref_model)
-    query_model.train(max_epochs=min(50, max_epochs), plan_kwargs={"weight_decay": 0.0})
+    query_train_kw: dict = {"plan_kwargs": {"weight_decay": 0.0}}
+    if batch_size is not None:
+        query_train_kw["batch_size"] = batch_size
+    query_model.train(max_epochs=min(50, max_epochs), **query_train_kw)
 
     joint = mapping_qc.build_mapqc_anndata(
         query_model,
@@ -687,7 +863,8 @@ def task_b9_mapqc(
     if not run_mapqc:
         out["status"] = "plumbing_only"
         out["note"] = (
-            "Joint latent AnnData built; mapQC skipped (use run_mapqc=True on real case/control data)."
+            "Joint latent AnnData built; mapQC skipped "
+            "(use run_mapqc=True on real case/control data)."
         )
         return out
 

@@ -60,11 +60,12 @@ def rna_macro_f1_paired(
             adata.obs.loc[adata.obs[batch_key].astype(str) == rna_modality, sample_key].astype(str)
         )
         cy_samples = set(
-            adata.obs.loc[adata.obs[batch_key].astype(str) == cytof_modality, sample_key].astype(str)
+            adata.obs.loc[adata.obs[batch_key].astype(str) == cytof_modality, sample_key]
+            .astype(str)
         )
         shared_samples = rna_samples & cy_samples
-    mask = (adata.obs[batch_key].astype(str) == rna_modality) & adata.obs[sample_key].astype(str).isin(
-        shared_samples
+    mask = (adata.obs[batch_key].astype(str) == rna_modality) & (
+        adata.obs[sample_key].astype(str).isin(shared_samples)
     )
     if mask.sum() == 0:
         return float("nan")

@@ -6,16 +6,15 @@ import numpy as np
 import pandas as pd
 from anndata import AnnData
 
+from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
+from benchmarks.common.training import SCALED_LAYER, latent_obsm, train_cytoanvi
+from benchmarks.cytoanvi.metrics import rna_macro_f1_paired
 from scvi.external import cytovi
 from scvi.external.cytovi.marker_harmonization import (
     DEFAULT_GENE_TO_PROTEIN,
     harmonize_marker_intersection,
 )
 from scvi.external.cytovi.paired_cytoanvi import prepare_paired_cytoanvi
-
-from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
-from benchmarks.common.training import SCALED_LAYER, latent_obsm, train_cytoanvi
-from benchmarks.cytoanvi.metrics import rna_macro_f1_paired
 
 
 def make_synthetic_paired_rna_cytof(
@@ -98,7 +97,8 @@ def task_b7_multimodal_integration(
 ) -> dict:
     """B7: CytoANVI on scennep-smoothed paired RNA + CyTOF (Plan A).
 
-    Primary metric: RNA macro-F1 on paired-sample RNA cells. Secondary: scib batch mixing on latent.
+    Primary metric: RNA macro-F1 on paired-sample RNA cells.
+    Secondary: scib batch mixing on latent.
     """
     if rna_adata is None or cytof_adata is None:
         rna_adata, cytof_adata, markers = make_synthetic_paired_rna_cytof(seed=seed)

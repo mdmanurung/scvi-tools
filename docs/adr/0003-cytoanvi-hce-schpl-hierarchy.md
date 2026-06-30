@@ -35,7 +35,7 @@ Both are **opt-in**. Flat cross-entropy remains the default when no reachability
 | `predict_hierarchical()` without hierarchy | `ValueError` with fix instruction |
 | `set_hierarchy` label mismatch | `ValueError` listing unknown or missing labels |
 | scHPL function without extra installed | `ImportError` with pip command |
-| `set_hierarchy_from_schpl` unmapped leaves | silently ignored (absent from reachability mapping) |
+| `set_hierarchy_from_schpl` unmapped leaves | silently ignored (absent from reachability mapping); only ambiguous assignment (2+ candidates) raises `ValueError` |
 | Both `hierarchy_edges` and `reachability_matrix` at init | `ValueError` |
 | Invalid reachability shape or non-DAG edges | `ValueError` with expected vs actual |
 

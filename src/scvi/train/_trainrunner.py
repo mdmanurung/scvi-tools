@@ -55,8 +55,8 @@ class TrainRunner:
         max_epochs to train for
     accelerator
         Supports passing different accelerator types ("cpu", "gpu", "tpu", "ipu", "hpu",
-        "mps", "auto") as well as custom accelerator instances. Defaults to "gpu"; raises
-        an error if no GPU is available rather than falling back to CPU.
+        "mps", "auto") as well as custom accelerator instances. Defaults to "auto" (selects
+        GPU when available, CPU otherwise).
     devices
         The devices to use. Can be set to a positive number (int or str), a sequence of
         device indices (list or str), the value -1 to indicate all available devices should

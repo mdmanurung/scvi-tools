@@ -20,3 +20,5 @@ Tracks future work items, ideas, and planned improvements.
 | Install `mapqc` in conda env before next SLURM submission (unblocks B9) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | USER ACTION: scancel stale jobs 25102610 25102547 (25102546 already gone) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | Monitor B1 Nuñez reversal on full-cohort run (F-003: Δ−0.013 on vignette) | high | open | validation | 2026-06-29 | mdmanurung | — |
+| Fix accelerator='gpu' → 'auto' in training.py (F14) | medium | done | infrastructure | 2026-06-30 | mdmanurung | — |
+| Add B9 round-robin sample comment + B5 calibration_note (F4/F6) | low | done | analysis | 2026-06-30 | mdmanurung | — |

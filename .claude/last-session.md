@@ -1,19 +1,45 @@
-# Last Session Summary — 2026-06-30 (autonomous continuation, session 3)
+# Last Session Summary — 2026-06-30 (autonomous continuation, session 4)
 
 ## 1. What was accomplished
 
-**Four new commits** on top of prior session's d22c7283:
+**Two new commits** — B5 and B8 multiseed results both finalized:
 
-| Commit | Fix |
-|--------|-----|
-| `7657cd03` | B3 aggregator backward-compat: both `summarize_multiseed` and `_summarize_single_task` now read new key `p2_inter_method_agreement_vs_knn` with fallback to old key `p2_concordance_vs_knn`; output column renamed to `p2_inter_method_agreement`; test assertions added to committed test file |
-| `5069d6bc` | Three new optional B1 baselines: `xgboost_classifier`, `phenograph_knn`, `flowsom_knn` — all in `baselines.py`, wired into `task_b1_label_transfer` with `try/except (ImportError, ValueError, KeyError)` guards |
-| `3eb95baa` | F13/F20/F30: corrected `ARCSINH_COFACTORS` dict (nunez: 2000→5, kreutmair: 2000→5); fixed `mask_augment` nan_mask branch RNG (`torch.rand_like` → `torch.rand(..., generator=generator)`); consolidated `_MockTreeNode` in test_hierarchy.py to import from conftest |
+| Commit | Content |
+|--------|---------|
+| `8abb784a` | B5 3-seed e1000 multiseed: ran `aggregate_b5_multiseed.py`, updated F-007 + F-010 in FINDINGS_REGISTRY and cross-panel-mapping.md, marked B5 ✓ in ANALYSIS_MANIFEST |
+| `16015632` | B8 3-seed e1000 final: ran `aggregate_b8_multiseed.py`, updated F-011 in FINDINGS_REGISTRY and continual-update.md, marked B8 ✅ pub-gate in ANALYSIS_MANIFEST |
 
-**Verified clean (no changes needed):**
-- F10 (B3 RNG), F11 (B4/B6 fallback), F12 (scennep z-score), F16 (Fisher docstring), F17 (except narrow), F18 (B4/B6 key match), F19 (ewc_importance default), F21 (PCA seed), F22/F24/F25 (CHANGELOG/ADR), F26 (Figshare IDs consolidated), F27 (SCALED_LAYER/NAN_LAYER single-source), F28 (scvi.settings.seed pattern intentional), F29 (test files deleted)
+**Key results unlocked:**
 
-## 2. Cumulative fixes across all sessions (commits)
+B5 — Novelty detection (Roider 13-type T-cell holdout sweep, 3 seeds):
+- `best_auroc`: 0.833 ± 0.122; `mean_auroc`: 0.462 ± 0.075; `n_fdr_sig`: 5.0
+- 2/13 types pass ≥0.70 mean AUROC: **Ttox EM3** (0.776 ± 0.071, low variance), **Tfh** (0.724 ± 0.258, high variance)
+- Tpr near-threshold: 0.693 ± 0.027 (very consistent)
+- Bimodal confirmed: 5 types consistently near-chance (Treg CD69- worst, 0.120 ± 0.010)
+- Publication framing: "detects immunologically distinct effector subtypes; fails for phenotypically overlapping naive/regulatory clusters"
+
+B8 — HCE vs flat CE (Nuñez full 200k, 3 seeds):
+- `delta_hierarchical_vs_flat_macro_f1` = **+0.0862 ± 0.0027** ✅ pub-gate passed
+- Per-seed: +0.0887, +0.0866, +0.0833 (monotonically consistent, very low variance)
+- `flat_ce macro_F1` = 0.9783 ± 0.0011 (stable baseline)
+- Direct HCE prediction = −0.0984 ± 0.0851 (expected negative — benefit is post-hoc hierarchical decoding)
+- B8 pub-gate passed for Nuñez cohort; Roider B8 still needed for generalizability
+
+## 2. Cumulative benchmark status
+
+| Task | Status | Result |
+|------|--------|--------|
+| B1 Roider | ✓ pub-grade | Δ+0.121±0.040 |
+| B1 Nuñez inductive | RUNNING (PID 1520357, seed-0 epoch ~700/1000 at 18:49, ETA all-3-seeds ~06:00 Jul 1) | leakage fix; reversal expected to narrow |
+| B2 | ✓ | bio +0.108, batch Δ−0.006 |
+| B3 | ✓ | concordance 0.877±0.012 |
+| B4 | Blocked (pseudo split) | plumbing only |
+| B5 | ✓ multiseed | best 0.833±0.122, mean 0.462±0.075 |
+| B6 | Blocked | plumbing only |
+| B8 | ✅ pub-gate | Δ_hier +0.0862±0.0027 |
+| B9 | Blocked (mapqc) | — |
+
+## 3. Cumulative fixes across all sessions (commits)
 
 | Commit | Fix |
 |--------|-----|
@@ -23,49 +49,33 @@
 | `7657cd03` | B3 aggregator backward-compat + column rename |
 | `5069d6bc` | XGBoost, Phenograph, FlowSOM B1 baselines |
 | `3eb95baa` | F13 cofactor docs, F20 TTA RNG, F30 MockTreeNode dedup |
+| `8abb784a` | B5 3-seed multiseed findings (F-007, F-010) |
+| `16015632` | B8 3-seed final findings (F-011) — pub-gate ✅ |
 
-## 3. Publication risks — current state
+## 4. Publication risks — current state
 
 ### Critical (fix before publication runs)
-1. **B5 result JSONs must be regenerated** after AUROC SE fix (all `n_fdr_significant` wrong)
-2. **Nuñez annotation transductive leakage** — retrain on train-only CytoVI + kNN transfer
-3. **B3 circular concordance metric** — acquire p2 expert labels OR rename to `inter-method agreement` (metric renamed in aggregator but underlying circularity remains)
+1. **B5 result JSONs must be regenerated** after AUROC SE fix (all `n_fdr_significant` counts use corrected Wilcoxon SE — already in the e1000 runs; old smoke results may differ)
+2. **Nuñez annotation transductive leakage** — in progress via PID 1520357 (inductive kNN rerun)
+3. **B3 circular concordance metric** — inter-method agreement (metric renamed in aggregator, underlying data gap remains)
 4. Archive `nunez_annotated.h5ad` to Figshare + wire auto-download
 
 ### High (major revision risk)
 - B4: Real rLN vs FL/MCL biological split OR demote to supplement
-- B9: Install `mapqc` in conda env (currently blocked, DependencyNeverSatisfied on SLURM)
+- B9: Install `mapqc` in conda env (currently blocked)
 
-## 4. Review findings status
+## 5. Open items for next session
 
-All 30 review findings from the 2026-06-30 review have been addressed:
+**Immediate (B1 inductive, ETA ~06:00 Jul 1):**
+- Read `results/e1000/nunez_inductive_b1_multiseed.json` when it appears
+- Determine if reversal (CytoANVI < kNN) persists or narrows after leakage fix
+- Update F-003 in FINDINGS_REGISTRY and label-transfer-accuracy.md
+- Update ANALYSIS_MANIFEST B1 row
 
-| Finding | Status |
-|---------|--------|
-| F1 Nuñez leakage | open — requires GPU rerun |
-| F2 B3 circular metric | partial — renamed in aggregator, underlying circularity is data gap |
-| F3 B5 FDR invalid | open — requires GPU rerun after SE fix |
-| F4 B9 sample comment | done |
-| F5 HLA-DR alias | done |
-| F6 B5 calibration_note | done |
-| F7 B6 fallback flag | done |
-| F8 B2 batch target docs | low priority — no explicit docs item |
-| F9 pseudobulk vectorize | deferred (profile first) |
-| F10-F12 | verified clean |
-| F13 cofactor dict | done |
-| F14 accelerator | done |
-| F15 baselines | done (XGB/Phenograph/FlowSOM added) |
-| F16-F19 | verified clean |
-| F20 TTA RNG | done |
-| F21-F27 | verified clean / already consolidated |
-| F28 seed pattern | verified intentional |
-| F29 unseeded choice | moot (test files deleted) |
-| F30 MockTreeNode | done |
+**Blocked on user:**
+- `scancel 25089685 25102610 25102547` (3 stale DependencyNeverSatisfied SLURM jobs)
+- Install `mapqc` in conda env (unblocks B9)
+- B4: real rLN vs FL/MCL biological split OR demote to supplement
 
-## 5. Active SLURM jobs
-
-| Job ID | Name | Status |
-|--------|------|--------|
-| 25108052 | cytoanvi_p5_b8_hce | Was RUNNING — check `squeue -j 25108052` |
-| 25102610 | cytoanvi_p7_aggregat | DependencyNeverSatisfied — USER ACTION: scancel |
-| 25102547 | cytoanvi_p6_b9_mapqc | DependencyNeverSatisfied — USER ACTION: scancel |
+**High (release):**
+- Push `feat/cytoanvi` branch + upstream PR

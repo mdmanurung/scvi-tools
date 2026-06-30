@@ -56,3 +56,52 @@ CytoANVI **0.792** vs CytoVI **0.798** (batch still slightly worse).
 
 Supersedes issue 02 (vignette Roider B1/B2) for primary integration/transfer validation — Nuñez is
 the paper's clean fully-labelled batch-replicate setting.
+
+### 2026-06-27 — SLURM job submitted
+Phase 2 SLURM script `.scratch/cytoanvi-benchmark/slurm/phase2_b1b2_nunez.slurm` created and
+submitted as job **25102520** (dependency: data-check 25102517 ✓). Seeds 0/1/2, max_epochs=1000.
+Pass criteria: B1 macro-F1 ≥ CytoVI kNN + 0.03; B2 bio ±0.02, batch ≥ baseline.
+Status: `queued → running`.
+
+### 2026-06-27 — running on gpu-long (job 25102544)
+Previous submission used wrong labels-key; fixed with `--labels-key cell_type`. Resubmitted as
+job **25102544** (gpu-long partition, res-hpc-gpu15). Currently RUNNING (~20 min in).
+Two bugs found and fixed in this iteration:
+- `_model.py:591`: `assert_close` device mismatch (cpu vs cuda:0) → added `.cpu()` on both sides
+- `phase3_b3b5_roider.slurm`: missing `--labels-key cell_type` → added
+
+### 2026-06-27 — pytest gate PASSED
+Job 25102566: **73/73 tests passed** in 75.95s on gpu-long. Phase 0 gate is green.
+P2 (job 25102544) still RUNNING (37 min in as of check).
+
+### 2026-06-27 — current queue status
+`sacct` still reports Phase 2 job **25102544** as RUNNING on `res-hpc-gpu15`
+(elapsed `02:20:16` at inspection). Do not resubmit while this job is active.
+
+Downstream jobs submitted with fresh dependencies:
+- Phase 5 B8: job **25102620**, `afterok:25102544`
+- Phase 7 aggregate: job **25102623**, waits on Phase 2 plus available downstream phases
+
+### 2026-06-28 — still running; do not resubmit
+`sacct -j 25102544,25102620,25102623` reports Phase 2 job **25102544** as RUNNING
+(elapsed `06:01:36`, start `2026-06-27T19:41:20`). Keep waiting; do not resubmit while active.
+
+Phase 5 B8 job **25102620** is still PENDING on `afterok:25102544`.
+Phase 7 job **25102623** is PENDING but was wired to stale recursive aggregation; ignore it in
+favor of manifest-mode aggregation after the required artifacts exist.
+
+### 2026-06-28 — one-off B2 seed-2 recovery submitted
+Phase 2 job **25102544** failed with exit code `11:0` after writing five of six required Nuñez
+artifacts. Verified complete artifacts:
+
+- `.scratch/cytoanvi-benchmark/results/nunez_b1_s0.json`
+- `.scratch/cytoanvi-benchmark/results/nunez_b1_s1.json`
+- `.scratch/cytoanvi-benchmark/results/nunez_b1_s2.json`
+- `.scratch/cytoanvi-benchmark/results/nunez_b2_s0.json`
+- `.scratch/cytoanvi-benchmark/results/nunez_b2_s1.json`
+
+Missing required artifact `.scratch/cytoanvi-benchmark/results/nunez_b2_s2.json` is being recovered
+by one-off SLURM job **25104249** using
+`.scratch/cytoanvi-benchmark/slurm/recover_nunez_b2_s2.slurm`. Downstream B8 was queued as
+**25104252** with dependency `afterok:25104249`; do not run manifest aggregation until recovery
+completes and the JSON validates.

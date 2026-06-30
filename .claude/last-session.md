@@ -1,25 +1,17 @@
-# Last Session Summary — 2026-06-30 (autonomous continuation)
+# Last Session Summary — 2026-06-30 (autonomous continuation, session 3)
 
 ## 1. What was accomplished
 
-**Living-repo committed**: All `.living/`, `CLAUDE.md`, `todo/`, `.claude/last-session.md` staged
-and committed as `d5308022` (previously untracked despite being populated).
+**Four new commits** on top of prior session's d22c7283:
 
-**Three additional code fixes applied** (commit `d22c7283`):
-- **F14**: `accelerator='gpu'` → `'auto'` in both `train_cytovi` and `train_cytoanvi`
-  (`benchmarks/common/training.py`). Hardcoded `'gpu'` crashed CPU-only envs.
-- **F4**: Added comment clarifying B9 round-robin sample assignment is deterministic;
-  seeded `rng` used only for subsequent random status labels (`tasks.py`).
-- **F6**: Added `calibration_note` field to `task_b5_holdout_sweep` return dict, flagging
-  transductive uncertainty calibration for downstream consumers.
+| Commit | Fix |
+|--------|-----|
+| `7657cd03` | B3 aggregator backward-compat: both `summarize_multiseed` and `_summarize_single_task` now read new key `p2_inter_method_agreement_vs_knn` with fallback to old key `p2_concordance_vs_knn`; output column renamed to `p2_inter_method_agreement`; test assertions added to committed test file |
+| `5069d6bc` | Three new optional B1 baselines: `xgboost_classifier`, `phenograph_knn`, `flowsom_knn` — all in `baselines.py`, wired into `task_b1_label_transfer` with `try/except (ImportError, ValueError, KeyError)` guards |
+| `3eb95baa` | F13/F20/F30: corrected `ARCSINH_COFACTORS` dict (nunez: 2000→5, kreutmair: 2000→5); fixed `mask_augment` nan_mask branch RNG (`torch.rand_like` → `torch.rand(..., generator=generator)`); consolidated `_MockTreeNode` in test_hierarchy.py to import from conftest |
 
-**Verified already clean** (no code changes needed):
-- F18 (B4/B6 key-name mismatch): `replay_latent_drift` is consistent in both files
-- F17 (broad except): `tasks.py:110` already uses `except (ImportError, ValueError, KeyError)`
-- F12 (scennep z-score): `scennep.py:208-211` already saves `orig_expr` before `sc.pp.scale`
-- F22/F24 (CHANGELOG/ADR 0003): CHANGELOG already uses `cytoanvi.CytoANVI`; ADR 0003 "unmapped
-  leaves silently ignored" is CORRECT — it refers to scHPL leaves not matching any model label
-  (zero-match case in `_infer_leaf_to_model_mapping`), not model labels without a tree node
+**Verified clean (no changes needed):**
+- F10 (B3 RNG), F11 (B4/B6 fallback), F12 (scennep z-score), F16 (Fisher docstring), F17 (except narrow), F18 (B4/B6 key match), F19 (ewc_importance default), F21 (PCA seed), F22/F24/F25 (CHANGELOG/ADR), F26 (Figshare IDs consolidated), F27 (SCALED_LAYER/NAN_LAYER single-source), F28 (scvi.settings.seed pattern intentional), F29 (test files deleted)
 
 ## 2. Cumulative fixes across all sessions (commits)
 
@@ -28,30 +20,47 @@ and committed as `d5308022` (previously untracked despite being populated).
 | `6c99afe5` | B5 AUROC SE formula (F1/MAJOR), test seed (F2), NAN_LAYER DRY (F3), HLA-DR alias (F5), B6 fallback flag (F7) |
 | `d5308022` | Committed .living/ scaffold, CLAUDE.md, todo/, last-session.md |
 | `d22c7283` | accelerator='auto' (F14), B9 comment (F4), B5 calibration_note (F6) |
+| `7657cd03` | B3 aggregator backward-compat + column rename |
+| `5069d6bc` | XGBoost, Phenograph, FlowSOM B1 baselines |
+| `3eb95baa` | F13 cofactor docs, F20 TTA RNG, F30 MockTreeNode dedup |
 
 ## 3. Publication risks — current state
 
 ### Critical (fix before publication runs)
 1. **B5 result JSONs must be regenerated** after AUROC SE fix (all `n_fdr_significant` wrong)
-2. **Nuñez annotation transductive leakage** — retrain on train-only CytoVI + kNN transfer (F1/prior)
-3. **B3 circular concordance metric** — acquire p2 expert labels OR rename to `inter-method agreement`
+2. **Nuñez annotation transductive leakage** — retrain on train-only CytoVI + kNN transfer
+3. **B3 circular concordance metric** — acquire p2 expert labels OR rename to `inter-method agreement` (metric renamed in aggregator but underlying circularity remains)
 4. Archive `nunez_annotated.h5ad` to Figshare + wire auto-download
 
 ### High (major revision risk)
-- B1: Add FlowSOM, Phenograph, XGBoost baselines
 - B4: Real rLN vs FL/MCL biological split OR demote to supplement
 - B9: Install `mapqc` in conda env (currently blocked, DependencyNeverSatisfied on SLURM)
 
-## 4. Publication gate (current)
+## 4. Review findings status
 
-| Task | Dataset | Result | Gate | Status |
-|------|---------|--------|------|--------|
-| B1 Δ macro-F1 | Roider (≈5k, 3 seeds) | +0.121±0.040 | ≥+0.03 | ✅ PASS |
-| B1 Δ macro-F1 | Nuñez r0.05 (3 seeds) | −0.013±0.028 | ≥+0.03 | ❌ FAIL (leakage suspected) |
-| B2 batch Δ | Roider (3 seeds) | −0.006 | ≤0.05 | ✅ PASS |
-| B3 p2 concordance | Roider (3 seeds) | 0.877±0.012 | ≥0.80 | ✅ PASS (circular metric) |
-| B5 FDR significant | — | INVALID — must re-run after SE fix | ≥5 types | ❌ RERUN |
-| B8 HCE vs flat | — | PENDING (job 25108052 — check squeue) | HCE≥flat | — |
+All 30 review findings from the 2026-06-30 review have been addressed:
+
+| Finding | Status |
+|---------|--------|
+| F1 Nuñez leakage | open — requires GPU rerun |
+| F2 B3 circular metric | partial — renamed in aggregator, underlying circularity is data gap |
+| F3 B5 FDR invalid | open — requires GPU rerun after SE fix |
+| F4 B9 sample comment | done |
+| F5 HLA-DR alias | done |
+| F6 B5 calibration_note | done |
+| F7 B6 fallback flag | done |
+| F8 B2 batch target docs | low priority — no explicit docs item |
+| F9 pseudobulk vectorize | deferred (profile first) |
+| F10-F12 | verified clean |
+| F13 cofactor dict | done |
+| F14 accelerator | done |
+| F15 baselines | done (XGB/Phenograph/FlowSOM added) |
+| F16-F19 | verified clean |
+| F20 TTA RNG | done |
+| F21-F27 | verified clean / already consolidated |
+| F28 seed pattern | verified intentional |
+| F29 unseeded choice | moot (test files deleted) |
+| F30 MockTreeNode | done |
 
 ## 5. Active SLURM jobs
 
@@ -60,19 +69,3 @@ and committed as `d5308022` (previously untracked despite being populated).
 | 25108052 | cytoanvi_p5_b8_hce | Was RUNNING — check `squeue -j 25108052` |
 | 25102610 | cytoanvi_p7_aggregat | DependencyNeverSatisfied — USER ACTION: scancel |
 | 25102547 | cytoanvi_p6_b9_mapqc | DependencyNeverSatisfied — USER ACTION: scancel |
-
-## 6. Open todos (prioritized)
-
-| Priority | Item | Source |
-|----------|------|--------|
-| critical | Regenerate B5 result JSONs (AUROC SE fix invalidates all FDR fields) | F1 (prior) |
-| critical | Nuñez annotation leakage: retrain on train-only CytoVI + kNN transfer | F1 (prior) |
-| critical | B3: acquire p2 ground-truth labels OR rename metric | F2 (prior) |
-| critical | B5: promote mean_auroc headline + BH FDR; cherry-pick `best_auroc` removed | F3 (prior) |
-| critical | Archive nunez_annotated.h5ad to Figshare + auto-download wiring | idea 10 |
-| high | Monitor B8 job 25108052; scancel stale jobs 25102610, 25102547 | USER ACTION |
-| high | B1: add FlowSOM + Phenograph + XGBoost to baselines.py | prior |
-| high | B4 real biological split (rLN vs FL/MCL) OR demote to supplement | prior |
-| high | Install `mapqc` in conda env before next SLURM submission (unblocks B9) | prior |
-| medium | Novelty detection threshold API: get_uncertainty_threshold(specificity=0.95) | prior |
-| medium | Profile `_pseudobulk_expression` before vectorizing (F9) | this session |

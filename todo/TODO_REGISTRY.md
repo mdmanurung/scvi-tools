@@ -22,3 +22,8 @@ Tracks future work items, ideas, and planned improvements.
 | Monitor B1 Nuñez reversal on full-cohort run (F-003: Δ−0.013 on vignette) | high | open | validation | 2026-06-29 | mdmanurung | — |
 | Fix accelerator='gpu' → 'auto' in training.py (F14) | medium | done | infrastructure | 2026-06-30 | mdmanurung | — |
 | Add B9 round-robin sample comment + B5 calibration_note (F4/F6) | low | done | analysis | 2026-06-30 | mdmanurung | — |
+| B3 aggregator backward-compat for key rename (F2) | medium | done | infrastructure | 2026-06-30 | mdmanurung | — |
+| XGBoost, Phenograph, FlowSOM baselines for B1 (F15) | high | done | analysis | 2026-06-30 | mdmanurung | — |
+| Fix mask_augment nan_mask branch global RNG (F20) | low | done | infrastructure | 2026-06-30 | mdmanurung | — |
+| Correct ARCSINH_COFACTORS dict (F13) | low | done | documentation | 2026-06-30 | mdmanurung | — |
+| Consolidate MockTreeNode via conftest import (F30) | low | done | testing | 2026-06-30 | mdmanurung | — |

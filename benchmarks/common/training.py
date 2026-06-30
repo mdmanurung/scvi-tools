@@ -57,7 +57,7 @@ def train_cytovi(
     model = CYTOVI(a, n_latent=n_latent)
     # AdversarialTrainingPlan uses manual optimization; clip via plan_kwargs.
     train_kw: dict = {
-        "accelerator": "gpu",
+        "accelerator": "auto",
         "plan_kwargs": {"gradient_clip_norm": _GRAD_CLIP},
     }
     if batch_size is not None:
@@ -118,7 +118,7 @@ def train_cytoanvi(
     if reduce_lr_on_plateau:
         plan_kw["reduce_lr_on_plateau"] = True
     train_kw: dict = {
-        "accelerator": "gpu",
+        "accelerator": "auto",
         "gradient_clip_val": _GRAD_CLIP,
         "n_samples_per_label": n_samples_per_label,
         "plan_kwargs": plan_kw or None,

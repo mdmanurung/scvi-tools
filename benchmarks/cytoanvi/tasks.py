@@ -378,6 +378,12 @@ def task_b5_holdout_sweep(
         "task": "b5_holdout_sweep",
         "seed": seed,
         "max_epochs": max_epochs,
+        # Each per-type novelty score is transductive: uncertainty is measured on
+        # the full merged object (ref + novel), so the model has never seen the held-out
+        # type during training but the uncertainty threshold is not cross-validated.
+        # Consumers comparing across seeds should treat absolute AUROC values as
+        # optimistic; only relative rankings across cell types are robust.
+        "calibration_note": "transductive — uncertainty thresholds not cross-validated",
         "per_type": per_type,
         "mean_auroc": float(np.mean(aurocs)) if aurocs else float("nan"),
         "n_fdr_significant": fdr_fields.get("n_fdr_significant", 0),
@@ -822,6 +828,8 @@ def _assign_mapqc_pseudo_samples(adata, batch_key: str, seed: int):
 
     # Build full object-dtype columns and assign whole-column to avoid pandas>=2.0
     # copy-on-write silent no-ops from chained iloc assignments.
+    # Sample IDs use deterministic round-robin (cell order within a batch is stable);
+    # rng is reserved exclusively for the subsequent randomised status assignment.
     sample_col = np.empty(adata.n_obs, dtype=object)
     sample_col[ref_idx] = np.take(ref_samples, np.arange(len(ref_idx)) % len(ref_samples))
     sample_col[query_idx] = np.take(

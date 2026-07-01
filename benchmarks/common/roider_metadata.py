@@ -102,6 +102,7 @@ def apply_leiden_cell_types(
     resolution: float = 1.0,
     refresh: bool = False,
     write_cache: bool = True,
+    seed: int = 0,
 ) -> int:
     """Leiden clusters on panel 1 as proxy ``cell_type`` labels; cached by resolution."""
     from benchmarks.cytoanvi.data import _leiden_labels
@@ -115,12 +116,12 @@ def apply_leiden_cell_types(
             raise KeyError(f"{cache} missing column {labels_key!r}")
         labels = table[labels_key].reindex(p1.obs_names)
         if labels.isna().any():
-            _leiden_labels(p1, labels_key=labels_key, resolution=resolution)
+            _leiden_labels(p1, labels_key=labels_key, resolution=resolution, seed=seed)
         else:
             p1.obs[labels_key] = labels.astype(str).to_numpy()
             return int(p1.obs[labels_key].nunique())
 
-    _leiden_labels(p1, labels_key=labels_key, resolution=resolution)
+    _leiden_labels(p1, labels_key=labels_key, resolution=resolution, seed=seed)
     if write_cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         p1.obs[[labels_key]].to_parquet(cache)
@@ -138,6 +139,7 @@ def annotate_roider_obs(
     leiden_resolution: float = 1.0,
     leiden_refresh: bool = False,
     leiden_write_cache: bool = True,
+    seed: int = 0,
 ):
     """Add ``Entity``, ``batch``, and Leiden proxy labels on panel 1."""
     for adata in (merged, p1, p2):
@@ -151,6 +153,7 @@ def annotate_roider_obs(
             resolution=leiden_resolution,
             refresh=leiden_refresh,
             write_cache=leiden_write_cache,
+            seed=seed,
         )
         # Panel 1 only (matches vignette); panel-2 cells stay unlabeled for B3 query side.
         merged.obs[labels_key] = "Unknown"

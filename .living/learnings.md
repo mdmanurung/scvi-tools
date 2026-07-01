@@ -183,6 +183,41 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **structural_mitigation_candidate**: yes — add shape convention check whenever wrapping harmonypy
 **Body**: `harmony_latent_and_knn` in `baselines.py` applied `.T` to `ho.Z_corr` assuming old convention (n_components, n_cells). harmonypy 0.2.0 (both scvi and scvi-test envs) returns (n_cells, n_components) already — `.T` produces (n_components, n_cells) = (21, 100000), and boolean indexing with a (100000,) mask raises `IndexError`. Also, `IndexError` was not caught in the `tasks.py` try/except, killing the entire multiseed run. Fix: use `ho.Z_corr.T if ho.Z_corr.shape[0] == n_comp else ho.Z_corr`. Commit: e8a6d5f9.
 
+### L-026 — [2026-07-01] B5 holdout sweep: nan_layer auto-detection unreliable across 47 successive model instantiations
+**Category**: bug
+**Tags**: nan-layer, b5, encoder-mask, setup-anndata, multi-model-loop, backbone-detection
+**mitigation_type**: structural
+**structural_mitigation_candidate**: always pass nan_layer explicitly; never rely on auto-detection in loops
+**Body**: B5 holdout sweep (job 25132401) crashed at epoch 1 step 0 of the SECOND Leiden cluster with all-NaN z_encoder output (shape (8192,10)). Root cause: in `setup_anndata`, auto-detection (`if nan_layer is None and "_nan_mask" in adata.layers`) worked for the first model but not subsequent ones, leaving `encoder_marker_mask=None` and allowing NaN panel-2-specific marker columns to enter the encoder. Fix: pass `nan_layer=NAN_LAYER` explicitly in `benchmarks/cytoanvi/run.py` kw dict so PROTEIN_NAN_MASK is always registered regardless of auto-detection state. Also added `del model + gc.collect() + cuda.empty_cache()` in `task_b5_novelty` after scoring each holdout cluster to prevent GPU memory accumulation across 47 iterations. Commit: 3575b392.
+
+### L-027 — [2026-07-01] B6 and B9 in run.py bypass the shared `kw` dict, missing `nan_layer`
+**Category**: bug
+**Tags**: nan-layer, run.py, b6, b9, kwarg-bypass, backbone-detection
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_run_b6_b9_nan_layer_threaded
+**Body**: `run.py` builds a shared `kw` dict (lines 90–99) that includes `nan_layer=NAN_LAYER`, but B6 (`task_b6_lambda_sweep`) and B9 (`task_b9_mapqc`) both use explicit per-kwarg call sites that did not include `nan_layer`. B1/B2/B4/B5/B8 all correctly use `**kw` or `**b5_kw`/`**b8_kw`. The divergence happened because B6 and B9 needed non-standard extra kwargs (lambdas, mapqc params) and were written with a full explicit kwargs list that omitted `nan_layer`. Fix: added `nan_layer=NAN_LAYER` to both explicit call sites. Pattern: any future task call that does NOT use `**kw` must be manually audited for missing `nan_layer`.
+
+### L-028 — [2026-07-01] aggregate_results.py resolves manifest artifact paths from CWD, not manifest location
+**Category**: bug
+**Tags**: aggregate-results, manifest, path-resolution, publication
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_manifest_path_resolution_non_cwd
+**Body**: `_manifest_inputs` called `Path(artifact["path"])` which resolves relative to the current working directory, not relative to the manifest file. When the manifest contains relative paths like `.scratch/cytoanvi-benchmark/results/...`, calling the aggregator from any directory other than the repo root silently fails to find files. Fix: added `_resolve_artifact_path(raw, manifest_dir)` helper and `manifest_dir: Path | None` param to `_manifest_inputs`; call site passes `args.manifest.parent`. Rule: any function that reads paths from a config/manifest file must resolve them relative to the config file, not CWD.
+
+### L-029 — [2026-07-01] Leiden clusters unseeded across all call sites; cache masks first-run non-reproducibility
+**Category**: bug
+**Tags**: leiden, seed, reproducibility, data.py, roider, nunez
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_leiden_labels_deterministic_across_envs
+**Body**: `_leiden_labels` in `data.py` called `sc.tl.leiden` without `seed=`, making first-run Leiden labels environment-dependent. The roider Leiden cache partially mitigates (subsequent seeds load cached labels), but the initial cache creation and the Nuñez path (no cache) are non-reproducible. Fix: added `seed: int = 0` to `_leiden_labels` and threaded it through `load_nunez`, `apply_leiden_cell_types` in roider_metadata.py, and `annotate_roider_obs`. Note: do NOT include `seed` in the Leiden cache key — changing seed would invalidate existing caches.
+
+### L-030 — [2026-07-01] EWC `combine_type="product"` silently underflows to 0 in float32
+**Category**: bug
+**Tags**: ewc, fisher, continual-update, combine-type, underflow, float32
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_ewc_product_combines_nonzero
+**Body**: When `combine_type="product"`, the ContinualUpdateState computes `w = w * c` (Hadamard product of two Fisher importance vectors). For parameters with small-but-nonzero Fisher importances in both reference and control, the product underflows to float32 0.0, silently disabling the EWC penalty for those parameters. This does NOT raise an error; the penalty just becomes 0 for those params, effectively ignoring them. Fix: `w = torch.clamp(w * c, min=1e-10)`. Prefer `combine_type="sum"` for production; "product" is still useful for high-confidence penalization but requires the clamp.
+
 ### L-014 — [2026-06-01] Figshare egress returns HTTP 202 / 0 bytes in dev env; no pip in SLURM queue
 **Category**: infra
 **Tags**: figshare, data-download, slurm, mapqc, environment

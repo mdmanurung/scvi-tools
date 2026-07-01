@@ -241,7 +241,7 @@ class ContinualUpdate:
             if ctrl is not None and name in ctrl:
                 c = ctrl[name].to(device)
                 if self.combine_type == "product":
-                    w = w * c
+                    w = torch.clamp(w * c, min=1e-10)
                 else:
                     w = w + c
             penalty = penalty + (w * (p - saved).pow(2)).sum()

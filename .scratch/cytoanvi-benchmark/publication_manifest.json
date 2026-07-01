@@ -8,8 +8,8 @@
       "seeds": [0],
       "job_id": "25102544",
       "status": "superseded",
-      "required": true,
-      "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun. New artifact: results/e1000/nunez_inductive_b1_multiseed.json (PIDs 1520357+2539861, in progress as of 2026-06-30)."
+      "required": false,
+      "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun. New artifact: results/e1000/nunez_inductive_b1_multiseed.json."
     },
     {
       "phase": "P2",
@@ -19,7 +19,7 @@
       "seeds": [1],
       "job_id": "25102544",
       "status": "superseded",
-      "required": true,
+      "required": false,
       "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun."
     },
     {
@@ -30,7 +30,7 @@
       "seeds": [2],
       "job_id": "25102544",
       "status": "superseded",
-      "required": true,
+      "required": false,
       "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun."
     },
     {
@@ -39,10 +39,10 @@
       "path": ".scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_multiseed.json",
       "dataset": "nunez",
       "seeds": [0, 1, 2],
-      "job_id": "PID-2539861",
-      "status": "running",
+      "job_id": "PID-3186154",
+      "status": "complete",
       "required": true,
-      "note": "Inductive kNN annotation (L-022 fix). PIDs 1520357+2539861 both running identical parameters (default --max-cells 100000). ETA ~2026-07-01 10:00 CEST."
+      "note": "Inductive kNN annotation (L-022 fix). v3 PID 3186154 completed 2026-07-01 05:58. CytoANVI 0.9751±0.0003, Δ+0.017 vs kNN 0.9581±0.0007."
     },
     {
       "phase": "P2",
@@ -80,10 +80,10 @@
       "path": ".scratch/cytoanvi-benchmark/results/roider_full_b3_s0.json",
       "dataset": "roider-full",
       "seeds": [0],
-      "job_id": null,
-      "status": "pending",
+      "job_id": "25132400",
+      "status": "running",
       "required": true,
-      "note": "Job 25104250 failed (wall-time + NaN at batch_size=128). Fix: --batch-size 8192. Smoke test submitted as job 25129287 (2026-06-30 20:40 CEST). B3 full-cohort submission gated on smoke test completion."
+      "note": "Job 25132400 RUNNING (submitted 2026-07-01); --batch-size 8192, max_epochs=1000. ETA ~13:00 CEST 2026-07-01."
     },
     {
       "phase": "P3",
@@ -91,10 +91,10 @@
       "path": ".scratch/cytoanvi-benchmark/results/roider_full_b3_s1.json",
       "dataset": "roider-full",
       "seeds": [1],
-      "job_id": null,
-      "status": "pending",
+      "job_id": "25132400",
+      "status": "running",
       "required": true,
-      "note": "Same as s0. Waiting for smoke test (job 25129287) before submitting phase3_b3b5_roider.slurm."
+      "note": "Same job as s0 (25132400), multi-seed run."
     },
     {
       "phase": "P3",
@@ -102,10 +102,10 @@
       "path": ".scratch/cytoanvi-benchmark/results/roider_full_b3_s2.json",
       "dataset": "roider-full",
       "seeds": [2],
-      "job_id": null,
-      "status": "pending",
+      "job_id": "25132400",
+      "status": "running",
       "required": true,
-      "note": "Same as s0."
+      "note": "Same job as s0 (25132400), multi-seed run."
     },
     {
       "phase": "P3",
@@ -113,10 +113,10 @@
       "path": ".scratch/cytoanvi-benchmark/results/roider_full_b5_sweep_s0.json",
       "dataset": "roider-full",
       "seeds": [0],
-      "job_id": null,
-      "status": "pending",
+      "job_id": "25132895",
+      "status": "running",
       "required": true,
-      "note": "B5 sweep gated on smoke test; will size phase3b_b5sweep_roider.slurm from Leiden cluster count."
+      "note": "Job 25132895 RUNNING (resubmit of 25132401 after NaN crash fixed by commit 3575b392, L-026). 47 clusters, ~24h ETA. nan_layer=NAN_LAYER threading verified (commit applying B6/B9 fix also confirms run.py kw dict correctness)."
     },
     {
       "phase": "P5",

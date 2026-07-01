@@ -123,7 +123,11 @@ def load_roider(data_dir: str, auto_download: bool = True):
 
 
 def _leiden_labels(
-    adata, labels_key: str = "cell_type", resolution: float = 1.0, layer: str = SCALED_LAYER
+    adata,
+    labels_key: str = "cell_type",
+    resolution: float = 1.0,
+    layer: str = SCALED_LAYER,
+    seed: int = 0,
 ):
     """Leiden clusters as proxy labels (paper: manual annotation of Leiden clusters)."""
     import scanpy as sc
@@ -136,7 +140,7 @@ def _leiden_labels(
     a = adata[:, proteins].copy()
     a.X = np.asarray(a.layers[layer])
     sc.pp.neighbors(a, n_neighbors=15, use_rep="X")
-    sc.tl.leiden(a, resolution=resolution, flavor="igraph", directed=False)
+    sc.tl.leiden(a, resolution=resolution, flavor="igraph", directed=False, seed=seed)
     adata.obs[labels_key] = a.obs["leiden"].astype(str).values
     return adata
 
@@ -237,7 +241,7 @@ def load_nunez(
     merged = cytovi.merge_batches([b1, b2])
     merged.obs_names_make_unique()
     if annotate:
-        _leiden_labels(merged, labels_key=labels_key, resolution=leiden_resolution)
+        _leiden_labels(merged, labels_key=labels_key, resolution=leiden_resolution, seed=seed)
     if max_cells is not None and merged.n_obs > max_cells:
         merged = _subsample_batches(merged, "batch", max_cells, seed=seed)
     return merged
@@ -336,6 +340,7 @@ def load_roider_full(
                 leiden_resolution=leiden_resolution,
                 leiden_refresh=leiden_refresh,
                 leiden_write_cache=max_patients is None,
+                seed=seed,
             )
         return merged, p1, p2
 

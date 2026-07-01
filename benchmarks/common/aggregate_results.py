@@ -95,6 +95,10 @@ def _summarize_single_task(task: str, payload: dict[str, Any]) -> dict[str, Any]
             out["latent_auroc"] = _get(payload, "latent", "auroc")
         if "logit" in payload:
             out["logit_auroc"] = _get(payload, "logit", "auroc")
+        if payload.get("n_fdr_significant") is not None:
+            out["n_fdr_significant"] = payload["n_fdr_significant"]
+        if payload.get("mean_auroc_fdr_sig") is not None:
+            out["mean_auroc_fdr_sig"] = payload["mean_auroc_fdr_sig"]
     elif task == "b6":
         out["recommendation_status"] = payload.get("recommendation_status")
         if payload.get("recommended_lambda") is not None:
@@ -206,15 +210,23 @@ def _validate_manifest_file(artifact: dict[str, Any], path: Path) -> None:
         )
 
 
+def _resolve_artifact_path(raw: str, manifest_dir: Path | None) -> Path:
+    p = Path(raw)
+    if not p.is_absolute() and manifest_dir is not None:
+        return (manifest_dir / p).resolve()
+    return p
+
+
 def _manifest_inputs(
     artifacts: list[dict[str, Any]],
     *,
+    manifest_dir: Path | None = None,
     input_dir: Path | None,
     output: Path | None,
     parser: argparse.ArgumentParser,
 ) -> list[Path]:
     paths: list[Path] = []
-    expected = {Path(a["path"]).resolve() for a in artifacts}
+    expected = {_resolve_artifact_path(a["path"], manifest_dir).resolve() for a in artifacts}
     if input_dir is not None:
         discovered = {p.resolve() for p in _inputs_from_dir(input_dir, output)}
         unknown = sorted(discovered - expected)
@@ -224,7 +236,7 @@ def _manifest_inputs(
                 + ", ".join(str(p) for p in unknown)
             )
     for artifact in artifacts:
-        path = Path(artifact["path"])
+        path = _resolve_artifact_path(artifact["path"], manifest_dir)
         if not path.exists():
             if artifact["required"]:
                 raise FileNotFoundError(f"required manifest artifact missing: {path}")
@@ -268,6 +280,7 @@ def main():
         inputs.extend(
             _manifest_inputs(
                 manifest_artifacts,
+                manifest_dir=args.manifest.parent,
                 input_dir=args.input,
                 output=output,
                 parser=ap,

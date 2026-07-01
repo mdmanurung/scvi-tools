@@ -374,8 +374,65 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             index=adata.obs_names[indices],
         )
 
-    def train(self, max_epochs: int | None = None, **kwargs):
-        """Train the model; warn if continual update lacks a replay buffer."""
+    def train(
+        self,
+        max_epochs: int | None = 1000,
+        lr: float = 1e-3,
+        accelerator: str = "auto",
+        devices: int | list[int] | str = "auto",
+        train_size: float = 0.9,
+        validation_size: float | None = None,
+        batch_size: int = 4096,
+        early_stopping: bool = True,
+        check_val_every_n_epoch: int | None = None,
+        n_steps_kl_warmup: int | None = None,
+        n_epochs_kl_warmup: int | None = 400,
+        adversarial_classifier: bool | None = None,
+        plan_kwargs: dict | None = None,
+        early_stopping_patience: int | None = 30,
+        **kwargs,
+    ):
+        """Train the model.
+
+        Parameters
+        ----------
+        max_epochs
+            Number of passes through the dataset. Default 1000.
+        lr
+            Learning rate. Default 1e-3.
+        accelerator
+            Lightning accelerator. Default ``"auto"``.
+        devices
+            Devices to use. Default ``"auto"``.
+        train_size
+            Fraction of cells used for training. Default 0.9.
+        validation_size
+            Fraction used for validation. If ``None``, ``1 - train_size``.
+        batch_size
+            Minibatch size. Default 4096 — much larger than the scRNA-seq convention (128)
+            because cytometry datasets are 100k–1M+ cells and large batches are required for
+            gradient stability (small batches cause NaN divergence on large cohorts).
+        early_stopping
+            Stop when validation loss stops improving. Default ``True``.
+        check_val_every_n_epoch
+            How often to evaluate the validation set. Default: every epoch when
+            ``early_stopping`` or ``reduce_lr_on_plateau`` is active.
+        n_steps_kl_warmup
+            Steps to linearly warm up the KL weight from 0 to 1. Active only when
+            ``n_epochs_kl_warmup`` is ``None``.
+        n_epochs_kl_warmup
+            Epochs to warm up the KL weight. Default 400 (40% of ``max_epochs``).
+        adversarial_classifier
+            Use an adversarial classifier in the latent space for batch mixing. Defaults to
+            ``True`` when missing-marker panels are detected.
+        plan_kwargs
+            Extra keyword arguments for the training plan (e.g.
+            ``{"ewc_importance": 100}`` for continual update).
+        early_stopping_patience
+            Epochs to wait before triggering early stopping. Default 30.
+        **kwargs
+            Forwarded to ``Trainer``.
+        """
         cont = getattr(self.module, "continual", None)
         if cont is not None and not cont.replay_batches:
             warnings.warn(
@@ -386,7 +443,23 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 UserWarning,
                 stacklevel=settings.warnings_stacklevel,
             )
-        return super().train(max_epochs=max_epochs, **kwargs)
+        return super().train(
+            max_epochs=max_epochs,
+            lr=lr,
+            accelerator=accelerator,
+            devices=devices,
+            train_size=train_size,
+            validation_size=validation_size,
+            batch_size=batch_size,
+            early_stopping=early_stopping,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            n_steps_kl_warmup=n_steps_kl_warmup,
+            n_epochs_kl_warmup=n_epochs_kl_warmup,
+            adversarial_classifier=adversarial_classifier,
+            plan_kwargs=plan_kwargs,
+            early_stopping_patience=early_stopping_patience,
+            **kwargs,
+        )
 
     @torch.inference_mode()
     def get_latent_representation(self, *args, **kwargs):

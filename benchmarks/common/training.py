@@ -38,9 +38,9 @@ def train_cytovi(
     Parameters
     ----------
     batch_size
-        Mini-batch size passed to the data splitter.  ``None`` preserves scvi's default (128).
-        For large cohorts (>100 k cells) set ``batch_size=8192`` to avoid NaN divergence and
-        reduce per-epoch wall time (~64× fewer gradient steps on roider-full).
+        Mini-batch size passed to the data splitter.  ``None`` preserves CYTOVI's default (128).
+        For large cohorts (>100 k cells) set ``batch_size=4096`` or higher to avoid NaN
+        divergence and reduce per-epoch wall time (~32× fewer gradient steps on roider-full).
     """
     from scvi.external import CYTOVI
 
@@ -95,9 +95,9 @@ def train_cytoanvi(
         Enable LR reduction on plateau (via ``elbo_validation``). Useful for
         stabilizing the classifier head on difficult seeds.
     batch_size
-        Mini-batch size passed to the data splitter.  ``None`` preserves scvi's default (128).
-        For large cohorts (>100 k cells) set ``batch_size=8192`` to avoid NaN divergence and
-        reduce per-epoch wall time (~64× fewer gradient steps on roider-full).
+        Mini-batch size. ``None`` uses CytoANVI's default (4096).
+        For very large cohorts (>500 k cells) consider ``batch_size=8192`` to further reduce
+        per-epoch wall time.
     """
     from cytoanvi import CytoANVI
 

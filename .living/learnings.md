@@ -224,3 +224,10 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **mitigation_type**: ambient-awareness
 **structural_mitigation_candidate**: 
 **Body**: Two env constraints that block otherwise-straightforward steps: (1) Figshare download returns HTTP 202 (async processing) / 0-byte file in the dev environment — data must be acquired via user action outside the agent. (2) `pip install` is not allowed inside the SLURM job queue — `mapqc` (needed for B9) must be installed in the conda environment before job submission. B9 is currently blocked by (2). Source: `.scratch/cytoanvi-benchmark/issues/01` and `issues/13`.
+
+### L-031 — [2026-07-01] locals().get() antipattern for snapshots taken inside try blocks
+**Category**: code-quality
+**Tags**: try-finally, was_training, snapshot, clarity
+**mitigation_type**: ambient-awareness
+**structural_mitigation_candidate**: 
+**Body**: `locals().get("was_training")` was used to guard the finally block against an OOM scenario where `was_training` might not yet be assigned. The fix: move the snapshot before the try block. The snapshot is read-only (no side effects), so it can safely execute before the try. The `locals().get()` pattern is always a red flag — if a variable might not be assigned, the real fix is to assign it before the try, not to look it up from the locals dict in finally.

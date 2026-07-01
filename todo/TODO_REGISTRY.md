@@ -9,7 +9,7 @@ Tracks future work items, ideas, and planned improvements.
 | Tune and document CytoVI-specific default λ after B6 sweep | medium | open | analysis | 2026-06-18 | mdmanurung | — |
 | Push feat/cytoanvi branch + upstream PR | high | open | infrastructure | 2026-06-18 | mdmanurung | — |
 | B9 mapQC on query controls after surgery | medium | blocked | validation | 2026-06-29 | mdmanurung | — |
-| Roider Phase-3 smoke test then resubmit (B3/B5 full-cohort) | critical | in_progress | analysis | 2026-06-29 | mdmanurung | — |
+| Roider Phase-3 B3/B5 full-cohort (jobs 25132400/25132401 RUNNING) | critical | in_progress | analysis | 2026-06-29 | mdmanurung | — |
 | Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | done | analysis | 2026-06-29 | mdmanurung | — |
 | Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | Fix ruff lint findings on cytoanvi package | medium | done | infrastructure | 2026-06-29 | mdmanurung | — |
@@ -19,8 +19,8 @@ Tracks future work items, ideas, and planned improvements.
 | Regenerate B5 result JSONs after AUROC SE fix (existing values are wrong) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Install `mapqc` in conda env before next SLURM submission (unblocks B9) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | USER ACTION: scancel stale jobs 25102610 25102547 (25102546 already gone) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
-| Monitor B1 Nuñez reversal on full-cohort run (F-003: Δ−0.013 on vignette) | high | open | validation | 2026-06-29 | mdmanurung | — |
-| Re-run Nuñez B1 e1000 seeds 0/1/2 after inductive kNN annotation fix (PID 3186154 v3, ETA ~09:45 CEST Jul 1) | critical | in_progress | analysis | 2026-06-30 | mdmanurung | — |
+| Monitor B1 Nuñez reversal on full-cohort run (F-003: resolved — inductive Δ+0.017) | high | done | validation | 2026-06-29 | mdmanurung | — |
+| Re-run Nuñez B1 e1000 seeds 0/1/2 after inductive kNN annotation fix (PID 3186154 v3) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Fix Nuñez transductive leakage in annotate_nunez.py (L-022) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Fix accelerator='gpu' → 'auto' in training.py (F14) | medium | done | infrastructure | 2026-06-30 | mdmanurung | — |
 | Add B9 round-robin sample comment + B5 calibration_note (F4/F6) | low | done | analysis | 2026-06-30 | mdmanurung | — |

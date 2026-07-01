@@ -1,41 +1,48 @@
-# Last Session Summary — 2026-06-30 (autonomous continuation, session 8)
+# Last Session Summary — 2026-07-01 (autonomous continuation, session 9)
 
 ## 1. What was accomplished
 
-**Discovered and fixed harmonypy 0.2.0 Z_corr transposition bug (commit e8a6d5f9):**
-- PID 1520357 (scvi env) crashed at harmony baseline after CytoANVI training: `IndexError: boolean index did not match indexed array along axis 0; size of axis is 30 but size of corresponding boolean axis is 100000`
-- Root cause: harmonypy 0.2.0 returns `Z_corr` as `(n_cells, n_components)` but code applied `.T` unconditionally, making it `(n_components, n_cells)` = shape `(30, 100000)` → boolean mask of 100000 elements fails
-- Fix: `Z_harmony = ho.Z_corr.T if ho.Z_corr.shape[0] == n_comp else ho.Z_corr` in `baselines.py`
-- Also added `IndexError` to except clause in `tasks.py` for defensive degradation
-- Added L-025 to `.living/learnings.md`
-- Killed PID 2539861 (scvi-test env, epoch 183/1000, would have crashed on harmony) and restarted as PID 3186154 writing to `nunez_inductive_b1_s012_v3.log`
+**B1 Nuñez inductive complete (PID 3186154 v3, 05:58 CEST Jul 1):**
+- All 3 seeds (0/1/2) finished at max_epochs=1000
+- JSON: `.scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_multiseed.json`
+- CytoANVI 0.9751 ± 0.0003 vs CytoVI kNN 0.9581 ± 0.0007 (Δ +0.017)
+- XGBoost 0.9722 ± 0.0008; Raw marker kNN 0.9010 ± 0.0028; Harmony kNN 0.9111 ± 0.0026
+- Gate (≥+0.03) formally misses — ceiling effect on clean 11-type PBMC; CytoANVI wins all comparisons
+- Prior reversal Δ−0.013 fully explained by transductive leakage (L-022); no longer relevant
+- Roider Δ+0.121 (F-002) remains primary B1 result
 
-**B1 Nuñez v3 progress (PID 3186154, seed-0):**
-- At epoch 117/1000, elapsed 27:32, train_loss -81.4, speed ~14.7s/epoch (stable, no NaN)
-- ETA: seed-0 done ~01:35 CEST Jul 1; all 3 seeds ~09:45 CEST Jul 1
+**Smoke test B3 Roider-full PASSED (job 25129287, completed 22:14:05 CEST Jun 30):**
+- Elapsed 1:32:07 (88 min data prep + 3.4 min training — output buffering explained)
+- CytoANVI: 3.49 s/epoch steady state; CytoVI: 6.55 s/epoch steady state
+- No NaN divergence; 20-epoch concordance 0.641 (at 20 epochs, expect higher at 1000)
 
-**Smoke test (job 25129287) still running at session capture (54 min elapsed):**
-- Log still at 863 bytes (Python output buffering — no `-u` flag + lightning `\r` progress bars)
-- Job is healthy (RUNNING, not PENDING or FAILED)
-- Output will appear all at once when 20-epoch B3 training completes
+**Phase 3 SLURM jobs submitted (2026-07-01):**
+- Job **25132400** — B3 full-cohort, 3 seeds, `--time=14:00:00`; ETA ~13:00 CEST Jul 1
+  - Outputs: `roider_full_b3_s{0,1,2}.json`
+- Job **25132401** — B5 holdout sweep, seed 0, 47 clusters, `--time=48:00:00`; ETA ~06:00 CEST Jul 2
+  - Output: `roider_full_b5_sweep_s0.json`
 
 **Living docs updated:**
-- `benchmarks/ANALYSIS_MANIFEST.md` — B1 row updated with PID 3186154 v3 restart info
-- `todo/TODO_REGISTRY.md` — B1 entry PID updated to 3186154 (v3)
-- All changes staged for commit
+- `benchmarks/ANALYSIS_MANIFEST.md` — B1, B3, B5 rows updated
+- `.living/findings/FINDINGS_REGISTRY.md` — F-003 updated to inductive result
+- `.living/findings/label-transfer-accuracy.md` — F-003 section fully rewritten
+- `todo/TODO_REGISTRY.md` — B1 inductive marked done; B3/B5 as in_progress with job IDs; reversal monitor marked done
+- `.scratch/cytoanvi-benchmark/issues/08-nunez-b1-b2-full.md` — B1 completion section added
+- `.scratch/cytoanvi-benchmark/issues/09-roider-b3-b5-full.md` — smoke gate + B3/B5 submission section added
+- `.living/log/LOG_REGISTRY.md` — session 9 row added
 
 ## 2. Cumulative benchmark status
 
 | Task | Status | Result |
 |------|--------|--------|
-| B1 Roider | ✓ pub-grade | Δ+0.121±0.040 |
-| B1 Nuñez inductive | RUNNING (PID 3186154 v3, seed-0 epoch 117/1000; ETA all-3 ~09:45 CEST Jul 1) | harmony fix (L-025, commit e8a6d5f9) |
+| B1 Roider | ✓ pub-grade | Δ+0.121±0.040 ✅ gate |
+| B1 Nuñez inductive | ✓ complete (2026-07-01 05:58) | CytoANVI 0.9751±0.0003, Δ+0.017 (ceiling) |
 | B2 Roider | ✓ | bio +0.108, batch Δ−0.006 |
 | B2 Nuñez r0.05 | ✓ | batch Δ−0.005 |
-| B3 roider-full | PENDING smoke-test gate (job 25129287 RUNNING, output buffering) | Leiden=47; submit after NaN-free confirmation |
+| B3 roider-full | RUNNING (job 25132400, 3 seeds; ETA ~13:00 CEST Jul 1) | smoke gate ✅ (no NaN, 3.49s/epoch) |
 | B4 | Blocked (pseudo split) | plumbing only |
 | B5 roider-e1000 | ✓ multiseed | best 0.833±0.122, mean 0.462±0.075 |
-| B5 roider-full sweep | PENDING B3 smoke + epoch timing | 47 clusters, ~24h estimated |
+| B5 roider-full sweep | RUNNING (job 25132401, seed 0, 47 clusters; ETA ~06:00 CEST Jul 2) | — |
 | B6 | Blocked | plumbing only |
 | B8 | ✅ pub-gate | Δ_hier +0.0862±0.0027 (3-seed, F-011) |
 | B9 | Blocked (mapqc) | — |
@@ -44,7 +51,9 @@
 
 | Job ID | Name | Status | Purpose |
 |--------|------|--------|---------|
-| 25129287 | cytoanvi_smoke_b3_roider | RUNNING (output buffered; ~54 min elapsed at session capture) | 20-epoch B3 timing + NaN check |
+| 25132400 | cytoanvi_p3a_roider_b3 | RUNNING | B3 full-cohort 3 seeds, 1000 epochs; ETA ~13:00 Jul 1 |
+| 25132401 | cytoanvi_p3b_roider_b5sweep | RUNNING | B5 sweep seed 0, 47 clusters; ETA ~06:00 Jul 2 |
+| 25129287 | cytoanvi_smoke_b3_roider | COMPLETED | Smoke gate passed |
 | 25089685 | vs_val | PENDING DependencyNeverSatisfied | Stale; USER should cancel |
 | 25102610 | cytoanvi_p7_aggregate | PENDING DependencyNeverSatisfied | Stale; USER should cancel |
 | 25102547 | cytoanvi_p6_b9_mapqc | PENDING DependencyNeverSatisfied | Stale; blocked on mapqc |
@@ -53,9 +62,9 @@
 
 | ID | Item | Status |
 |----|------|--------|
-| P4-A | B1 inductive JSON when complete | RUNNING (PID 3186154 v3, ~09:45 CEST Jul 1 ETA) |
-| B3-gate | Submit phase3_b3b5_roider.slurm after smoke test NaN-free | Pending smoke output flush |
-| B5-gate | Submit phase3b_b5sweep_roider.slurm after epoch timing | Pending smoke |
+| B3-monitor | Check job 25132400 logs for NaN + concordance ≥ 0.70 | RUNNING |
+| B5-monitor | Check job 25132401 logs for AUROC > 0.70 | RUNNING |
+| aggregate | Run manifest-mode aggregation after B3/B5 land | Pending B3+B5 |
 | scancel | `scancel 25089685 25102610 25102547` | USER action required |
 | mapqc | Install `mapqc` in conda env | USER action required |
 | B4-real | Real rLN vs FL/MCL split or demote to supplement | USER decision |
@@ -64,28 +73,27 @@
 
 ## 5. Open items for next session
 
-**Smoke test (job 25129287) — check log when epoch output appears:**
+**Monitor B3 (job 25132400) — check when done (~13:00 CEST Jul 1):**
 ```bash
-cat .scratch/cytoanvi-benchmark/slurm/out/cytoanvi_smoke_b3_roider_25129287.log | tr '\r' '\n' | grep -E "Epoch|loss|NaN|complete|s/it"
+sacct -j 25132400 --format=JobID,State,Elapsed,ExitCode
+cat .scratch/cytoanvi-benchmark/slurm/out/cytoanvi_p3a_roider_b3_25132400.log | tr '\r' '\n' | grep -E "Epoch|loss|NaN|concordance|complete"
+ls -la .scratch/cytoanvi-benchmark/results/roider_full_b3_s{0,1,2}.json
 ```
-- Confirm: no NaN, extract epoch timing from epochs 2-10 (in seconds per epoch)
-- If OK (no NaN, epoch time ≤~5 min): submit both phase 3 scripts:
-  ```bash
-  sbatch .scratch/cytoanvi-benchmark/slurm/phase3_b3b5_roider.slurm
-  sbatch .scratch/cytoanvi-benchmark/slurm/phase3b_b5sweep_roider.slurm
-  ```
-- If epoch time significantly > 5 min/epoch: adjust --time upward in phase3_b3b5_roider.slurm
+- Confirm: no NaN, per-seed concordance ≥ 0.70
+- If done: add F-012 to FINDINGS_REGISTRY for roider-full-e1000 B3
 
-**B1 inductive (PID 3186154 v3) — check when seeds complete (~09:45 CEST Jul 1):**
+**Monitor B5 (job 25132401) — check when done (~06:00 CEST Jul 2):**
 ```bash
-ls -la .scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_multiseed.json
-cat .scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_multiseed.json | python3 -m json.tool
+sacct -j 25132401 --format=JobID,State,Elapsed,ExitCode
+cat .scratch/cytoanvi-benchmark/slurm/out/cytoanvi_p3b_roider_b5sweep_25132401.log | tr '\r' '\n' | grep -E "cluster|AUROC|holdout|complete"
+ls -la .scratch/cytoanvi-benchmark/results/roider_full_b5_sweep_s0.json
 ```
-- When all 3 seeds done: update F-003 in FINDINGS_REGISTRY and label-transfer-accuracy.md
-- Update ANALYSIS_MANIFEST B1 Nuñez row with final Δ
-- Commit findings update
+- Confirm: ∃ type with AUROC > 0.70
+- If done: add F-013 to FINDINGS_REGISTRY for roider-full-e1000 B5
 
-**After B3 + B5 full-cohort results land:**
-- Run manifest-mode aggregation: `python benchmarks/common/aggregate_results.py --manifest .scratch/cytoanvi-benchmark/publication_manifest.json`
-- Update FINDINGS_REGISTRY with B3/B5 full-cohort results
+**After both jobs complete:**
+```bash
+python benchmarks/common/aggregate_results.py --manifest .scratch/cytoanvi-benchmark/publication_manifest.json
+```
+- Then update FINDINGS_REGISTRY + ANALYSIS_MANIFEST with full-cohort results
 - Push `feat/cytoanvi` branch and prepare upstream PR

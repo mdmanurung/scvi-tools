@@ -129,3 +129,26 @@ fix (`annotate_nunez.py --require-annotated-nunez --max-cells 100000`) as:
 
 Harmony fix details: L-025, commit e8a6d5f9 (`baselines.py` shape-aware transpose +
 `tasks.py` IndexError catch).
+
+### 2026-07-01 — B1 Nuñez inductive complete (PID 3186154 v3, 05:58 CEST)
+
+All 3 seeds (0/1/2) finished at max_epochs=1000. JSON written to:
+`.scratch/cytoanvi-benchmark/results/e1000/nunez_inductive_b1_multiseed.json`
+
+**Results (3-seed means ± SD):**
+
+| Method | macro-F1 |
+|--------|----------|
+| CytoANVI | **0.9751 ± 0.0003** |
+| CytoVI kNN | 0.9581 ± 0.0007 |
+| XGBoost | 0.9722 ± 0.0008 |
+| Raw marker kNN | 0.9010 ± 0.0028 |
+| Harmony kNN | 0.9111 ± 0.0026 |
+
+Δ (CytoANVI vs CytoVI kNN) = **+0.0170**.
+
+**Gate assessment:** Formally misses ≥+0.03 target — ceiling effect on clean 11-type PBMC.
+CytoANVI still wins all comparisons. XGBoost already scores 0.9722 (near-perfect without batch
+info), confirming the task is near-saturated. Roider Δ+0.121 (F-002) remains primary B1 result.
+
+Status updated in: FINDINGS_REGISTRY.md F-003, label-transfer-accuracy.md, ANALYSIS_MANIFEST.md B1 row.

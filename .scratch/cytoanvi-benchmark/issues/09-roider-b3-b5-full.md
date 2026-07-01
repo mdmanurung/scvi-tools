@@ -136,3 +136,27 @@ Early output from log (cytoanvi_smoke_b3_roider_25129287.log):
 2. Read actual epoch timing (epochs 2-10) from smoke log to refine B5 estimate
 3. Submit `phase3_b3b5_roider.slurm` for B3 full-cohort (3 seeds, ~14h)
 4. Submit `phase3b_b5sweep_roider.slurm` for B5 sweep (48h, expect ~24h)
+
+### 2026-07-01 — Smoke gate PASSED; B3 + B5 full-cohort RUNNING
+
+Smoke job **25129287** COMPLETED at 22:14:05 CEST Jun 30 (elapsed 1:32:07).
+
+**Smoke timings (batch_size=8192, 1.24M cells):**
+- CytoVI adversarial: 7.82 s epoch 1 → **6.55 s/epoch** steady state; 20 epochs done; loss 120→−11.8
+- CytoANVI ELBO: 3.54 s epoch 4 → **3.49 s/epoch** steady state; 20 epochs done; loss −24.9→−29.3
+- No NaN divergence; 20-epoch concordance 0.641 (at smoke scale; expect higher at 1000 epochs)
+
+**Wall-time projections:**
+- B3 (3 seeds, 1000 epochs): CytoANVI 3.49s × 1000 × 3 + CytoVI 6.55s × 1000 × 3 + data ≈ 10–11h → `--time=14:00:00` ✅
+- B5 (47 clusters × ~29 min + 1.5h data, seed 0): ≈ 24h → `--time=48:00:00` ✅
+
+**Phase 3 jobs submitted 2026-07-01:**
+- Job **25132400** — B3 full-cohort (3 seeds, `phase3_b3b5_roider.slurm`); ETA ~13:00 CEST Jul 1
+  - Outputs: `results/roider_full_b3_s{0,1,2}.json`
+- Job **25132401** — B5 sweep seed 0 (`phase3b_b5sweep_roider.slurm`); ETA ~06:00 CEST Jul 2
+  - Output: `results/roider_full_b5_sweep_s0.json`
+
+**After jobs complete:**
+- Check: no NaN, B3 concordance ≥ 0.70, B5 ∃ AUROC > 0.70
+- Run manifest-mode aggregation: `python benchmarks/common/aggregate_results.py --manifest .scratch/cytoanvi-benchmark/publication_manifest.json`
+- Update FINDINGS_REGISTRY (add F-012+ for roider-full-e1000 B3/B5)

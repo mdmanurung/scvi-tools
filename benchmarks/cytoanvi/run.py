@@ -19,6 +19,7 @@ import json
 
 import scvi
 from benchmarks.common.seeds import run_multiseed, save_json
+from benchmarks.common.training import NAN_LAYER
 
 from . import data as data_mod
 from . import tasks as task_mod
@@ -91,6 +92,7 @@ def _run_tasks(args, p1, p2, unlab, seed):
         "unlabeled_category": unlab,
         "batch_key": args.batch_key,
         "sample_key": args.sample_key,
+        "nan_layer": NAN_LAYER,
         "seed": seed,
         "max_epochs": args.max_epochs,
         "batch_size": args.batch_size,

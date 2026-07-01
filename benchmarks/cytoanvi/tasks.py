@@ -339,6 +339,13 @@ def task_b5_novelty(
     )
     unc_latent = model.get_uncertainty(mode="latent")
     unc_logit = model.get_uncertainty(mode="logit")
+    # Free GPU memory before the next holdout iteration to avoid accumulation across 47 clusters.
+    import gc
+    import torch as _torch
+    del model
+    gc.collect()
+    if _torch.cuda.is_available():
+        _torch.cuda.empty_cache()
     return {
         "task": "b5_novelty",
         "seed": seed,

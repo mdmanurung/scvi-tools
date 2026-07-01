@@ -28,11 +28,14 @@ def hierarchical_cross_entropy_loss(
     weight
         Optional per-class weights passed to :func:`~torch.nn.functional.nll_loss`.
     """
-    cell_type_probs = torch.softmax(logits, dim=-1)
-    cell_type_probs = torch.matmul(cell_type_probs, reachability_matrix.T)
-    eps = torch.finfo(cell_type_probs.dtype).eps
-    cell_type_probs = torch.log(cell_type_probs + eps)
-    return F.nll_loss(cell_type_probs, targets, weight=weight)
+    probs = torch.softmax(logits, dim=-1)
+    # Propagate probability mass from leaves to ancestors: hier_probs[b, i] = sum of
+    # probs[b, j] for all j reachable from i (i.e. all descendants of i, including i itself).
+    # .T is intentional — R[i, j]=1 means j is reachable FROM i; we want sum over j.
+    hier_probs = torch.matmul(probs, reachability_matrix.T)
+    eps = torch.finfo(hier_probs.dtype).eps
+    log_probs = torch.log(hier_probs + eps)
+    return F.nll_loss(log_probs, targets, weight=weight)
 
 
 def validate_reachability_matrix(matrix: np.ndarray, n_labels: int) -> None:

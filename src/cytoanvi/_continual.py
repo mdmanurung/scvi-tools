@@ -69,9 +69,10 @@ def fisher_importances(
     logger.info("Estimating Fisher importances on %d cells.", adata.n_obs)
     scdl = model._make_data_loader(adata=adata, batch_size=batch_size)
 
-    # Snapshot requires_grad so we can restore the caller's freeze state afterward.
-    # The snapshot must be outside try so the finally block always has the original flags.
+    # Snapshot requires_grad and training mode so we can restore the caller's state afterward.
+    # Both snapshots must be outside try so the finally block always has the original values.
     grad_flags = {name: p.requires_grad for name, p in model.module.named_parameters()}
+    was_training = model.module.training
     n_batches = 0
     try:
         # Mutation, allocation, and eval() are inside try so any failure (OOM etc.) falls
@@ -79,7 +80,6 @@ def fisher_importances(
         for p in model.module.parameters():
             p.requires_grad = True
         importances = dict(zerolike_params_dict(model.module))
-        was_training = model.module.training
         model.module.eval()  # eval() outside the grad context: disables dropout/BN updates
         # enable_grad guards against an outer torch.inference_mode() context; raw (unclipped)
         # gradients are required here — gradient clipping must NOT apply to this pass.
@@ -97,12 +97,11 @@ def fisher_importances(
                 n_batches += 1
     finally:
         # Restore requires_grad flags and clear accumulated grads so the caller's optimizer
-        # state is unaffected.  Guard was_training in case the try block failed before it
-        # was assigned (e.g. OOM during zerolike_params_dict).
+        # state is unaffected.
         for name, p in model.module.named_parameters():
             p.requires_grad = grad_flags.get(name, p.requires_grad)
         model.module.zero_grad(set_to_none=True)
-        if locals().get("was_training"):
+        if was_training:
             model.module.train()
     n_batches = max(n_batches, 1)
     return [(k, (v / n_batches).detach().cpu()) for k, v in importances.items()]

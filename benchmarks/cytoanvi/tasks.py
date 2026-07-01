@@ -339,6 +339,7 @@ def task_b5_novelty(
     )
     unc_latent = model.get_uncertainty(mode="latent")
     unc_logit = model.get_uncertainty(mode="logit")
+    latent_result = metrics.novelty_auroc(unc_latent, is_novel)
     # Free GPU memory before the next holdout iteration to avoid accumulation across 47 clusters.
     import gc
     import torch as _torch
@@ -355,9 +356,9 @@ def task_b5_novelty(
         # transductive: the training set did not contain the held-out type, but uncertainty
         # is measured on the same merged object.  Flag so consumers know the evaluation mode.
         "b5_evaluation_mode": "calibration_transductive",
-        "latent": metrics.novelty_auroc(unc_latent, is_novel),
+        "latent": latent_result,
         "logit": metrics.novelty_auroc(unc_logit, is_novel),
-        **metrics.novelty_auroc(unc_latent, is_novel),  # top-level for backward compat
+        **latent_result,  # top-level for backward compat
     }
 
 

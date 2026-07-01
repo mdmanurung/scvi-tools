@@ -527,7 +527,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         init_params = cytovi_model.init_params_
         non_kwargs = deepcopy(init_params["non_kwargs"])
         kwargs = deepcopy(init_params["kwargs"])
-        kwargs = {k: v for (_i, j) in kwargs.items() for (k, v) in j.items()}
+        # init_params_["kwargs"] groups params by category (e.g. {"encoder_kwargs": {...}}).
+        # Flatten into a single dict; the group name is discarded.
+        kwargs = {k: v for (_group, group_dict) in kwargs.items() for (k, v) in group_dict.items()}
         for k, v in {**non_kwargs, **kwargs}.items():
             if k in cytoanvi_kwargs:
                 warnings.warn(

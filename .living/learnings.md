@@ -257,3 +257,15 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **Category**: numerical-semantics
 **Tags**: EWC, fisher, per-sample, resolved
 **Body**: The L-033 batch-mean `(E[grad])²` bias is now fixed. `fisher_importances(..., per_sample=True)` (the new default) forces loader `batch_size=1` and accumulates per-cell `grad²`, returning `mean_i grad_i²` = the exact diagonal empirical Fisher `E[grad²]`, invariant to batching. Cost: one backward per cell, bounded by `max_cells` (10k) and computed once at surgery — the intended trade-off. `per_sample=False` keeps the old fast biased proxy for cheap estimates. `ContinualUpdate.configure` uses the exact default. Note: absolute scale still depends on ELBO magnitude / max_cells, so λ (`ewc_importance`) still needs codebase tuning — but it is now a genuine Fisher, not a squared-mean-gradient. Verified: test_cytoanvi_continual (non-negative/finite) passes on the per-sample path.
+
+### L-035 — [2026-07-03] Standalone rename ships TWO import packages under one dist → scvi/ namespace collision
+**Category**: packaging
+**Tags**: pep-namespace, distribution, scvi-tools-fork, D-008, blocker
+**mitigation_type**: ambient-awareness
+**structural_mitigation_candidate**: conflict guard on import, or vendor CytoVI under cytoanvi/
+**Body**: The wheel for dist `cytoanvi` ships BOTH `scvi/` and `cytoanvi/` import packages (packages=['src/scvi','src/cytoanvi']) — the fork needs its *modified* scvi because CytoVI lives at `scvi.external.cytovi`. Consequence: `pip install cytoanvi` drops a top-level `scvi/` into site-packages OWNED by dist `cytoanvi`. If the real `scvi-tools` is also installed, two distributions claim the `scvi/` import name → file overwrites, and `pip uninstall scvi-tools` can rip out files cytoanvi needs. This is the classic "two dists, one import package" antipattern and the single biggest packaging-maturity defect. Does NOT block local CI/lint/build; DOES block a clean public PyPI upload. Resolution is a fork-in-the-road: (a) REPLACE model (never co-install with scvi-tools; document + add an import-time conflict guard), or (b) COEXIST (vendor CytoVI under cytoanvi/, or revert to upstream-PR). Also: dist version 1.5.0rc1 is inherited from scvi-tools and should be reset for a standalone release (user's call).
+
+### L-036 — [2026-07-03] Standalone package rename silently broke all 15 CI workflows
+**Category**: ci
+**Tags**: rename, github-actions, install-target, D-008
+**Body**: Renaming the dist to `cytoanvi` (D-008) left 15 `.github/workflows/*.yml` installing `"scvi-tools[...] @ ."`, which no longer resolves — CI would fail at the install step on every push/PR. The Dockerfile and .readthedocs.yaml were safe because they install by path (`.`, `.[extra]`), which is name-agnostic. Lesson: a dist rename must sweep every *name-based* install target (workflows, tox, requirements pins) — grep `scvi-tools\[|scvi-tools @|pip install scvi-tools` repo-wide; path-based installs are unaffected. Fixed in c818dcbd.

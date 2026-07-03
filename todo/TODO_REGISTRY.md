@@ -43,3 +43,6 @@ Tracks future work items, ideas, and planned improvements.
 | Deferred code items DONE: EWC per-sample Fisher (exact E[grad²], default); GPU-sync opt-out (CYTOANVI_DISABLE_FINITE_CHECKS); reconst_loss→reconstruction_term rename | low | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | Session-13 actions DONE: scancel 3 stale jobs; mapqc installed (B9 import unblocked); B5 seeds 1-2 submitted (25144240/1) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | B9 mapQC: import unblocked (mapqc 0.1.1 in scvi-test env); full validation still needs a real query-mapping run | medium | open | validation | 2026-07-03 | mdmanurung | — |
+| Engineering maturity DONE: fixed 15 CI workflows (scvi-tools→cytoanvi install target), py.typed, __version__, ruff lint+format clean, build verified (L-036) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
+| BLOCKER (pre-publish decision): scvi/ namespace collision — dist cytoanvi ships both scvi/ and cytoanvi/; collides with scvi-tools. Choose Replace vs Coexist vs upstream-PR (L-035) | critical | open | infrastructure | 2026-07-03 | mdmanurung | — |
+| Reset dist version from inherited scvi-tools 1.5.0rc1 for standalone cytoanvi release (release-strategy) | medium | open | infrastructure | 2026-07-03 | mdmanurung | — |

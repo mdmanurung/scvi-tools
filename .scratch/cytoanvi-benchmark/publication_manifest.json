@@ -5,7 +5,9 @@
       "task": "b1",
       "path": "results/nunez_b1_s0.json",
       "dataset": "nunez",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": "25102544",
       "status": "superseded",
       "required": false,
@@ -16,7 +18,9 @@
       "task": "b1",
       "path": "results/nunez_b1_s1.json",
       "dataset": "nunez",
-      "seeds": [1],
+      "seeds": [
+        1
+      ],
       "job_id": "25102544",
       "status": "superseded",
       "required": false,
@@ -27,7 +31,9 @@
       "task": "b1",
       "path": "results/nunez_b1_s2.json",
       "dataset": "nunez",
-      "seeds": [2],
+      "seeds": [
+        2
+      ],
       "job_id": "25102544",
       "status": "superseded",
       "required": false,
@@ -38,18 +44,24 @@
       "task": "b1",
       "path": "results/e1000/nunez_inductive_b1_multiseed.json",
       "dataset": "nunez",
-      "seeds": [0, 1, 2],
+      "seeds": [
+        0,
+        1,
+        2
+      ],
       "job_id": "PID-3186154",
       "status": "complete",
       "required": true,
-      "note": "Inductive kNN annotation (L-022 fix). v3 PID 3186154 completed 2026-07-01 05:58. CytoANVI 0.9751±0.0003, Δ+0.017 vs kNN 0.9581±0.0007."
+      "note": "Inductive kNN annotation (L-022 fix). v3 PID 3186154 completed 2026-07-01 05:58. CytoANVI 0.9751\u00b10.0003, \u0394+0.017 vs kNN 0.9581\u00b10.0007."
     },
     {
       "phase": "P2",
       "task": "b2",
       "path": "results/nunez_b2_s0.json",
       "dataset": "nunez",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": "25102544",
       "status": "complete",
       "required": true
@@ -59,7 +71,9 @@
       "task": "b2",
       "path": "results/nunez_b2_s1.json",
       "dataset": "nunez",
-      "seeds": [1],
+      "seeds": [
+        1
+      ],
       "job_id": "25102544",
       "status": "complete",
       "required": true
@@ -69,7 +83,9 @@
       "task": "b2",
       "path": "results/nunez_b2_s2.json",
       "dataset": "nunez",
-      "seeds": [2],
+      "seeds": [
+        2
+      ],
       "job_id": "25104249",
       "status": "complete",
       "required": true
@@ -79,114 +95,137 @@
       "task": "b3",
       "path": "results/roider_full_b3_s0.json",
       "dataset": "roider-full",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": "25140597",
-      "status": "running",
+      "status": "timed_out",
       "required": true,
-      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400."
+      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400.",
+      "caveat": "Job 25140597 TIMED OUT at 14h wall-limit with no results written (L-037): B3 per seed runs ~4 sequential 1000-epoch trainings on the 1.24M-cell merged cohort; serial 3-seed B3 needs ~40-50h. HELD per maintainer decision 2026-07-03 \u2014 resubmit right-sized (3 parallel single-seed jobs or --time=3-00:00:00) before any B3 full-cohort claim."
     },
     {
       "phase": "P3",
       "task": "b3",
       "path": "results/roider_full_b3_s1.json",
       "dataset": "roider-full",
-      "seeds": [1],
+      "seeds": [
+        1
+      ],
       "job_id": "25140597",
-      "status": "running",
+      "status": "timed_out",
       "required": true,
-      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400."
+      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400.",
+      "caveat": "Job 25140597 TIMED OUT at 14h wall-limit with no results written (L-037): B3 per seed runs ~4 sequential 1000-epoch trainings on the 1.24M-cell merged cohort; serial 3-seed B3 needs ~40-50h. HELD per maintainer decision 2026-07-03 \u2014 resubmit right-sized (3 parallel single-seed jobs or --time=3-00:00:00) before any B3 full-cohort claim."
     },
     {
       "phase": "P3",
       "task": "b3",
       "path": "results/roider_full_b3_s2.json",
       "dataset": "roider-full",
-      "seeds": [2],
+      "seeds": [
+        2
+      ],
       "job_id": "25140597",
-      "status": "running",
+      "status": "timed_out",
       "required": true,
-      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400."
+      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400.",
+      "caveat": "Job 25140597 TIMED OUT at 14h wall-limit with no results written (L-037): B3 per seed runs ~4 sequential 1000-epoch trainings on the 1.24M-cell merged cohort; serial 3-seed B3 needs ~40-50h. HELD per maintainer decision 2026-07-03 \u2014 resubmit right-sized (3 parallel single-seed jobs or --time=3-00:00:00) before any B3 full-cohort claim."
     },
     {
       "phase": "P3",
       "task": "b5",
       "path": "results/roider_full_b5_sweep_s0.json",
       "dataset": "roider-full",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": "25140598",
       "status": "running",
       "required": true,
-      "note": "Rerun job 25140598 (seed 0) started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication, --b5-mode inductive, and current stable-loss fixes. Supersedes failed job 25132895. Seeds 1 and 2 submitted 2026-07-03 as jobs 25144240 (s1, res-hpc-gpu16) and 25144241 (s2, res-hpc-gpu15) → roider_full_b5_sweep_s{1,2}.json. After all three land, merge to results/roider_full_b5_sweep_multiseed.json and repoint this artifact (seeds [0,1,2]).",
-      "caveat": "3-seed run IN PROGRESS (s0=25140598, s1=25144240, s2=25144241). Until all land and are merged, treat as exploratory — no variance estimate yet. PRIMARY metric is mean_auroc (mean over all held-out cell types); best_auroc is max over types (cherry-picked) and must NOT be presented as the headline novelty-detection statistic."
+      "note": "Rerun job 25140598 (seed 0) started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication, --b5-mode inductive, and current stable-loss fixes. Supersedes failed job 25132895. Seeds 1 and 2 submitted 2026-07-03 as jobs 25144240 (s1, res-hpc-gpu16) and 25144241 (s2, res-hpc-gpu15) \u2192 roider_full_b5_sweep_s{1,2}.json. After all three land, merge to results/roider_full_b5_sweep_multiseed.json and repoint this artifact (seeds [0,1,2]).",
+      "caveat": "3-seed run IN PROGRESS (s0=25140598, s1=25144240, s2=25144241). Until all land and are merged, treat as exploratory \u2014 no variance estimate yet. PRIMARY metric is mean_auroc (mean over all held-out cell types); best_auroc is max over types (cherry-picked) and must NOT be presented as the headline novelty-detection statistic."
     },
     {
       "phase": "P5",
       "task": "b8",
       "path": "results/nunez_b8_s0.json",
       "dataset": "nunez",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": "25108052",
       "status": "complete",
       "required": true,
       "note": "Re-run after second review fixes: leaf_held bias (#3) and HCE routing through train_cytoanvi (#8). Verified complete 2026-06-30 02:03.",
-      "caveat": "Nuñez hierarchy has only ONE internal node (Dendritic cells → Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree — NOT evidence that HCE training improves latent features in general."
+      "caveat": "Nu\u00f1ez hierarchy has only ONE internal node (Dendritic cells \u2192 Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree \u2014 NOT evidence that HCE training improves latent features in general."
     },
     {
       "phase": "P5",
       "task": "b8",
       "path": "results/nunez_b8_s1.json",
       "dataset": "nunez",
-      "seeds": [1],
+      "seeds": [
+        1
+      ],
       "job_id": "25108052",
       "status": "complete",
       "required": true,
       "note": "Re-run after second review fixes. Verified complete 2026-06-30 10:17.",
-      "caveat": "Nuñez hierarchy has only ONE internal node (Dendritic cells → Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree — NOT evidence that HCE training improves latent features in general."
+      "caveat": "Nu\u00f1ez hierarchy has only ONE internal node (Dendritic cells \u2192 Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree \u2014 NOT evidence that HCE training improves latent features in general."
     },
     {
       "phase": "P5",
       "task": "b8",
       "path": "results/nunez_b8_s2.json",
       "dataset": "nunez",
-      "seeds": [2],
+      "seeds": [
+        2
+      ],
       "job_id": "25128164",
       "status": "complete",
       "required": true,
-      "note": "Seed-2 recovery via recover_b8_seed2.slurm (job 25128164). Verified complete 2026-06-30 18:44. 3-seed aggregate: nunez_b8_multiseed.json; Δ_hierarchical_vs_flat = +0.0862±0.0027 ✅ pub-gate.",
-      "caveat": "Nuñez hierarchy has only ONE internal node (Dendritic cells → Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree — NOT evidence that HCE training improves latent features in general."
+      "note": "Seed-2 recovery via recover_b8_seed2.slurm (job 25128164). Verified complete 2026-06-30 18:44. 3-seed aggregate: nunez_b8_multiseed.json; \u0394_hierarchical_vs_flat = +0.0862\u00b10.0027 \u2705 pub-gate.",
+      "caveat": "Nu\u00f1ez hierarchy has only ONE internal node (Dendritic cells \u2192 Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree \u2014 NOT evidence that HCE training improves latent features in general."
     },
     {
       "phase": "P4",
       "task": "b4",
       "path": "results/roider_full_b4_s0.json",
       "dataset": "roider-full",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": null,
       "status": "deferred",
       "required": false,
-      "caveat": "PLUMBING ONLY — uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. F1 drift = 0.0 does NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
+      "caveat": "PLUMBING ONLY \u2014 uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. F1 drift = 0.0 does NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
     },
     {
       "phase": "P4",
       "task": "b6",
       "path": "results/roider_full_b6_sweep_s0.json",
       "dataset": "roider-full",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": null,
       "status": "deferred",
       "required": false,
-      "caveat": "PLUMBING ONLY — uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. λ sweep results do NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
+      "caveat": "PLUMBING ONLY \u2014 uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. \u03bb sweep results do NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
     },
     {
       "phase": "P6",
       "task": "b9",
       "path": "results/nunez_b9_s0.json",
       "dataset": "nunez",
-      "seeds": [0],
+      "seeds": [
+        0
+      ],
       "job_id": "25104251",
       "status": "blocked",
       "required": false,
-      "caveat": "BLOCKED — optional dependency scvi-tools[cytoanvi-mapping-qc] not installed; task logic has NOT been validated end-to-end. Not reportable. Do not include in publication claims."
+      "caveat": "BLOCKED \u2014 optional dependency scvi-tools[cytoanvi-mapping-qc] not installed; task logic has NOT been validated end-to-end. Not reportable. Do not include in publication claims."
     }
   ]
 }

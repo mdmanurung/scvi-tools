@@ -46,3 +46,4 @@ Tracks future work items, ideas, and planned improvements.
 | Engineering maturity DONE: fixed 15 CI workflows (scvi-tools→cytoanvi install target), py.typed, __version__, ruff lint+format clean, build verified (L-036) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | scvi/ namespace collision (L-035): DEFERRED per D-011 — internal/clean-env use only, not on PyPI. Revisit Replace vs Coexist vs upstream-PR before any public upload | high | deferred | infrastructure | 2026-07-03 | mdmanurung | — |
 | Reset dist version from inherited scvi-tools 1.5.0rc1 for standalone cytoanvi release (release-strategy) | medium | open | infrastructure | 2026-07-03 | mdmanurung | — |
+| B3 full-cohort wall-time bug (L-037): job 25140597 timed out at 14h (needs ~40-50h serial or 3 parallel single-seed jobs). HELD 2026-07-03; resubmit right-sized before B3 publication claim | critical | open | analysis | 2026-07-03 | mdmanurung | — |

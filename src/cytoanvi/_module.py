@@ -25,7 +25,8 @@ _MIN_NORMAL_VARIANCE = 1e-6
 # Per-step finite/negative validation of loss tensors calls ``.any()``/``.item()``, each of which
 # forces a CUDA device sync and stalls the kernel queue on every training step (M-1). The checks
 # are diagnostic — they produce a targeted "which tensor went non-finite" message — while the
-# actual NaN *prevention* is the ``clamp_min`` in ``_stable_normal_scale`` below, which always runs.
+# actual NaN *prevention* is the ``clamp_min`` in ``_stable_normal_scale`` below, which always
+# runs.
 # They are therefore ON by default (preserving the safety net that caught prior NaN crashes and the
 # direct unit tests of ``_stable_normal_scale``) but can be disabled for throughput at cytometry
 # scale by exporting ``CYTOANVI_DISABLE_FINITE_CHECKS=1``. Disabling skips only the diagnostic
@@ -231,8 +232,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         weights = torch.as_tensor(class_weights, dtype=torch.float32, device=self.device)
         if weights.ndim != 1 or weights.shape[0] != self.n_labels:
             raise ValueError(
-                f"class_weights must have shape ({self.n_labels},); "
-                f"got {tuple(weights.shape)}."
+                f"class_weights must have shape ({self.n_labels},); got {tuple(weights.shape)}."
             )
         if not torch.isfinite(weights).all():
             raise ValueError("class_weights must contain only finite values.")
@@ -298,9 +298,9 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         mean = torch.zeros_like(qz2.loc)
         scale = torch.ones_like(qz2.scale)
         kl_divergence_z2 = kl(qz2, Normal(mean, scale)).sum(dim=-1)
-        loss_z1_unweight = -Normal(pz1_m, _stable_normal_scale(pz1_v, "pz1_v")).log_prob(
-            z1s
-        ).sum(dim=-1)
+        loss_z1_unweight = (
+            -Normal(pz1_m, _stable_normal_scale(pz1_v, "pz1_v")).log_prob(z1s).sum(dim=-1)
+        )
         loss_z1_weight = qz1.log_prob(z1).sum(dim=-1)
 
         probs = self.classifier(z1)
@@ -386,9 +386,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             self._set_reachability(torch.as_tensor(hierarchy, dtype=torch.float32))
         class_weights = getattr(model, "class_weights_", None)
         self.set_class_weights(
-            None
-            if class_weights is None
-            else torch.as_tensor(class_weights, dtype=torch.float32)
+            None if class_weights is None else torch.as_tensor(class_weights, dtype=torch.float32)
         )
 
     def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):

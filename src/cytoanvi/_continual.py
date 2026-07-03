@@ -44,8 +44,9 @@ def fisher_importances(
     max_cells: int | None = 10_000,
     batch_size: int = 256,
     seed: int = 0,
+    per_sample: bool = True,
 ) -> list[tuple[str, torch.Tensor]]:
-    """Fisher-style parameter importances = mean squared ELBO gradient over ``adata``.
+    """Diagonal (empirical) Fisher parameter importances over ``adata``.
 
     Runs on the live ``model`` without a deepcopy: ``requires_grad`` flags are snapshotted,
     temporarily set to ``True`` for all params, then restored in a ``finally`` block. Grads are
@@ -59,15 +60,24 @@ def fisher_importances(
     importances thus protect classifier weights proportional to their contribution. For large
     references, subsamples to ``max_cells`` cells before estimation.
 
+    Estimator
+    ---------
+    With ``per_sample=True`` (default) the function backpropagates one cell at a time and
+    accumulates ``grad_i^2``, returning ``mean_i grad_i^2`` — the **exact diagonal empirical
+    Fisher** ``E[grad^2]``. This is the correct EWC importance and is invariant to how cells are
+    batched. It costs one backward pass per cell (bounded by ``max_cells``, computed once at
+    surgery time), which is the intended trade-off.
+
+    With ``per_sample=False`` the function backpropagates ``batch_size``-sized *batch-mean* losses
+    and returns ``mean_batch (E_batch[grad])^2`` — a faster but **biased** proxy equal to the
+    squared mean gradient, whose scale depends on ``batch_size``. Provided only for cheap,
+    approximate estimation; do not mix its output with ``per_sample=True`` importances.
+
     .. note::
-        **Fisher approximation bias.** This function calls ``loss.backward()`` once per
-        *batch-mean* loss, so the accumulated squared gradient equals ``(E[grad])^2`` rather
-        than the true diagonal Fisher ``E[grad^2]``.  The result is therefore a biased
-        diagonal-Fisher proxy: it underestimates importance for parameters whose per-sample
-        gradients cancel in expectation, and its absolute scale depends on ``batch_size`` and
-        ``max_cells``.  Consequently, ``ewc_importance`` (lambda) **must be tuned for this
-        codebase** and cannot be copied from RNA-domain EWC implementations that use a
-        different estimator.
+        Even the exact estimator's absolute scale depends on the ELBO magnitude and ``max_cells``,
+        so ``ewc_importance`` (lambda) should still be tuned for this codebase rather than copied
+        verbatim from another EWC implementation — but with ``per_sample=True`` the quantity is a
+        genuine diagonal Fisher, not the squared-mean-gradient proxy.
 
     Parameters
     ----------
@@ -79,11 +89,14 @@ def fisher_importances(
         Subsample to at most this many cells (``None`` to use all). Reduces memory and
         compute at the cost of estimator variance. Controlled by convention C-003.
     batch_size
-        Mini-batch size for the backward pass. Affects the absolute scale of the returned
-        importances (see note above); keep consistent across reference and query-control
-        calls within one :class:`ContinualUpdate`. Default: 256.
+        Mini-batch size for the loader. Used verbatim only when ``per_sample=False``; when
+        ``per_sample=True`` the backward pass is forced to one cell at a time so the estimator
+        is batch-invariant. Default: 256.
     seed
         Random seed for subsampling when ``max_cells`` is active.
+    per_sample
+        If ``True`` (default), compute the exact per-cell diagonal Fisher. If ``False``, use the
+        faster biased batch-mean-gradient proxy.
     """
     if adata.n_obs == 0:
         raise ValueError("fisher_importances requires a non-empty AnnData")
@@ -92,14 +105,22 @@ def fisher_importances(
         rng = np.random.default_rng(seed)
         idx = rng.choice(adata.n_obs, size=max_cells, replace=False)
         adata = adata[idx].copy()
-    logger.info("Estimating Fisher importances on %d cells.", adata.n_obs)
-    scdl = model._make_data_loader(adata=adata, batch_size=batch_size)
+    # Exact diagonal Fisher requires per-cell gradients: E[grad^2] cannot be recovered from a
+    # batch-mean backward (that yields (E[grad])^2). Force loader batch_size=1 in that mode.
+    loader_batch_size = 1 if per_sample else batch_size
+    logger.info(
+        "Estimating %s Fisher importances on %d cells (loader batch_size=%d).",
+        "per-sample" if per_sample else "batch-mean",
+        adata.n_obs,
+        loader_batch_size,
+    )
+    scdl = model._make_data_loader(adata=adata, batch_size=loader_batch_size)
 
     # Snapshot requires_grad and training mode so we can restore the caller's state afterward.
     # Both snapshots must be outside try so the finally block always has the original values.
     grad_flags = {name: p.requires_grad for name, p in model.module.named_parameters()}
     was_training = model.module.training
-    n_batches = 0
+    n_units = 0  # cells (per_sample) or batches (otherwise) — the divisor for the mean
     try:
         # Mutation, allocation, and eval() are inside try so any failure (OOM etc.) falls
         # through to finally and the caller's requires_grad state is always restored.
@@ -120,7 +141,7 @@ def fisher_importances(
                 for name, p in model.module.named_parameters():
                     if p.grad is not None and name in importances:
                         importances[name] += p.grad.detach().pow(2)
-                n_batches += 1
+                n_units += 1
     finally:
         # Restore requires_grad flags and clear accumulated grads so the caller's optimizer
         # state is unaffected.
@@ -129,8 +150,8 @@ def fisher_importances(
         model.module.zero_grad(set_to_none=True)
         if was_training:
             model.module.train()
-    n_batches = max(n_batches, 1)
-    return [(k, (v / n_batches).detach().cpu()) for k, v in importances.items()]
+    n_units = max(n_units, 1)
+    return [(k, (v / n_units).detach().cpu()) for k, v in importances.items()]
 
 
 class ContinualUpdate:

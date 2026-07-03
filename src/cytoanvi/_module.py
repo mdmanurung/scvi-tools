@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -19,11 +20,58 @@ from ._continual import ContinualUpdate
 from ._hce import hierarchical_cross_entropy_loss
 
 _NON_DATA_INFERENCE_KEYS = frozenset({"batch_index", "cont_covs", "cat_covs", "panel_index"})
+_MIN_NORMAL_VARIANCE = 1e-6
+
+# Per-step finite/negative validation of loss tensors calls ``.any()``/``.item()``, each of which
+# forces a CUDA device sync and stalls the kernel queue on every training step (M-1). The checks
+# are diagnostic — they produce a targeted "which tensor went non-finite" message — while the
+# actual NaN *prevention* is the ``clamp_min`` in ``_stable_normal_scale`` below, which always runs.
+# They are therefore ON by default (preserving the safety net that caught prior NaN crashes and the
+# direct unit tests of ``_stable_normal_scale``) but can be disabled for throughput at cytometry
+# scale by exporting ``CYTOANVI_DISABLE_FINITE_CHECKS=1``. Disabling skips only the diagnostic
+# raises; the variance clamp still guarantees a finite Normal scale.
+_FINITE_CHECKS_ENABLED = os.environ.get("CYTOANVI_DISABLE_FINITE_CHECKS", "0") != "1"
 
 if TYPE_CHECKING:
     from typing import Literal
 
     from torch.distributions import Distribution
+
+
+def _count_true(mask: torch.Tensor) -> int:
+    return int(mask.detach().sum().cpu().item())
+
+
+def _require_finite_tensor(tensor: torch.Tensor, name: str) -> torch.Tensor:
+    """Raise a targeted error if a loss tensor contains non-finite values.
+
+    No-op (returns immediately, no device sync) when ``CYTOANVI_DISABLE_FINITE_CHECKS=1``.
+    """
+    if not _FINITE_CHECKS_ENABLED:
+        return tensor
+    bad = ~torch.isfinite(tensor)
+    if bad.any():
+        raise ValueError(
+            f"{name} contains non-finite value(s): {_count_true(bad)} during CytoANVI loss."
+        )
+    return tensor
+
+
+def _stable_normal_scale(variance: torch.Tensor, name: str) -> torch.Tensor:
+    """Return a finite Normal scale from a variance tensor.
+
+    The ``clamp_min`` floor always runs (guaranteeing a finite, positive scale even when the
+    diagnostic checks are disabled). The finite/negative *validation* is skipped when
+    ``CYTOANVI_DISABLE_FINITE_CHECKS=1`` — see the module-level note.
+    """
+    if _FINITE_CHECKS_ENABLED:
+        _require_finite_tensor(variance, name)
+        negative = variance < 0
+        if negative.any():
+            raise ValueError(
+                f"{name} contains negative value(s): {_count_true(negative)} during CytoANVI loss."
+            )
+    return torch.sqrt(torch.clamp_min(variance, _MIN_NORMAL_VARIANCE))
 
 
 class CytoANVAE(SupervisedModuleClass, CytoVAE):
@@ -88,6 +136,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         prior_mixture: bool | None = None,
         prior_mixture_k: int | None = None,
         reachability_matrix: torch.Tensor | None = None,
+        class_weights: torch.Tensor | None = None,
         **cytovae_kwargs,
     ):
         super().__init__(
@@ -159,6 +208,8 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             y_prior if y_prior is not None else (1 / n_labels) * torch.ones(1, n_labels),
             requires_grad=False,
         )
+        self.register_buffer("class_weights", None, persistent=False)
+        self.set_class_weights(class_weights)
 
         # The configured continual case-control update, set by
         # CytoANVI.load_query_data_with_replay (or reattached in on_load). None = base path
@@ -171,6 +222,23 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             else None
         )
         self.register_buffer("reachability_matrix_", reachability_tensor)
+
+    def set_class_weights(self, class_weights: torch.Tensor | None) -> None:
+        """Set optional per-label classifier-loss weights."""
+        if class_weights is None:
+            self.class_weights = None
+            return
+        weights = torch.as_tensor(class_weights, dtype=torch.float32, device=self.device)
+        if weights.ndim != 1 or weights.shape[0] != self.n_labels:
+            raise ValueError(
+                f"class_weights must have shape ({self.n_labels},); "
+                f"got {tuple(weights.shape)}."
+            )
+        if not torch.isfinite(weights).all():
+            raise ValueError("class_weights must contain only finite values.")
+        if (weights <= 0).any():
+            raise ValueError("class_weights must be strictly positive.")
+        self.class_weights = weights
 
     def _set_reachability(self, tensor: torch.Tensor | None) -> None:
         """Re-register the reachability buffer, keeping it in state_dict and device-aware."""
@@ -202,6 +270,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             raise ValueError(
                 f"CytoANVAE.loss expects 2D z1 (n_samples==1); got shape {tuple(z1.shape)}."
             )
+        _require_finite_tensor(z1, "z1")
         x: torch.Tensor = tensors[CYTOVI_REGISTRY_KEYS.X_KEY]
 
         if CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK in tensors.keys():
@@ -222,18 +291,28 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         ys, z1s = broadcast_labels(z1, n_broadcast=self.n_labels)
         qz2, z2 = self.encoder_z2_z1(z1s, ys)
         pz1_m, pz1_v = self.decoder_z1_z2(z2, ys)
+        _require_finite_tensor(qz2.loc, "qz2.loc")
+        _require_finite_tensor(qz2.scale, "qz2.scale")
+        _require_finite_tensor(pz1_m, "pz1_m")
 
         mean = torch.zeros_like(qz2.loc)
         scale = torch.ones_like(qz2.scale)
         kl_divergence_z2 = kl(qz2, Normal(mean, scale)).sum(dim=-1)
-        loss_z1_unweight = -Normal(pz1_m, torch.sqrt(pz1_v)).log_prob(z1s).sum(dim=-1)
+        loss_z1_unweight = -Normal(pz1_m, _stable_normal_scale(pz1_v, "pz1_v")).log_prob(
+            z1s
+        ).sum(dim=-1)
         loss_z1_weight = qz1.log_prob(z1).sum(dim=-1)
 
         probs = self.classifier(z1)
         if self.classifier.logits:
             probs = F.softmax(probs, dim=-1)
 
-        reconst_loss = (
+        # ``reconstruction_term`` is the ELBO "reconstruction" reported to Lightning via
+        # ``LossOutput.reconstruction_loss``. Following the TOTALANVI pattern, it is NOT the pure
+        # protein-likelihood reconstruction (``reconst_loss`` above): it also folds in the z1
+        # encoder log-prob (``loss_z1_weight``) and the label-marginalized z1-prior cross term.
+        # A loss curve logged as "reconstruction_loss" therefore includes these z1 hierarchy terms.
+        reconstruction_term = (
             reconst_loss
             + loss_z1_weight
             + (loss_z1_unweight.view(self.n_labels, -1).t() * probs).sum(dim=-1)
@@ -245,14 +324,14 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             Categorical(probs=self.y_prior.repeat(probs.size(0), 1)),
         )
 
-        loss = torch.mean(reconst_loss + kl_divergence * kl_weight)
+        loss = torch.mean(reconstruction_term + kl_divergence * kl_weight)
 
         if labelled_tensors is not None:
             ce_loss, true_labels, logits = self.classification_loss(labelled_tensors)
             loss = loss + ce_loss * classification_ratio
             return LossOutput(
                 loss=loss,
-                reconstruction_loss=reconst_loss,
+                reconstruction_loss=reconstruction_term,
                 kl_local=kl_divergence,
                 classification_loss=ce_loss,
                 true_labels=true_labels,
@@ -260,7 +339,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             )
         return LossOutput(
             loss=loss,
-            reconstruction_loss=reconst_loss,
+            reconstruction_loss=reconstruction_term,
             kl_local=kl_divergence,
         )
 
@@ -287,11 +366,12 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             **data_inputs, batch_index=batch_idx, cat_covs=cat_covs, cont_covs=cont_covs
         )
         y_long = y.view(-1).long()
+        weight = self.class_weights
         if self.reachability_matrix_ is None:
-            ce_loss = F.cross_entropy(logits, y_long)
+            ce_loss = F.cross_entropy(logits, y_long, weight=weight)
         else:
             ce_loss = hierarchical_cross_entropy_loss(
-                logits, y_long, self.reachability_matrix_
+                logits, y_long, self.reachability_matrix_, weight=weight
             )
         return ce_loss, y, logits
 
@@ -304,6 +384,12 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         hierarchy = getattr(model, "hierarchy_reachability_", None)
         if hierarchy is not None:
             self._set_reachability(torch.as_tensor(hierarchy, dtype=torch.float32))
+        class_weights = getattr(model, "class_weights_", None)
+        self.set_class_weights(
+            None
+            if class_weights is None
+            else torch.as_tensor(class_weights, dtype=torch.float32)
+        )
 
     def loss_with_replay(self, tensors, inference_outputs, generative_outputs, loss_kwargs):
         """Standard CytoANVI loss plus the EWC penalty scaled by ``ewc_importance``."""

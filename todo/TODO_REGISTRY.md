@@ -9,8 +9,8 @@ Tracks future work items, ideas, and planned improvements.
 | Tune and document CytoVI-specific default λ after B6 sweep | medium | open | analysis | 2026-06-18 | mdmanurung | — |
 | Push feat/cytoanvi branch + upstream PR | high | open | infrastructure | 2026-06-18 | mdmanurung | — |
 | B9 mapQC on query controls after surgery | medium | blocked | validation | 2026-06-29 | mdmanurung | — |
-| Roider Phase-3 B3 full-cohort (job 25132400 RUNNING) | critical | in_progress | analysis | 2026-06-29 | mdmanurung | — |
-| Roider Phase-3 B5 holdout sweep (job 25132895 RUNNING; 25132401 FAILED NaN — fixed commit 3575b392) | critical | in_progress | analysis | 2026-07-01 | mdmanurung | — |
+| Roider Phase-3 B3 full-cohort (job 25140597 RUNNING ~11h, seed 0; supersedes 25132400) | critical | in_progress | analysis | 2026-07-03 | mdmanurung | — |
+| Roider Phase-3 B5 holdout sweep (job 25140598 RUNNING ~11h, seed 0; supersedes 25132895/25132401) | critical | in_progress | analysis | 2026-07-03 | mdmanurung | — |
 | Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | done | analysis | 2026-06-29 | mdmanurung | — |
 | Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
 | Fix ruff lint findings on cytoanvi package | medium | done | infrastructure | 2026-06-29 | mdmanurung | — |
@@ -18,8 +18,8 @@ Tracks future work items, ideas, and planned improvements.
 | Fix unseeded np.random.choice in test_hierarchy_schpl_mock.py | low | done | testing | 2026-06-30 | mdmanurung | — |
 | Fix NAN_LAYER local redefinition in tasks_imputation.py (DRY violation) | low | done | infrastructure | 2026-06-30 | mdmanurung | — |
 | Regenerate B5 result JSONs after AUROC SE fix (existing values are wrong) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
-| Install `mapqc` in conda env before next SLURM submission (unblocks B9) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
-| USER ACTION: scancel stale jobs 25102610 25102547 (25102546 already gone) | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
+| Install `mapqc` in conda env before next SLURM submission (unblocks B9) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
+| USER ACTION: scancel stale jobs 25102610 25102547 (25102546 already gone) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | Monitor B1 Nuñez reversal on full-cohort run (F-003: resolved — inductive Δ+0.017) | high | done | validation | 2026-06-29 | mdmanurung | — |
 | Re-run Nuñez B1 e1000 seeds 0/1/2 after inductive kNN annotation fix (PID 3186154 v3) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Fix Nuñez transductive leakage in annotate_nunez.py (L-022) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
@@ -40,4 +40,6 @@ Tracks future work items, ideas, and planned improvements.
 | BLOCKER (needs compute): rerun B5 roider-full at 3 seeds (currently seeds=[0] only) | critical | open | analysis | 2026-07-03 | mdmanurung | — |
 | BLOCKER (needs data): external novel-cell-type dataset to make B5 mean AUROC meaningful (>0.7) | high | open | analysis | 2026-07-03 | mdmanurung | — |
 | Fill real CytoANVI/CytoVI preprint DOIs in docs once posted (currently "in preparation") | medium | open | documentation | 2026-07-03 | mdmanurung | — |
-| Deferred: EWC per-sample-gradient Fisher rewrite; GPU-sync profiling optimization; reconst_loss rename | low | open | infrastructure | 2026-07-03 | mdmanurung | — |
+| Deferred code items DONE: EWC per-sample Fisher (exact E[grad²], default); GPU-sync opt-out (CYTOANVI_DISABLE_FINITE_CHECKS); reconst_loss→reconstruction_term rename | low | done | infrastructure | 2026-07-03 | mdmanurung | — |
+| Session-13 actions DONE: scancel 3 stale jobs; mapqc installed (B9 import unblocked); B5 seeds 1-2 submitted (25144240/1) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
+| B9 mapQC: import unblocked (mapqc 0.1.1 in scvi-test env); full validation still needs a real query-mapping run | medium | open | validation | 2026-07-03 | mdmanurung | — |

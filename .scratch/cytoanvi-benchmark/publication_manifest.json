@@ -116,8 +116,8 @@
       "job_id": "25140598",
       "status": "running",
       "required": true,
-      "note": "Rerun job 25140598 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication, --b5-mode inductive, and current stable-loss fixes. Supersedes failed job 25132895.",
-      "caveat": "Single seed (seeds: [0]) only — no variance estimate available. NOT reproducible multi-seed evidence on its own. Treat as exploratory until seeds [1, 2] complete. PRIMARY metric is mean_auroc (mean over all held-out cell types); best_auroc is max over types (cherry-picked) and must NOT be presented as the headline novelty-detection statistic."
+      "note": "Rerun job 25140598 (seed 0) started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication, --b5-mode inductive, and current stable-loss fixes. Supersedes failed job 25132895. Seeds 1 and 2 submitted 2026-07-03 as jobs 25144240 (s1, res-hpc-gpu16) and 25144241 (s2, res-hpc-gpu15) → roider_full_b5_sweep_s{1,2}.json. After all three land, merge to results/roider_full_b5_sweep_multiseed.json and repoint this artifact (seeds [0,1,2]).",
+      "caveat": "3-seed run IN PROGRESS (s0=25140598, s1=25144240, s2=25144241). Until all land and are merged, treat as exploratory — no variance estimate yet. PRIMARY metric is mean_auroc (mean over all held-out cell types); best_auroc is max over types (cherry-picked) and must NOT be presented as the headline novelty-detection statistic."
     },
     {
       "phase": "P5",

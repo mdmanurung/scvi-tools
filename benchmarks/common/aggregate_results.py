@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
 
 
 def _get(d: dict, *keys: str, default=None):
@@ -89,8 +92,13 @@ def _summarize_single_task(task: str, payload: dict[str, Any]) -> dict[str, Any]
             payload, "continual_update", "query_label_transfer", "macro_f1"
         )
     elif task == "b5":
-        out["best_auroc"] = payload.get("best_auroc")
+        # PRIMARY metric: mean_auroc — unweighted mean over all held-out cell types.
+        # best_auroc is MAX over types (single cherry-picked type) and is NOT the
+        # headline summary statistic for novelty detection.
         out["mean_auroc"] = payload.get("mean_auroc")
+        out["mean_auroc_fdr_sig"] = payload.get("mean_auroc_fdr_sig")
+        # best_auroc retained for secondary analysis only; not the primary metric.
+        out["best_auroc"] = payload.get("best_auroc")
         if "latent" in payload:
             out["latent_auroc"] = _get(payload, "latent", "auroc")
         if "logit" in payload:
@@ -185,8 +193,28 @@ def _load_manifest(manifest_path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"Manifest artifact {idx} missing required fields: {missing}")
         if not isinstance(artifact["seeds"], list):
             raise ValueError(f"Manifest artifact {idx} field 'seeds' must be a list.")
-        artifact["required"] = bool(artifact["required"])
+        if not isinstance(artifact["required"], bool):
+            raise ValueError(
+                f"Manifest artifact {idx} field 'required' must be a boolean, "
+                f"got {type(artifact['required']).__name__}."
+            )
     return artifacts
+
+
+def _single_payload_contains_task(payload: dict[str, Any], task: str) -> bool:
+    """Return whether one benchmark payload contains a task result."""
+    return task in payload or payload.get("task", "").split("_", 1)[0] == task
+
+
+def _multiseed_payload_contains_task(payload: dict[str, Any], task: str) -> bool:
+    """Return whether a run_multiseed payload contains a task result."""
+    per_seed = payload.get("per_seed")
+    if isinstance(per_seed, dict) and per_seed:
+        seed_payloads = [v for v in per_seed.values() if isinstance(v, dict)]
+        if seed_payloads and all(_single_payload_contains_task(v, task) for v in seed_payloads):
+            return True
+    summary = payload.get("summary")
+    return isinstance(summary, dict) and any(str(k).startswith(f"{task}.") for k in summary)
 
 
 def _validate_manifest_file(artifact: dict[str, Any], path: Path) -> None:
@@ -197,7 +225,10 @@ def _validate_manifest_file(artifact: dict[str, Any], path: Path) -> None:
             f"dataset={artifact['dataset']!r}."
         )
     task = artifact["task"]
-    if task not in payload and payload.get("task", "").split("_", 1)[0] != task:
+    if not (
+        _single_payload_contains_task(payload, task)
+        or _multiseed_payload_contains_task(payload, task)
+    ):
         raise ValueError(f"{path} does not contain manifest task {task!r}.")
     expected_seeds = artifact["seeds"]
     if "seed" in payload and payload["seed"] not in expected_seeds:
@@ -276,6 +307,11 @@ def main():
 
     inputs = list(args.inputs)
     if args.manifest is not None:
+        if inputs:
+            ap.error(
+                "publication manifest mode does not accept positional JSON inputs; "
+                "list every publication artifact in the manifest"
+            )
         manifest_artifacts = _load_manifest(args.manifest)
         inputs.extend(
             _manifest_inputs(

@@ -13,7 +13,9 @@ from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
 from benchmarks.common.training import (
     _GRAD_CLIP,
     NAN_LAYER,
+    annbatch_train_kwargs,
     latent_obsm,
+    resolve_nan_layer,
     train_cytoanvi,
 )
 
@@ -22,10 +24,24 @@ from .baselines import (
     cytovi_latent_and_knn,
     flowsom_knn,
     harmony_latent_and_knn,
-    phenograph_knn,
+    rapids_graph_knn,
     raw_marker_knn,
     xgboost_classifier,
 )
+
+_OPTIONAL_BASELINE_ERRORS = (ImportError, ValueError, KeyError)
+_HARMONY_BASELINE_ERRORS = (*_OPTIONAL_BASELINE_ERRORS, IndexError)
+_B1_OPTIONAL_BASELINES = ("harmony_knn", "xgboost", "rapids_graph", "flowsom")
+_B1_FAST_OPTIONAL_BASELINES = ("harmony_knn", "xgboost")
+_B1_BASELINE_ALIASES = {
+    "harmony": "harmony_knn",
+    "harmony_knn": "harmony_knn",
+    "xgboost": "xgboost",
+    "rapids": "rapids_graph",
+    "rapids_graph": "rapids_graph",
+    "rapids-graph": "rapids_graph",
+    "flowsom": "flowsom",
+}
 
 
 def _holdout(labels, unlabeled_category, frac, seed):
@@ -42,6 +58,86 @@ def _holdout(labels, unlabeled_category, frac, seed):
     return held
 
 
+def _label_transfer_metrics_from_unlabeled(true, masked, held, pred_unlab, unlab_mask):
+    full = masked.copy()
+    full[unlab_mask] = pred_unlab
+    return metrics.label_transfer_metrics(true[held], full[held])
+
+
+def _optional_label_transfer_metrics(
+    baseline_func,
+    work,
+    labels_key,
+    unlabeled_category,
+    *,
+    true,
+    masked,
+    held,
+    seed,
+    error_types=_OPTIONAL_BASELINE_ERRORS,
+    **baseline_kwargs,
+):
+    try:
+        pred_unlab, _, unlab_mask = baseline_func(
+            work,
+            labels_key,
+            unlabeled_category,
+            seed=seed,
+            **baseline_kwargs,
+        )
+        return _label_transfer_metrics_from_unlabeled(
+            true, masked, held, pred_unlab, unlab_mask
+        )
+    except error_types as e:
+        # Optional baselines should be recorded in JSON without aborting B1.
+        import traceback
+
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+def _resolve_b1_optional_baselines(value="all") -> set[str]:
+    if value is None or value == "all":
+        return set(_B1_OPTIONAL_BASELINES)
+    if value == "fast":
+        return set(_B1_FAST_OPTIONAL_BASELINES)
+    if value == "none":
+        return set()
+    if isinstance(value, str):
+        requested = [v.strip() for v in value.split(",") if v.strip()]
+    else:
+        requested = list(value)
+    selected = set()
+    invalid = []
+    for name in requested:
+        key = str(name).strip().lower().replace("-", "_")
+        resolved = _B1_BASELINE_ALIASES.get(key)
+        if resolved is None:
+            invalid.append(str(name))
+        else:
+            selected.add(resolved)
+    if invalid:
+        valid = ", ".join(("all", "fast", "none", *_B1_BASELINE_ALIASES))
+        raise ValueError(f"Unknown B1 optional baseline(s): {invalid}. Valid values: {valid}.")
+    return selected
+
+
+def _skipped_b1_baseline():
+    return {"skipped": "not requested"}
+
+
+def _training_config(cytoanvi_training_config=None, **overrides) -> dict:
+    """Merge benchmark-level CytoANVI training config with task-specific overrides."""
+    config = dict(cytoanvi_training_config or {})
+    for key, value in overrides.items():
+        if isinstance(value, bool):
+            if value:
+                config[key] = value
+        elif value is not None:
+            config[key] = value
+    return config
+
+
 def task_b1_label_transfer(
     adata,
     labels_key="labels",
@@ -56,6 +152,11 @@ def task_b1_label_transfer(
     n_samples_per_label=None,
     reduce_lr_on_plateau=False,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
+    b1_baselines="all",
+    accelerator: str = "auto",
+    devices: int | list[int] | str = "auto",
 ):
     """B1: CytoANVI classifier vs CytoVI k-NN at transferring labels to held-out cells."""
     true = np.asarray(adata.obs[labels_key].astype(str))
@@ -65,6 +166,11 @@ def task_b1_label_transfer(
     masked = true.copy()
     masked[held] = unlabeled_category
     work.obs[labels_key] = masked
+    training_config = _training_config(
+        cytoanvi_training_config,
+        reduce_lr_on_plateau=reduce_lr_on_plateau,
+    )
+    optional_baselines = _resolve_b1_optional_baselines(b1_baselines)
 
     model, a = train_cytoanvi(
         work,
@@ -76,10 +182,19 @@ def task_b1_label_transfer(
         n_latent=n_latent,
         max_epochs=max_epochs,
         n_samples_per_label=n_samples_per_label,
-        reduce_lr_on_plateau=reduce_lr_on_plateau,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        accelerator=accelerator,
+        devices=devices,
+        **training_config,
     )
     cytoanvi_pred = np.asarray(model.predict())
+    train_mask = masked != unlabeled_category
+    cytoanvi_diagnostics = metrics.label_transfer_diagnostics(
+        masked[train_mask],
+        true[held],
+        cytoanvi_pred[held],
+    )
 
     knn_pred_unlab, _, unlab_mask = cytovi_latent_and_knn(
         work,
@@ -91,60 +206,79 @@ def task_b1_label_transfer(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        accelerator=accelerator,
+        devices=devices,
     )
-    knn_full = masked.copy()
-    knn_full[unlab_mask] = knn_pred_unlab
+    knn_result = _label_transfer_metrics_from_unlabeled(
+        true, masked, held, knn_pred_unlab, unlab_mask
+    )
 
     raw_pred_unlab, _, raw_unlab_mask = raw_marker_knn(
         work,
         labels_key,
         unlabeled_category,
     )
-    raw_full = masked.copy()
-    raw_full[raw_unlab_mask] = raw_pred_unlab
-
-    try:
-        hm_pred_unlab, _, hm_unlab_mask = harmony_latent_and_knn(
+    raw_result = _label_transfer_metrics_from_unlabeled(
+        true, masked, held, raw_pred_unlab, raw_unlab_mask
+    )
+    harmony_result = (
+        _optional_label_transfer_metrics(
+            harmony_latent_and_knn,
             work,
             labels_key,
             unlabeled_category,
+            true=true,
+            masked=masked,
+            held=held,
+            seed=seed,
+            error_types=_HARMONY_BASELINE_ERRORS,
             batch_key=batch_key,
+        )
+        if "harmony_knn" in optional_baselines
+        else _skipped_b1_baseline()
+    )
+    xgboost_result = (
+        _optional_label_transfer_metrics(
+            xgboost_classifier,
+            work,
+            labels_key,
+            unlabeled_category,
+            true=true,
+            masked=masked,
+            held=held,
             seed=seed,
         )
-        hm_full = masked.copy()
-        hm_full[hm_unlab_mask] = hm_pred_unlab
-        harmony_result = metrics.label_transfer_metrics(true[held], hm_full[held])
-    except (ImportError, ValueError, KeyError, IndexError) as e:
-        # Harmony is an optional baseline; missing package or config errors should not abort B1.
-        import traceback; traceback.print_exc()
-        harmony_result = {"error": str(e)}
-
-    try:
-        xgb_pred_unlab, _, xgb_unlab_mask = xgboost_classifier(work, labels_key, unlabeled_category, seed=seed)
-        xgb_full = masked.copy()
-        xgb_full[xgb_unlab_mask] = xgb_pred_unlab
-        xgboost_result = metrics.label_transfer_metrics(true[held], xgb_full[held])
-    except (ImportError, ValueError, KeyError) as e:
-        import traceback; traceback.print_exc()
-        xgboost_result = {"error": str(e)}
-
-    try:
-        pg_pred_unlab, _, pg_unlab_mask = phenograph_knn(work, labels_key, unlabeled_category, seed=seed)
-        pg_full = masked.copy()
-        pg_full[pg_unlab_mask] = pg_pred_unlab
-        phenograph_result = metrics.label_transfer_metrics(true[held], pg_full[held])
-    except (ImportError, ValueError, KeyError) as e:
-        import traceback; traceback.print_exc()
-        phenograph_result = {"error": str(e)}
-
-    try:
-        fsom_pred_unlab, _, fsom_unlab_mask = flowsom_knn(work, labels_key, unlabeled_category, seed=seed)
-        fsom_full = masked.copy()
-        fsom_full[fsom_unlab_mask] = fsom_pred_unlab
-        flowsom_result = metrics.label_transfer_metrics(true[held], fsom_full[held])
-    except (ImportError, ValueError, KeyError) as e:
-        import traceback; traceback.print_exc()
-        flowsom_result = {"error": str(e)}
+        if "xgboost" in optional_baselines
+        else _skipped_b1_baseline()
+    )
+    rapids_graph_result = (
+        _optional_label_transfer_metrics(
+            rapids_graph_knn,
+            work,
+            labels_key,
+            unlabeled_category,
+            true=true,
+            masked=masked,
+            held=held,
+            seed=seed,
+        )
+        if "rapids_graph" in optional_baselines
+        else _skipped_b1_baseline()
+    )
+    flowsom_result = (
+        _optional_label_transfer_metrics(
+            flowsom_knn,
+            work,
+            labels_key,
+            unlabeled_category,
+            true=true,
+            masked=masked,
+            held=held,
+            seed=seed,
+        )
+        if "flowsom" in optional_baselines
+        else _skipped_b1_baseline()
+    )
 
     return {
         "task": "b1_label_transfer",
@@ -153,11 +287,12 @@ def task_b1_label_transfer(
         "holdout_frac": holdout_frac,
         "n_held": int(held.sum()),
         "cytoanvi": metrics.label_transfer_metrics(true[held], cytoanvi_pred[held]),
-        "cytovi_knn": metrics.label_transfer_metrics(true[held], knn_full[held]),
-        "raw_marker_knn": metrics.label_transfer_metrics(true[held], raw_full[held]),
+        "cytoanvi_diagnostics": cytoanvi_diagnostics,
+        "cytovi_knn": knn_result,
+        "raw_marker_knn": raw_result,
         "harmony_knn": harmony_result,
         "xgboost": xgboost_result,
-        "phenograph": phenograph_result,
+        "rapids_graph": rapids_graph_result,
         "flowsom": flowsom_result,
     }
 
@@ -174,6 +309,8 @@ def task_b2_integration(
     n_latent=None,
     subsample_per_batch=10_000,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
 ):
     """B2: scib-metrics on CytoANVI vs CytoVI latents."""
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -189,6 +326,8 @@ def task_b2_integration(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **_training_config(cytoanvi_training_config),
     )
     anvi_adata = a.copy()
     latent_obsm(anvi_adata, model, obsm_key=LATENT_OBSM)
@@ -248,11 +387,14 @@ def task_b3_panel_divergent(
     max_epochs=1000,
     n_latent=None,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
 ):
     """B3: panel-1 reference -> panel-2 query via panel-aware prep + scArches surgery."""
     from scvi.external import cytovi
 
     merged = cytovi.merge_batches([p1.copy(), p2.copy()], batch_key="panel_batch")
+    nan_layer = resolve_nan_layer(merged, NAN_LAYER)
     labels = np.asarray(merged.obs[labels_key].astype(str))
     is_p2 = np.isin(merged.obs_names, p2.obs_names)
     # Compute holdout on p1 cells only so the RNG state is independent of p2 contents.
@@ -270,10 +412,12 @@ def task_b3_panel_divergent(
         unlabeled_category=unlabeled_category,
         batch_key=batch_key,
         sample_key=sample_key,
-        nan_layer=NAN_LAYER,
+        nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **_training_config(cytoanvi_training_config),
     )
     pred = np.asarray(model.predict())
 
@@ -291,13 +435,19 @@ def task_b3_panel_divergent(
         unlabeled_category,
         batch_key=batch_key,
         sample_key=sample_key,
-        nan_layer=NAN_LAYER,
+        nan_layer=nan_layer,
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
     )
     knn_full = masked.copy()
     knn_full[unlab_mask] = knn_pred_unlab
+    # IMPORTANT: p2_inter_method_agreement_vs_knn is the fraction of panel-2 cells
+    # where CytoANVI and CytoVI-kNN assign the same label.  This measures
+    # INTER-METHOD CONCORDANCE between two predictors that share the CytoVI encoder
+    # backbone — it is NOT ground-truth accuracy.  There are no independent
+    # manually-gated panel-2 labels, so cross-panel correctness CANNOT be validated
+    # from this metric alone.  Do not report this as "accuracy".
     out["p2_inter_method_agreement_vs_knn"] = metrics.concordance(pred[is_p2], knn_full[is_p2])
     return out
 
@@ -314,13 +464,128 @@ def task_b5_novelty(
     max_epochs=1000,
     n_latent=None,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
+    b5_mode="transductive",
+    specificity=0.95,
 ):
     """B5: does get_uncertainty flag a cell type held out of the reference entirely?"""
+    if b5_mode not in {"transductive", "inductive"}:
+        raise ValueError("b5_mode must be one of {'transductive', 'inductive'}.")
     labels = np.asarray(adata.obs[labels_key].astype(str))
     types = sorted(t for t in set(labels) if t != unlabeled_category)
     if holdout_type is None:
         holdout_type = types[0]
     is_novel = labels == holdout_type
+
+    def _finish(model, unc_latent, unc_logit, eval_is_novel, *, extra=None, mode_note=""):
+        latent_result = metrics.novelty_auroc(unc_latent, eval_is_novel)
+        logit_result = metrics.novelty_auroc(unc_logit, eval_is_novel)
+        import gc
+
+        import torch as _torch
+
+        del model
+        gc.collect()
+        if _torch.cuda.is_available():
+            _torch.cuda.empty_cache()
+        out = {
+            "task": "b5_novelty",
+            "seed": seed,
+            "max_epochs": max_epochs,
+            "holdout_type": holdout_type,
+            "b5_evaluation_mode": mode_note,
+            "latent": latent_result,
+            "logit": logit_result,
+            **latent_result,  # top-level for backward compat
+        }
+        if extra:
+            out.update(extra)
+        return out
+
+    if b5_mode == "inductive":
+        seen_idx = np.flatnonzero((~is_novel) & (labels != unlabeled_category))
+        novel_idx = np.flatnonzero(is_novel)
+        if len(novel_idx) == 0:
+            raise ValueError(f"holdout_type {holdout_type!r} has no cells.")
+        rng = np.random.default_rng(seed)
+        train_seen_parts = []
+        calib_seen_parts = []
+        for lab in sorted(set(labels[seen_idx])):
+            lab_idx = seen_idx[labels[seen_idx] == lab].copy()
+            rng.shuffle(lab_idx)
+            if len(lab_idx) < 5:
+                raise ValueError(
+                    f"B5 inductive mode needs at least 5 seen cells per label; "
+                    f"label {lab!r} has {len(lab_idx)}."
+                )
+            cut = max(1, int(0.8 * len(lab_idx)))
+            cut = min(cut, len(lab_idx) - 1)
+            train_seen_parts.append(lab_idx[:cut])
+            calib_seen_parts.append(lab_idx[cut:])
+        train_seen = np.concatenate(train_seen_parts)
+        calib_seen = np.concatenate(calib_seen_parts)
+        eval_idx = np.concatenate([calib_seen, novel_idx])
+
+        work = adata[train_seen].copy()
+        eval_adata = adata[eval_idx].copy()
+        eval_labels = labels[eval_idx]
+        eval_is_novel = eval_labels == holdout_type
+        eval_adata.obs[labels_key] = unlabeled_category
+        model, a = train_cytoanvi(
+            work,
+            labels_key=labels_key,
+            unlabeled_category=unlabeled_category,
+            batch_key=batch_key,
+            sample_key=sample_key,
+            nan_layer=nan_layer,
+            n_latent=n_latent,
+            max_epochs=max_epochs,
+            batch_size=batch_size,
+            annbatch_config=annbatch_config,
+            **_training_config(cytoanvi_training_config),
+        )
+        unc_latent = model.get_uncertainty(eval_adata, mode="latent", batch_size=batch_size)
+        unc_logit = model.get_uncertainty(eval_adata, mode="logit", batch_size=batch_size)
+        calib_mask = ~eval_is_novel
+        latent_extra = metrics.precision_at_specificity(
+            unc_latent,
+            eval_is_novel,
+            specificity=specificity,
+            uncertainty_ref=unc_latent[calib_mask],
+        )
+        logit_extra = metrics.precision_at_specificity(
+            unc_logit,
+            eval_is_novel,
+            specificity=specificity,
+            uncertainty_ref=unc_logit[calib_mask],
+        )
+        latent_result = metrics.novelty_auroc(unc_latent, eval_is_novel)
+        logit_result = metrics.novelty_auroc(unc_logit, eval_is_novel)
+        latent_result.update(latent_extra)
+        logit_result.update(logit_extra)
+        import gc
+
+        import torch as _torch
+
+        del model
+        gc.collect()
+        if _torch.cuda.is_available():
+            _torch.cuda.empty_cache()
+        return {
+            "task": "b5_novelty",
+            "seed": seed,
+            "max_epochs": max_epochs,
+            "holdout_type": holdout_type,
+            "b5_evaluation_mode": "inductive_calibrated",
+            "specificity": specificity,
+            "n_train_seen": int(len(train_seen)),
+            "n_calibration_seen": int(len(calib_seen)),
+            "n_eval": int(len(eval_idx)),
+            "latent": latent_result,
+            "logit": logit_result,
+            **metrics.novelty_auroc(unc_latent, eval_is_novel),
+        }
 
     work = adata.copy()
     masked = labels.copy()
@@ -336,30 +601,18 @@ def task_b5_novelty(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **_training_config(cytoanvi_training_config),
     )
     unc_latent = model.get_uncertainty(mode="latent")
     unc_logit = model.get_uncertainty(mode="logit")
-    latent_result = metrics.novelty_auroc(unc_latent, is_novel)
-    # Free GPU memory before the next holdout iteration to avoid accumulation across 47 clusters.
-    import gc
-    import torch as _torch
-    del model
-    gc.collect()
-    if _torch.cuda.is_available():
-        _torch.cuda.empty_cache()
-    return {
-        "task": "b5_novelty",
-        "seed": seed,
-        "max_epochs": max_epochs,
-        "holdout_type": holdout_type,
-        # uncertainty scored on the full adata (novel cells included) — calibration is
-        # transductive: the training set did not contain the held-out type, but uncertainty
-        # is measured on the same merged object.  Flag so consumers know the evaluation mode.
-        "b5_evaluation_mode": "calibration_transductive",
-        "latent": latent_result,
-        "logit": metrics.novelty_auroc(unc_logit, is_novel),
-        **latent_result,  # top-level for backward compat
-    }
+    return _finish(
+        model,
+        unc_latent,
+        unc_logit,
+        is_novel,
+        mode_note="calibration_transductive",
+    )
 
 
 def task_b5_holdout_sweep(
@@ -373,8 +626,21 @@ def task_b5_holdout_sweep(
     max_epochs=1000,
     n_latent=None,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
+    b5_mode="transductive",
+    specificity=0.95,
 ):
-    """B5 sweep: AUROC for each cell type held out as novel."""
+    """B5 sweep: novelty-detection AUROC for each cell type held out in turn.
+
+    PRIMARY HEADLINE METRIC: ``mean_auroc`` — the unweighted mean AUROC across all held-out
+    cell types.  On Roider-e1000 this is ~0.46 (near chance), meaning the model does not
+    reliably flag novel cells across the full label set.
+
+    ``best_auroc`` — the MAX over cell types — is also retained for secondary analysis but
+    is a cherry-picked single-type result and MUST NOT be presented as the summary statistic
+    for novelty detection.  Use ``mean_auroc`` as the headline.
+    """
     labels = np.asarray(adata.obs[labels_key].astype(str))
     types = sorted(t for t in set(labels) if t != unlabeled_category)
     per_type = {}
@@ -391,6 +657,10 @@ def task_b5_holdout_sweep(
             max_epochs=max_epochs,
             n_latent=n_latent,
             batch_size=batch_size,
+            annbatch_config=annbatch_config,
+            cytoanvi_training_config=cytoanvi_training_config,
+            b5_mode=b5_mode,
+            specificity=specificity,
         )
     valid_types = [ht for ht, v in per_type.items() if not np.isnan(v.get("auroc", float("nan")))]
     aurocs = [per_type[ht]["auroc"] for ht in valid_types]
@@ -410,13 +680,27 @@ def task_b5_holdout_sweep(
         z = (np.array(aurocs) - 0.5) / se
         p_vals = norm.sf(z)
         _, fdr_q, _, _ = multipletests(p_vals, method="fdr_bh")
-        sig_types = [ht for ht, q in zip(valid_types, fdr_q) if q < 0.05]
+        sig_types = [ht for ht, q in zip(valid_types, fdr_q, strict=True) if q < 0.05]
         fdr_fields = {
-            "auroc_pvalues": {ht: float(p) for ht, p in zip(valid_types, p_vals)},
-            "auroc_fdr_q": {ht: float(q) for ht, q in zip(valid_types, fdr_q)},
+            "auroc_pvalues": {
+                ht: float(p) for ht, p in zip(valid_types, p_vals, strict=True)
+            },
+            "auroc_fdr_q": {
+                ht: float(q) for ht, q in zip(valid_types, fdr_q, strict=True)
+            },
             "n_fdr_significant": len(sig_types),
-            "mean_auroc_fdr_sig": float(np.mean([per_type[ht]["auroc"] for ht in sig_types])) if sig_types else float("nan"),
+            "mean_auroc_fdr_sig": (
+                float(np.mean([per_type[ht]["auroc"] for ht in sig_types]))
+                if sig_types
+                else float("nan")
+            ),
         }
+
+    calibration_note = (
+        "inductive - uncertainty thresholds calibrated on held-out seen cells"
+        if b5_mode == "inductive"
+        else "transductive - uncertainty thresholds not cross-validated"
+    )
 
     return {
         "task": "b5_holdout_sweep",
@@ -427,11 +711,22 @@ def task_b5_holdout_sweep(
         # type during training but the uncertainty threshold is not cross-validated.
         # Consumers comparing across seeds should treat absolute AUROC values as
         # optimistic; only relative rankings across cell types are robust.
-        "calibration_note": "transductive — uncertainty thresholds not cross-validated",
+        "b5_mode": b5_mode,
+        "calibration_note": calibration_note,
+        # REPORTING NOTE: mean_auroc is the PRIMARY headline metric — it is the
+        # unweighted mean AUROC across ALL held-out cell types.  best_auroc is the
+        # MAX over types (a single cherry-picked type) and must NOT be presented as
+        # the summary statistic for novelty detection across the full label set.
+        "reporting_note": (
+            "PRIMARY metric: mean_auroc (mean over all cell types). "
+            "best_auroc is max over types (single cherry-picked type; NOT a summary statistic)."
+        ),
         "per_type": per_type,
         "mean_auroc": float(np.mean(aurocs)) if aurocs else float("nan"),
         "n_fdr_significant": fdr_fields.get("n_fdr_significant", 0),
         "mean_auroc_fdr_sig": fdr_fields.get("mean_auroc_fdr_sig", float("nan")),
+        # best_auroc: MAX over cell types — retained for secondary analysis only.
+        # This is the AUROC of the single best-detected novel type, not the mean.
         "best_auroc": float(max(aurocs)) if aurocs else float("nan"),
         **fdr_fields,
     }
@@ -470,6 +765,34 @@ def _split_reference_query(
     return ref, query, False
 
 
+def _split_reference_query_by_case_control(
+    adata,
+    *,
+    case_control_key: str,
+    control_values: list[str],
+    case_values: list[str],
+):
+    """Real case/control split for continual-update evaluation."""
+    if case_control_key not in adata.obs:
+        raise KeyError(f"case_control_key {case_control_key!r} is not present in adata.obs.")
+    control_set = {str(v) for v in control_values}
+    case_set = {str(v) for v in case_values}
+    overlap = control_set & case_set
+    if overlap:
+        raise ValueError(f"control_values and case_values overlap: {sorted(overlap)!r}.")
+    status = adata.obs[case_control_key].astype(str)
+    is_control = status.isin(control_set).to_numpy()
+    is_case = status.isin(case_set).to_numpy()
+    ref = adata[is_control].copy()
+    query = adata[is_case].copy()
+    if ref.n_obs < 64 or query.n_obs < 64:
+        raise ValueError(
+            "Real case/control split is too small for B4/B6: "
+            f"reference={ref.n_obs}, query={query.n_obs}. Need at least 64 cells each."
+        )
+    return ref, query, False
+
+
 def _replay_latent_drift(ref_model, updated_model, replay_adata):
     """Mean per-cell L2 drift of replay/reference latents after query surgery."""
     z_ref = ref_model.get_latent_representation(replay_adata)
@@ -491,7 +814,12 @@ def _b4_setup(
     control_frac: float = 0.1,
     replay_frac: float = 0.2,
     query_batch_values=None,
+    case_control_key=None,
+    control_values=None,
+    case_values=None,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
 ) -> dict:
     """Train reference and select replay/control — shared setup for B4 and B6.
 
@@ -500,15 +828,30 @@ def _b4_setup(
     """
     from cytoanvi import CytoANVI
 
-    if query_batch_values is None:
-        batches = sorted(adata.obs[batch_key].astype(str).unique())
-        query_batch_values = [batches[-1]]
-    query_batch_values = list(query_batch_values)
-
     labels = np.asarray(adata.obs[labels_key].astype(str))
-    ref_adata, query_adata, _fallback_split = _split_reference_query(
-        adata, batch_key=batch_key, query_batch_values=query_batch_values, seed=seed
+    use_real_split = (
+        case_control_key is not None
+        and control_values is not None
+        and case_values is not None
     )
+    if use_real_split:
+        ref_adata, query_adata, _fallback_split = _split_reference_query_by_case_control(
+            adata,
+            case_control_key=case_control_key,
+            control_values=list(control_values),
+            case_values=list(case_values),
+        )
+        case_control_mode = "real"
+        query_batch_values = []
+    else:
+        if query_batch_values is None:
+            batches = sorted(adata.obs[batch_key].astype(str).unique())
+            query_batch_values = [batches[-1]]
+        query_batch_values = list(query_batch_values)
+        ref_adata, query_adata, _fallback_split = _split_reference_query(
+            adata, batch_key=batch_key, query_batch_values=query_batch_values, seed=seed
+        )
+        case_control_mode = "pseudo_batch"
     # Build true_query in query_adata.obs_names order to handle the permuted-fallback branch
     # of _split_reference_query (np.isin returns adata order, not query order).
     label_by_obs = dict(zip(adata.obs_names, labels, strict=True))
@@ -525,6 +868,8 @@ def _b4_setup(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **_training_config(cytoanvi_training_config),
     )
 
     # Sample control before blanking labels so control cells retain their true labels.
@@ -550,6 +895,8 @@ def _b4_setup(
         "control": control,
         "replay": replay,
         "query_batch_values": query_batch_values,
+        "case_control_mode": case_control_mode,
+        "case_control_key": case_control_key,
         "train_extra": train_extra,
         "_fallback_split": _fallback_split,
     }
@@ -569,7 +916,12 @@ def task_b4_continual(
     control_frac=0.1,
     replay_frac=0.2,
     query_batch_values=None,
+    case_control_key=None,
+    control_values=None,
+    case_values=None,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
     _setup=None,
 ):
     """B4: continual update vs plain surgery on a pseudo case/control batch split.
@@ -597,7 +949,12 @@ def task_b4_continual(
             control_frac=control_frac,
             replay_frac=replay_frac,
             query_batch_values=query_batch_values,
+            case_control_key=case_control_key,
+            control_values=control_values,
+            case_values=case_values,
             batch_size=batch_size,
+            annbatch_config=annbatch_config,
+            cytoanvi_training_config=cytoanvi_training_config,
         )
 
     ref_model = _setup["ref_model"]
@@ -607,6 +964,12 @@ def task_b4_continual(
     control = _setup["control"]
     replay = _setup["replay"]
     train_extra = _setup["train_extra"]
+    case_control_mode = _setup.get("case_control_mode", "pseudo_batch")
+    note = (
+        "Real case/control split - use for biological continual-update evaluation."
+        if case_control_mode == "real"
+        else "Pseudo case/control via batch split - validates plumbing, not biology."
+    )
 
     # Use .copy() so surgery calls do not mutate the shared query_adata in the setup dict
     # (load_query_data runs setup_anndata in-place; B6 reuses the same setup across λ).
@@ -617,6 +980,7 @@ def task_b4_continual(
         gradient_clip_val=_GRAD_CLIP,
         plan_kwargs={"weight_decay": 0.0},
         **train_extra,
+        **annbatch_train_kwargs(plain, annbatch_config, batch_size=batch_size),
     )
 
     continual = CytoANVI.load_query_data_with_replay(
@@ -634,6 +998,7 @@ def task_b4_continual(
             "gradient_clip_norm": _GRAD_CLIP,
         },
         **train_extra,
+        **annbatch_train_kwargs(continual, annbatch_config, batch_size=batch_size),
     )
 
     plain_pred = np.asarray(plain.predict())
@@ -649,8 +1014,10 @@ def task_b4_continual(
         "n_replay": int(replay.n_obs),
         "n_control": int(control.n_obs),
         "query_batch_values": list(_setup["query_batch_values"]),
+        "case_control_mode": case_control_mode,
+        "case_control_key": _setup.get("case_control_key"),
         "_fallback_split": _setup["_fallback_split"],
-        "note": "Pseudo case/control via batch split — validates plumbing, not biology.",
+        "note": note,
         "plain_surgery": {
             "replay_latent_drift": _replay_latent_drift(ref_model, plain, replay),
             "query_label_transfer": metrics.label_transfer_metrics(true_query, plain_pred),
@@ -684,6 +1051,8 @@ def task_b8_hce_label_transfer(
     n_latent=None,
     hierarchy_edges=None,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
 ):
     """B8: flat CE vs HCE when a user ontology matches observed model labels.
 
@@ -712,6 +1081,8 @@ def task_b8_hce_label_transfer(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **_training_config(cytoanvi_training_config),
     )
     flat_pred = np.asarray(flat_model.predict())
 
@@ -726,6 +1097,8 @@ def task_b8_hce_label_transfer(
         max_epochs=max_epochs,
         batch_size=batch_size,
         hierarchy_edges=hierarchy_edges,
+        annbatch_config=annbatch_config,
+        **_training_config(cytoanvi_training_config),
     )
     hce_pred = np.asarray(hce_model.predict())
     hier_pred = np.asarray(hce_model.predict_hierarchical(leaf_only=True))
@@ -772,9 +1145,14 @@ def task_b6_lambda_sweep(
     n_latent=None,
     lambdas=None,
     query_batch_values=None,
+    case_control_key=None,
+    control_values=None,
+    case_values=None,
     batch_size=None,
     control_frac=0.1,
     replay_frac=0.2,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
 ):
     """B6: sweep ``ewc_importance`` (λ) for continual update; report replay drift vs query F1.
 
@@ -796,7 +1174,12 @@ def task_b6_lambda_sweep(
         control_frac=control_frac,
         replay_frac=replay_frac,
         query_batch_values=query_batch_values,
+        case_control_key=case_control_key,
+        control_values=control_values,
+        case_values=case_values,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        cytoanvi_training_config=cytoanvi_training_config,
     )
     per_lambda = {}
     for lam in lambdas:
@@ -812,7 +1195,12 @@ def task_b6_lambda_sweep(
             n_latent=n_latent,
             ewc_importance=lam,
             query_batch_values=setup["query_batch_values"],
+            case_control_key=case_control_key,
+            control_values=control_values,
+            case_values=case_values,
             batch_size=batch_size,
+            annbatch_config=annbatch_config,
+            cytoanvi_training_config=cytoanvi_training_config,
             _setup=setup,
         )["continual_update"]
     drifts = np.asarray([v["replay_latent_drift"] for v in per_lambda.values()], dtype=float)
@@ -822,6 +1210,8 @@ def task_b6_lambda_sweep(
         "seed": seed,
         "max_epochs": max_epochs,
         "lambdas": list(lambdas),
+        "case_control_mode": setup.get("case_control_mode", "pseudo_batch"),
+        "case_control_key": setup.get("case_control_key"),
         "_fallback_split": setup["_fallback_split"],
         "per_lambda": per_lambda,
         "note": "Reports the full λ table; recommend only when replay drift has a unique minimum.",
@@ -905,6 +1295,8 @@ def task_b9_mapqc(
     k_max=15,
     run_mapqc=True,
     batch_size=None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
 ):
     """B9: mapQC on CytoANVI latents after query surgery (pseudo batch ref/query split).
 
@@ -929,6 +1321,7 @@ def task_b9_mapqc(
     ref_adata = work[is_ref].copy()
     query_adata = work[~is_ref].copy()
     true_query = np.asarray(work.obs[labels_key].astype(str))[~is_ref]
+    training_config = _training_config(cytoanvi_training_config)
 
     ref_model, _ = train_cytoanvi(
         ref_adata,
@@ -940,15 +1333,30 @@ def task_b9_mapqc(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **training_config,
     )
 
     query_train = query_adata.copy()
     query_train.obs[labels_key] = unlabeled_category
     query_model = CytoANVI.load_query_data(query_train, ref_model)
-    query_train_kw: dict = {"plan_kwargs": {"weight_decay": 0.0}}
+    query_plan_kw = {"weight_decay": 0.0}
+    if training_config.get("reduce_lr_on_plateau"):
+        query_plan_kw["reduce_lr_on_plateau"] = True
+    if training_config.get("classification_ratio") is not None:
+        query_plan_kw["classification_ratio"] = training_config["classification_ratio"]
+    query_train_kw: dict = {"plan_kwargs": query_plan_kw}
+    if training_config.get("learning_rate") is not None:
+        query_train_kw["lr"] = training_config["learning_rate"]
+    if training_config.get("gradient_clip_val") is not None:
+        query_train_kw["gradient_clip_val"] = training_config["gradient_clip_val"]
     if batch_size is not None:
         query_train_kw["batch_size"] = batch_size
-    query_model.train(max_epochs=min(50, max_epochs), **query_train_kw)
+    query_model.train(
+        max_epochs=min(50, max_epochs),
+        **query_train_kw,
+        **annbatch_train_kwargs(query_model, annbatch_config, batch_size=batch_size),
+    )
 
     joint = mapping_qc.build_mapqc_anndata(
         query_model,

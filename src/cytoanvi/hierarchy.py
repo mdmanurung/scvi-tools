@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import anndata
 import numpy as np
 from anndata import AnnData
 
@@ -307,8 +308,8 @@ def run_tree_arches_pipeline(
     pre-built ``combined_latent``).
 
     Update-mode latent resolution (first match wins): ``combined_latent`` → ``combined_adata`` +
-    ``query_model`` → ``reference_adata.concatenate(query_adata)`` + ``query_model``. Query-only
-    updates require ``combined_latent`` supplied by the caller.
+    ``query_model`` → ``anndata.concat([reference_adata, query_adata])`` + ``query_model``.
+    Query-only updates require ``combined_latent`` supplied by the caller.
     """
     _require_schpl()
     reference_model._check_if_trained(warn=False)
@@ -373,7 +374,9 @@ def run_tree_arches_pipeline(
     elif combined_adata is not None:
         latent_for_update = latent_to_anndata(query_model, combined_adata, obs_cols=obs_cols)
     elif reference_adata is not None and query_adata is not None:
-        merged_adata = reference_adata.concatenate(query_adata)
+        merged_adata = anndata.concat(
+            [reference_adata, query_adata], join="outer", index_unique="-"
+        )
         latent_for_update = latent_to_anndata(query_model, merged_adata, obs_cols=obs_cols)
     else:
         raise ValueError(

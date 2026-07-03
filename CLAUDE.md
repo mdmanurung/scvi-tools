@@ -20,11 +20,11 @@ See `CONTEXT.md` for the canonical CytoANVI glossary. Key terms:
 
 | Path | Description |
 |------|-------------|
-| `src/scvi/external/cytoanvi/` | CytoANVI implementation |
+| `src/cytoanvi/` | CytoANVI implementation |
 | `benchmarks/cytoanvi/` | Benchmark harness (B1–B9 tasks) |
 | `benchmarks/common/` | Shared training loop, result aggregation |
 | `data/` | Nuñez and Roider cytometry datasets |
-| `tests/external/cytoanvi/` | Unit tests |
+| `tests/cytoanvi/` | Unit tests |
 | `tests/benchmarks/test_cytoanvi_smoke.py` | Benchmark smoke tests |
 | `vignettes/cytoanvi_showcase.py` | End-to-end showcase vignette |
 | `.scratch/cytoanvi-benchmark/` | Benchmark planning, issues, results |
@@ -33,7 +33,7 @@ See `CONTEXT.md` for the canonical CytoANVI glossary. Key terms:
 
 ```bash
 # Unit tests
-pytest tests/external/cytoanvi/ -v
+pytest tests/cytoanvi/ -v
 
 # Benchmark smoke tests
 pytest tests/benchmarks/test_cytoanvi_smoke.py -v

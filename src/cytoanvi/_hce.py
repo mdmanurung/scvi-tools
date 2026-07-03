@@ -85,9 +85,17 @@ def build_reachability_matrix(
 ) -> np.ndarray:
     """Build a reachability matrix from a parent→children edge dictionary.
 
-    Internal nodes may be parents in ``edges``. Every name in ``label_names`` must
-    appear exactly once in the hierarchy graph (as a node) and must not appear as
-    a child more than once.
+    Every name appearing in ``edges`` (as a parent key or a child value) must also appear
+    in ``label_names``.  This means **all hierarchy nodes must be observed leaf labels** —
+    virtual internal nodes that are not themselves predicted classes (e.g. a synthetic
+    ``"root"`` aggregating several leaves) are not supported here.  If your hierarchy has
+    such virtual nodes, pre-compute the reachability matrix manually and pass it directly
+    via ``reachability_matrix`` to :meth:`~cytoanvi.CytoANVI.__init__` or
+    :meth:`~cytoanvi.CytoANVI.set_hierarchy`.
+
+    Internal nodes that *are* in ``label_names`` may be parents in ``edges``.  Every name
+    in ``label_names`` must appear exactly once in the hierarchy graph (as a node) and must
+    not appear as a child more than once.
 
     Parameters
     ----------
@@ -139,7 +147,12 @@ def build_reachability_matrix(
     if extra_nodes:
         raise ValueError(
             "hierarchy contains nodes not listed in label_names: "
-            f"{extra_nodes}."
+            f"{extra_nodes}.  "
+            "All nodes in the hierarchy (parents and children) must be observed leaf labels "
+            "present in label_names — virtual internal nodes (e.g. a synthetic 'root' node) "
+            "are not supported.  Either add the extra nodes to label_names, remove them from "
+            "the hierarchy, or pre-compute the reachability matrix and pass it directly via "
+            "reachability_matrix= instead of hierarchy_edges=."
         )
 
     child_counts: dict[str, int] = {}

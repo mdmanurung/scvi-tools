@@ -16,12 +16,10 @@ The limitations of CytoVI include:
 - Effectively requires a GPU for fast inference.
 - Assumes measurements have been corrected for fluorescent spillover and preprocessed according to standard practice.
 
-```{topic} Tutorials:
-- {doc}`/tutorials/notebooks/cytometry/CytoVI_batch_correction_tutorial`
-- {doc}`/tutorials/notebooks/cytometry/CytoVI_advanced_tutorial`
+```{topic} Related cytometry docs:
+- {doc}`/tutorials/notebooks/cytometry/CytoANVI_tutorial`
+- {doc}`/user_guide/models/cytoanvi`
 ```
-
-<!--  note: to populate -->
 
 ## Preliminaries
 CytoVI can process protein expression matrices from the following technologies:
@@ -55,19 +53,6 @@ z_n \sim
 \end{cases}
 $$
 
-
-<!-- ```{math}
-:nowrap: true
-\begin{equation}
-z_n \sim
-\begin{cases}
-\mathcal{N}(0, 1), & \text{if isotropic Gaussian prior} \\
-\sum_{k=1}^K \pi_k \, \mathcal{N}(\mu_k, \sigma_k^2), & \text{if mixture of Gaussians prior}
-\end{cases}
-\end{equation}
-``` -->
-
-<!-- to do: exchange all math to the above syntax -->
 
 By default, a mixture of Gaussians is used, which allows more expressive modeling and improves integration of heterogeneous data. Optionally, prior weights can be informed by known labels $y$:
 
@@ -123,10 +108,8 @@ This binary mask is generated automatically when using CytoVI's 'merge_batches' 
 
 ```
 >>> adata_list = [adata_batch1, adata_batch2]
->>> adata = scvi.external.CytoVI.merge_batches(adata_list)
+>>> adata = scvi.external.CYTOVI.merge_batches(adata_list)
 ```
-
-<!-- update API -->
 
 Consecutively, the encoder uses only the shared features $\mathcal{I}$:
 
@@ -225,9 +208,7 @@ This approach allows label-free imputation of unobserved modalities, such as gen
 [^ref1]:
     Florian Ingelfinger, Nathan Levy, Can Ergen, Artemy Bakulin, Alexander Becker, Pierre Boyeau, Martin Kim, Diana Ditz, Jan Dirks, Jonas Maaskola, Tobias Wertheimer, Robert Zeiser, Corinne C. Widmer, Ido Amit, Nir Yosef,
     _CytoVI: Deep generative modeling of antibody-based single cell technologies_,
-    [bioRxiv](https://doi.org/).
-
-<!-- update ref as soon as it's online -->
+    Manuscript in preparation (2025).
 
 [^ref2]:
     Adam Gayoso\*, Zoë Steier\*, Romain Lopez, Jeffrey Regier, Kristopher L Nazor, Aaron Streets, Nir Yosef (2021),

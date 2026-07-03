@@ -25,6 +25,53 @@ def label_transfer_metrics(y_true, y_pred) -> dict:
     }
 
 
+def _counts(values) -> dict[str, int]:
+    arr = np.asarray(values).astype(str)
+    labels, counts = np.unique(arr, return_counts=True)
+    return {str(k): int(v) for k, v in zip(labels, counts, strict=True)}
+
+
+def label_transfer_diagnostics(
+    y_train,
+    y_true,
+    y_pred,
+    *,
+    rare_max_count: int = 25,
+) -> dict:
+    """Diagnostic counts and collapse flags for label-transfer benchmarks."""
+    y_train = np.asarray(y_train).astype(str)
+    y_true = np.asarray(y_true).astype(str)
+    y_pred = np.asarray(y_pred).astype(str)
+    observed = sorted(set(y_true))
+    predicted = sorted(set(y_pred))
+    train_counts = _counts(y_train)
+    true_counts = _counts(y_true)
+    pred_counts = _counts(y_pred)
+    rare_labels = [lab for lab, count in true_counts.items() if count <= rare_max_count]
+    rare_mask = np.isin(y_true, rare_labels)
+    majority_fraction = (
+        float(max(pred_counts.values()) / max(len(y_pred), 1)) if pred_counts else 0.0
+    )
+    return {
+        "train_label_counts": train_counts,
+        "heldout_label_counts": true_counts,
+        "predicted_label_counts": pred_counts,
+        "n_true_labels": len(observed),
+        "n_predicted_labels": len(predicted),
+        "predicted_label_coverage": float(
+            len(set(predicted) & set(observed)) / max(len(observed), 1)
+        ),
+        "majority_prediction_fraction": majority_fraction,
+        "collapse_warning": bool(len(predicted) <= 1 or majority_fraction >= 0.95),
+        "rare_labels": rare_labels,
+        "rare_macro_f1": (
+            float(f1_score(y_true[rare_mask], y_pred[rare_mask], average="macro", zero_division=0))
+            if rare_mask.any()
+            else None
+        ),
+    }
+
+
 def novelty_auroc(uncertainty: np.ndarray, is_novel) -> dict:
     """AUROC of uncertainty for novel (held-out-type) vs seen cells."""
     is_novel = np.asarray(is_novel).astype(int)
@@ -37,7 +84,18 @@ def novelty_auroc(uncertainty: np.ndarray, is_novel) -> dict:
 
 
 def concordance(pred_a, pred_b) -> dict:
-    """Agreement between two label-transfer methods."""
+    """Inter-method label agreement between two predictors.
+
+    Measures the fraction of cells where ``pred_a`` and ``pred_b`` assign the same
+    label.  This is **inter-method concordance**, NOT ground-truth accuracy — there
+    is no reference ground-truth involved.
+
+    In B3 (cross-panel), both predictors share the CytoVI encoder backbone:
+    ``pred_a`` is the CytoANVI classifier and ``pred_b`` is the CytoVI-kNN.  High
+    concordance means the two methods agree with each other, not that either is
+    correct.  Validating cross-panel label accuracy requires independent manually-gated
+    panel-2 labels, which are not available in the current benchmark.
+    """
     pred_a = np.asarray(pred_a)
     pred_b = np.asarray(pred_b)
     return {"agreement": float((pred_a == pred_b).mean()), "n": int(len(pred_a))}
@@ -50,7 +108,7 @@ def precision_at_specificity(
     specificity: float = 0.95,
     uncertainty_ref: np.ndarray | None = None,
 ) -> dict:
-    """Novelty-detection precision when the threshold is set to achieve ``specificity`` on reference.
+    """Novelty-detection precision at a target reference specificity.
 
     The threshold T is the ``specificity``-th quantile of ``uncertainty_ref`` (or the non-novel
     subset of ``uncertainty`` when ``uncertainty_ref`` is not provided). Cells with
@@ -76,7 +134,11 @@ def precision_at_specificity(
 
     uncertainty = np.asarray(uncertainty, dtype=float)
     is_novel = np.asarray(is_novel, dtype=bool)
-    ref_scores = np.asarray(uncertainty_ref, dtype=float) if uncertainty_ref is not None else uncertainty[~is_novel]
+    ref_scores = (
+        np.asarray(uncertainty_ref, dtype=float)
+        if uncertainty_ref is not None
+        else uncertainty[~is_novel]
+    )
     threshold = get_uncertainty_threshold(ref_scores, specificity=specificity)
     pred_novel = uncertainty > threshold
     tp = int((pred_novel & is_novel).sum())

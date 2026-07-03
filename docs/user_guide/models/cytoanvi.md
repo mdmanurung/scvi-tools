@@ -1,11 +1,11 @@
 # CytoANVI
 
-**CytoANVI** (Python class {class}`~cytoanvi.CytoANVI`) is a semi-supervised extension of
+**CytoANVI** [^ref1] (Python class {class}`~cytoanvi.CytoANVI`) is a semi-supervised extension of
 {class}`~scvi.external.CYTOVI` for antibody-based single-cell data (flow cytometry, mass cytometry,
-CITE-seq protein). It follows the same design pattern as {class}`~scvi.model.SCANVI` extends
+CITE-seq protein). It follows the same design pattern as {class}`~scvi.model.SCANVI` [^ref2] extends
 {class}`~scvi.model.SCVI`: a shared CytoVI protein encoder/decoder plus a classifier head and a
 partially observed label objective (M1+M2 hierarchy), while keeping CytoVI's batch correction,
-missing-marker masking, and scArches query mapping.
+missing-marker masking, and scArches [^ref3] query mapping.
 
 The advantages of CytoANVI are:
 
@@ -24,9 +24,7 @@ The limitations of CytoANVI include:
 
 ```{topic} Related tutorials:
 - {doc}`/tutorials/notebooks/cytometry/CytoANVI_tutorial` (label transfer, panel mapping, uncertainty)
-- {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial` (scHPL hierarchy learn/update/predict)
-- {doc}`/tutorials/notebooks/cytometry/CytoVI_batch_correction_tutorial` (CytoVI preprocessing & Nuñez data)
-- {doc}`/tutorials/notebooks/cytometry/CytoVI_advanced_tutorial` (multi-panel Roider mapping)
+- {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial` (scHPL hierarchy template)
 - {doc}`/user_guide/models/cytovi` (shared cytometry preprocessing and tasks)
 - {doc}`/user_guide/models/scanvi` (semi-supervised VI background)
 ```
@@ -43,6 +41,25 @@ For overlapping antibody panels, set up the reference with a `nan_layer` (see
 {func}`scvi.external.cytovi.merge_batches`) so panel-specific markers can be masked during query
 mapping.
 
+For real flow or mass cytometry data, handle instrument-level preprocessing before CytoANVI:
+
+- Apply compensation / spillover correction upstream for fluorescence cytometry.
+- Use an arcsinh cofactor appropriate for the technology and staining panel.
+- Scale each marker consistently across reference and query; do not fit query scaling independently
+  if that changes the reference distribution.
+- Harmonize marker names before merging panels and inspect missing-marker masks after padding.
+- Keep biological labels and the unlabeled category as explicit strings; avoid missing values in
+  the label column passed to `setup_anndata`.
+
+Approximate runtime expectations:
+
+| Workflow | Hardware | Expected use |
+|----------|----------|--------------|
+| Synthetic tutorial | CPU or GPU | API smoke and docs examples |
+| Small real dataset | GPU preferred, CPU possible | Method familiarization and parameter checks |
+| Full cytometry atlas | CUDA GPU | Publication-scale training and query mapping |
+| Full Roider benchmark | A100 40 GB class GPU | Release validation; use batch size around 8192 |
+
 ## Relation to CytoVI
 
 | Feature | CytoVI | CytoANVI |
@@ -56,10 +73,78 @@ mapping.
 
 You can warm-start from a trained CytoVI model with {meth}`~cytoanvi.CytoANVI.from_cytovi_model`.
 
+## Descriptive model
+
+CytoANVI adds an M1+M2 two-level latent hierarchy (following scANVI [^ref2]) on top of CytoVI's
+protein encoder/decoder:
+
+- **z1** — the shared backbone latent ($z_1 \in \mathbb{R}^d$), inferred by $q(z_1 \mid x, s)$
+  (same encoder as CytoVI).
+- **z2** — a label-conditioned latent, inferred by $q(z_2 \mid z_1, y)$ with a standard Normal
+  prior $p(z_2) = \mathcal{N}(0, I)$; decoded back to z1 space by $p(z_1 \mid z_2, y)$.
+- **Classifier** — a shallow network $q(y \mid z_1)$ that maps z1 to per-label cell-type
+  probabilities.
+
+For **labeled** cells the training loss augments the variational ELBO with a cross-entropy term
+scaled by `classification_ratio` ($\alpha$, default 50):
+
+$$
+\mathcal{L}_{\text{labeled}} = \mathcal{L}_{\text{ELBO}}(y) + \alpha \cdot \mathrm{CE}\!\left(y,\; q(y \mid z_1)\right)
+$$
+
+For **unlabeled** cells the ELBO is marginalized over all labels using soft classifier weights,
+so unlabeled cells still train the classifier through soft-label averaging:
+
+$$
+\mathcal{L}_{\text{unlabeled}} = \sum_y q(y \mid z_1)\,\mathcal{L}_{\text{ELBO}}(y) + \mathrm{KL}\!\left[q(y \mid z_1) \;\|\; p_{\text{prior}}(y)\right]
+$$
+
+**Per-cell nan-masking.** When a `nan_layer` is present (multi-panel data), the per-marker
+reconstruction loss is multiplied element-wise by a binary mask before summation, so absent markers
+do not contribute to the likelihood gradient on a per-cell basis. See {doc}`/user_guide/models/cytovi`
+for the protein observation model and preprocessing background.
+
+## API readiness and limitations
+
+Use `from cytoanvi import CytoANVI` as the default import path. The previous
+`scvi.external.CytoANVI` and `scvi.external.cytoanvi` paths are intentionally not part of the
+current API.
+
+| Surface | Status | Notes |
+|---------|--------|-------|
+| `cytoanvi.CytoANVI` | Stable | Normal user entrypoint for setup, training, prediction, query mapping, uncertainty, save/load, and CytoVI warm-start. |
+| `cytoanvi.get_uncertainty_threshold` | Stable | Helper for choosing novelty thresholds from reference uncertainty scores. |
+| `cytoanvi.CytoANVAE` | Stable advanced | Exported for advanced module-level inspection and extension; most users should instantiate `CytoANVI`. |
+| `cytoanvi.hierarchy` | Optional-extra | Importable without scHPL; scHPL workflows require `pip install cytoanvi[cytoanvi-hierarchy]`. |
+| `cytoanvi.mapping_qc` | Optional-extra | Importable without mapQC; mapQC workflows require `pip install cytoanvi[cytoanvi-mapping-qc]`. |
+| `load_query_data_with_replay` | Experimental | EWC state persists across `save`/`load`, but replay batches are session-scoped and must be re-supplied for exact replay resume. |
+| AnnBatch, FlowSOM, RAPIDS, benchmark tasks | Benchmark-only | These backends are CLI/evaluation infrastructure and are not part of the model API. |
+
+Supported stable workflows on synthetic and unit-test coverage are flat label transfer,
+CytoVI warm-start, panel-aware reference/query mapping, HCE prediction after an explicit hierarchy,
+mapping-QC delegation, paired RNA/CyTOF preprocessing, and core save/load inference. Continual
+replay/EWC is available for experimentation, but the replay-resume limitation above remains.
+
+## Benchmark evidence
+
+```{note}
+Release candidate — full-cohort benchmarks in progress.
+```
+
+Completed benchmarks supporting claims in this release:
+
+| Task | Dataset | Finding |
+|------|---------|---------|
+| B1 label transfer | Nuñez PBMC | Classifier label transfer is competitive with CytoVI k-NN on the Nuñez cohort. |
+| B2 batch integration | Nuñez PBMC | `classification_ratio` tunes the batch–biology tradeoff (see Training details). |
+| B8 HCE vs flat CE | Nuñez PBMC | Hierarchical cross-entropy improves coarse-level accuracy on the Nuñez five-type hierarchy. |
+
+Full-cohort Roider cross-panel mapping and novelty-detection benchmarks are in progress and will
+be reported upon completion.
+
 ## Quick start (label transfer)
 
 ```python
-import scvi
 from cytoanvi import CytoANVI
 
 CytoANVI.setup_anndata(
@@ -97,7 +182,6 @@ in both modalities.
 CyTOF must be arcsinh-transformed and min-max scaled first (see {doc}`/user_guide/models/cytovi`):
 
 ```python
-import scvi
 from cytoanvi import CytoANVI
 from scvi.external.cytovi import prepare_paired_cytoanvi
 
@@ -134,10 +218,10 @@ Benchmark task B7: `python -m benchmarks.cytoanvi.run --dataset paired-rna-cytof
 
 ### Integration vs label transfer (batch–bio tradeoff)
 
-CytoANVI shapes the latent with both reconstruction and the classifier on labeled cells. On real
-cytometry vignette data this often **improves biological conservation** (cell types separate more
-clearly) at a small cost to **batch mixing** versus unsupervised CytoVI. Tune
-`classification_ratio` and `y_prior` if batch correction is the primary goal.
+CytoANVI shapes the latent with both reconstruction and the classifier on labeled cells. Completed
+manifest artifacts should be used to quantify biological conservation and batch mixing for each
+dataset; do not generalize from smoke or vignette-only runs. Tune `classification_ratio` and
+`y_prior` if batch correction is the primary goal.
 
 ## Tasks
 
@@ -210,10 +294,10 @@ See ADR `docs/adr/0003-cytoanvi-hce-schpl-hierarchy.md`.
 ### treeArches workflow (optional scHPL)
 
 Learn, update, and predict cell-type hierarchies on CytoANVI latents with
-[scHPL](https://schpl.readthedocs.io/) (treeArches-style). Install the optional extra:
+[scHPL](https://schpl.readthedocs.io/) [^ref4] (treeArches-style). Install the optional extra:
 
 ```bash
-pip install scvi-tools[cytoanvi-hierarchy]
+pip install cytoanvi[cytoanvi-hierarchy]
 ```
 
 Import helpers from the optional module (not the top-level `cytoanvi` package):
@@ -327,7 +411,7 @@ After query surgery, score mapping quality on CytoANVI latents with
 [mapQC](https://github.com/theislab/mapqc) (scores **> 2** = far from reference). Install:
 
 ```bash
-pip install scvi-tools[cytoanvi-mapping-qc]
+pip install cytoanvi[cytoanvi-mapping-qc]
 ```
 
 Import helpers from the optional module (not the top-level `cytoanvi` package):
@@ -419,3 +503,28 @@ Multi-panel references are built with {func}`scvi.external.cytovi.merge_batches`
 `CytoANVI.setup_anndata`.
 
 Refer to {doc}`/user_guide/models/cytovi` for preprocessing cofactors and mathematical background.
+
+## Citation
+
+If you use CytoANVI in your research, please cite [^ref1].
+
+[^ref1]:
+    Manurung et al. _CytoANVI: annotation-aware variational inference for antibody-based single-cell
+    cytometry._ Manuscript in preparation (2026).
+
+[^ref2]:
+    Xu C, Lopez R, Mehlman E, Regier J, Jordan MI, Yosef N. (2021).
+    _Probabilistic harmonization and annotation of single-cell transcriptomics data with deep
+    generative models._
+    [Molecular Systems Biology](https://www.embopress.org/doi/full/10.15252/msb.20209620).
+
+[^ref3]:
+    Lotfollahi M, Naghipourfar M, Luecken MD, Khajavi M, Büttner M, Wagenstetter M, Avsec Ž,
+    Gayoso A, Yosef N, Interlandi M, Rybakov S, Misharin AV, Theis FJ. (2022).
+    _Mapping single-cell data to reference atlases by transfer learning._
+    [Nature Biotechnology](https://www.nature.com/articles/s41587-021-01001-7).
+
+[^ref4]:
+    Michielsen L, Reinders MJT, Mahfouz A. (2021).
+    _Hierarchical progressive learning of cell identities in single-cell data._
+    [Nature Communications](https://www.nature.com/articles/s41467-021-23774-w).

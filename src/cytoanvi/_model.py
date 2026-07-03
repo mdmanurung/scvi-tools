@@ -24,6 +24,7 @@ from scvi.external.cytovi import CYTOVI
 from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
 from scvi.model.base import SemisupervisedTrainingMixin
 from scvi.model.base._archesmixin import ArchesMixin, _get_loaded_data
+from scvi.train._config import merge_kwargs
 from scvi.utils import setup_anndata_dsp
 
 from ._continual import ContinualUpdate, CytoANVIContinualTrainingPlan
@@ -74,6 +75,20 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         Prior over the observed labels. One of: ``"uniform"`` / ``None`` (uniform), ``"empirical"``
         (label frequencies among labeled cells, Laplace-smoothed), or a tensor of shape
         ``(1, n_labels)``. Use ``"empirical"`` for class-imbalanced panels.
+    class_weighting
+        Optional per-class weighting for the supervised classifier loss. ``"none"`` preserves
+        default behavior. ``"inverse_frequency"`` and ``"sqrt_inverse_frequency"`` compute weights
+        from labeled observed cells.
+    class_weight_clip
+        Maximum computed class weight before mean normalization.
+    hierarchy_edges
+        Optional parent→children edge dictionary defining a label hierarchy for hierarchical
+        cross-entropy (HCE) training and :meth:`predict_hierarchical`. Mutually exclusive with
+        ``reachability_matrix``. See :func:`~cytoanvi._hce.build_reachability_matrix`.
+    reachability_matrix
+        Optional precomputed binary reachability matrix of shape ``(n_labels, n_labels)``
+        as a NumPy array or Tensor. ``R[i, j] = 1`` if label ``j`` is reachable from label
+        ``i`` (i.e. a descendant-or-self). Mutually exclusive with ``hierarchy_edges``.
     **model_kwargs
         Keyword args for :class:`~cytoanvi.CytoANVAE`.
 
@@ -128,6 +143,10 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         encoder_marker_list: list | None = None,
         linear_classifier: bool = False,
         y_prior: Literal["uniform", "empirical"] | torch.Tensor | None = "uniform",
+        class_weighting: Literal[
+            "none", "inverse_frequency", "sqrt_inverse_frequency"
+        ] | torch.Tensor | None = "none",
+        class_weight_clip: float = 10.0,
         hierarchy_edges: dict[str, list[str]] | None = None,
         reachability_matrix: np.ndarray | torch.Tensor | None = None,
         **model_kwargs,
@@ -174,6 +193,20 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         )
 
         y_prior_tensor = self._resolve_y_prior(y_prior, n_labels)
+        class_weights = self._resolve_class_weights(
+            class_weighting, class_weight_clip, n_labels
+        )
+        self.class_weighting_ = (
+            "tensor"
+            if isinstance(class_weighting, torch.Tensor)
+            else (class_weighting or "none")
+        )
+        self.class_weight_clip_ = (
+            None if class_weights is None else float(class_weight_clip)
+        )
+        self.class_weights_ = (
+            None if class_weights is None else class_weights.detach().cpu().numpy()
+        )
 
         reachability_tensor = None
         if reachability_matrix is not None:
@@ -201,6 +234,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             linear_classifier=linear_classifier,
             y_prior=y_prior_tensor,
             reachability_matrix=reachability_tensor,
+            class_weights=class_weights,
             **model_kwargs,
         )
 
@@ -224,6 +258,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         init_locals = locals()
         init_locals.pop("hierarchy_edges", None)
         init_locals.pop("reachability_matrix", None)
+        init_locals.pop("class_weights", None)
         self.init_params_ = self._get_init_params(init_locals)
 
     @contextlib.contextmanager
@@ -329,7 +364,13 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         if indices is None:
             indices = np.arange(adata.n_obs)
         if len(indices) == 0:
-            return np.array([]) if not soft else pd.DataFrame(index=adata.obs_names[indices])
+            return (
+                np.array([])
+                if not soft
+                else pd.DataFrame(
+                    columns=self._observed_label_names(), index=adata.obs_names[indices]
+                )
+            )
 
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
         y_pred = []
@@ -377,6 +418,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     def train(
         self,
         max_epochs: int | None = 1000,
+        n_samples_per_label: float | None = None,
         lr: float = 1e-3,
         accelerator: str = "auto",
         devices: int | list[int] | str = "auto",
@@ -398,6 +440,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         ----------
         max_epochs
             Number of passes through the dataset. Default 1000.
+        n_samples_per_label
+            Number of subsamples for each label class to sample per epoch. By default, there
+            is no label subsampling.
         lr
             Learning rate. Default 1e-3.
         accelerator
@@ -443,9 +488,16 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 UserWarning,
                 stacklevel=settings.warnings_stacklevel,
             )
+        update_dict = {
+            "lr": lr,
+            "n_epochs_kl_warmup": n_epochs_kl_warmup,
+            "n_steps_kl_warmup": n_steps_kl_warmup,
+        }
+        plan_kwargs = merge_kwargs(None, plan_kwargs, name="plan")
+        plan_kwargs.update(update_dict)
         return super().train(
             max_epochs=max_epochs,
-            lr=lr,
+            n_samples_per_label=n_samples_per_label,
             accelerator=accelerator,
             devices=devices,
             train_size=train_size,
@@ -453,8 +505,6 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             batch_size=batch_size,
             early_stopping=early_stopping,
             check_val_every_n_epoch=check_val_every_n_epoch,
-            n_steps_kl_warmup=n_steps_kl_warmup,
-            n_epochs_kl_warmup=n_epochs_kl_warmup,
             adversarial_classifier=adversarial_classifier,
             plan_kwargs=plan_kwargs,
             early_stopping_patience=early_stopping_patience,
@@ -568,6 +618,60 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             raise ValueError("y_prior tensor rows must sum to 1.")
         return y_prior
 
+    def _resolve_class_weights(
+        self,
+        class_weighting: Literal[
+            "none", "inverse_frequency", "sqrt_inverse_frequency"
+        ] | torch.Tensor | None,
+        class_weight_clip: float,
+        n_labels: int,
+    ) -> torch.Tensor | None:
+        """Resolve optional classifier-loss weights into a 1-D tensor."""
+        if class_weighting is None or (
+            isinstance(class_weighting, str) and class_weighting == "none"
+        ):
+            return None
+        if not np.isfinite(class_weight_clip) or class_weight_clip <= 0:
+            raise ValueError("class_weight_clip must be finite and > 0.")
+        if isinstance(class_weighting, torch.Tensor):
+            weights = class_weighting.detach().clone().to(dtype=torch.float32)
+        elif class_weighting in {"inverse_frequency", "sqrt_inverse_frequency"}:
+            labeled_vals = self.labels_[self._labeled_indices]
+            if len(labeled_vals) == 0:
+                return None
+            counts = np.array(
+                [(labeled_vals == self._label_mapping[c]).sum() for c in range(n_labels)],
+                dtype=np.float64,
+            )
+            if (counts <= 0).any():
+                return None
+            inv = counts.sum() / (n_labels * counts)
+            weights_np = np.sqrt(inv) if class_weighting == "sqrt_inverse_frequency" else inv
+            weights_np = np.minimum(weights_np, class_weight_clip)
+            weights_np = weights_np / weights_np.mean()
+            weights = torch.tensor(weights_np, dtype=torch.float32)
+        else:
+            raise ValueError(
+                "class_weighting must be 'none', 'inverse_frequency', "
+                "'sqrt_inverse_frequency', None, or a tensor."
+            )
+        if tuple(weights.shape) != (n_labels,):
+            raise ValueError(
+                f"class weights must have shape ({n_labels},); got {tuple(weights.shape)}."
+            )
+        if not torch.isfinite(weights).all():
+            raise ValueError("class weights must contain only finite values.")
+        if (weights <= 0).any():
+            raise ValueError("class weights must be strictly positive.")
+        return weights
+
+    def _sync_class_weights_to_module(self) -> None:
+        """Reattach persisted class weights to the non-persistent module buffer."""
+        weights = getattr(self, "class_weights_", None)
+        self.module.set_class_weights(
+            None if weights is None else torch.as_tensor(weights, dtype=torch.float32)
+        )
+
     @classmethod
     def from_cytovi_model(
         cls,
@@ -593,6 +697,15 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             the CytoVI model's AnnData.
         cytoanvi_kwargs
             Keyword args for the CytoANVI model.
+
+        Returns
+        -------
+        CytoANVI
+            A new, **untrained** :class:`CytoANVI` instance whose shared encoder and decoder
+            weights are initialized from ``cytovi_model``. The classifier, ``encoder_z2_z1``,
+            and ``decoder_z1_z2`` sub-networks are randomly initialized. Call :meth:`train`
+            to fit the semi-supervised objective before using :meth:`predict` or
+            :meth:`get_latent_representation`.
         """
         cytovi_model._check_if_trained(message="Passed in CytoVI model hasn't been trained yet.")
 
@@ -653,9 +766,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             **cytovi_setup_args,
         )
 
-        cytoanvi_model = cls(adata, **non_kwargs, **kwargs, **cytoanvi_kwargs)
+        new_model = cls(adata, **non_kwargs, **kwargs, **cytoanvi_kwargs)
         cytovi_state_dict = cytovi_model.module.state_dict()
-        load_result = cytoanvi_model.module.load_state_dict(cytovi_state_dict, strict=False)
+        load_result = new_model.module.load_state_dict(cytovi_state_dict, strict=False)
         allowed_missing_prefixes = (
             "classifier.",
             "encoder_z2_z1.",
@@ -678,16 +791,16 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 f"Missing keys: {sorted(disallowed_missing)}; unexpected keys: "
                 f"{sorted(disallowed_unexpected)}."
             )
-        cytoanvi_state_dict = cytoanvi_model.module.state_dict()
+        new_model_state_dict = new_model.module.state_dict()
         for key, cytovi_value in cytovi_state_dict.items():
             if key in unexpected:
                 continue
-            cytoanvi_value = cytoanvi_state_dict[key]
-            if cytoanvi_value.shape == cytovi_value.shape:
-                torch.testing.assert_close(cytoanvi_value.cpu(), cytovi_value.cpu())
-        cytoanvi_model.was_pretrained = True
+            new_model_value = new_model_state_dict[key]
+            if new_model_value.shape == cytovi_value.shape:
+                torch.testing.assert_close(new_model_value.cpu(), cytovi_value.cpu())
+        new_model.was_pretrained = True
 
-        return cytoanvi_model
+        return new_model
 
     @classmethod
     @setup_anndata_dsp.dedent
@@ -964,6 +1077,14 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         return model
 
     @classmethod
+    def load_query_data(cls, *args, **kwargs):
+        """Load query data and reattach non-persistent CytoANVI buffers."""
+        model = super().load_query_data(*args, **kwargs)
+        if hasattr(model, "_sync_class_weights_to_module"):
+            model._sync_class_weights_to_module()
+        return model
+
+    @classmethod
     def load(
         cls,
         dir_path: str,
@@ -976,6 +1097,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         allowed_classes_names_list: list[str] | None = None,
     ):
         """Load a saved model; backfill ``encoder_marker_mask_`` from the module when absent."""
+        if device == "cpu" and accelerator in {"auto", "cpu"}:
+            accelerator = "cpu"
+            device = "auto"
         model = super().load(
             dir_path,
             adata=adata,
@@ -988,6 +1112,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         )
         if getattr(model, "encoder_marker_mask_", None) is None:
             model._sync_encoder_marker_mask_attr()
+        if hasattr(model, "_sync_class_weights_to_module"):
+            model._sync_class_weights_to_module()
         if getattr(model.module, "continual", None) is not None:
             model._training_plan_cls = CytoANVIContinualTrainingPlan
         return model
@@ -995,6 +1121,10 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     def save(self, dir_path, prefix=None, overwrite=False, save_anndata=False, **kwargs):
         """Save model state, including ``encoder_marker_mask_`` for panel-aware query prep."""
         self._sync_encoder_marker_mask_attr()
+        if getattr(self.module, "class_weights", None) is None:
+            self.class_weights_ = None
+        else:
+            self.class_weights_ = self.module.class_weights.detach().cpu().numpy()
         if getattr(self.module, "reachability_matrix_", None) is not None:
             self.hierarchy_reachability_ = (
                 self.module.reachability_matrix_.detach().cpu().numpy()
@@ -1031,6 +1161,12 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             ``"latent"`` (default): BI computed over encoder mean vectors (``n_latent`` dims).
             ``"logit"``: BI computed over classifier logit vectors (``n_labels`` dims) — the
             canonical Bregman-Variance-Decomposition-on-logits formulation.
+
+        Returns
+        -------
+        np.ndarray of shape ``(n_cells,)`` with one non-negative scalar uncertainty score per
+        cell (Bregman Information). Higher values indicate cells whose embedding or logits vary
+        more across TTA augmentations — a proxy for novelty or out-of-distribution status.
         """
         if mode not in {"latent", "logit"}:
             raise ValueError("mode must be one of {'latent', 'logit'}.")
@@ -1072,8 +1208,31 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         """Run mapQC on CytoANVI latents after query-to-reference mapping.
 
         Requires ``pip install scvi-tools[cytoanvi-mapping-qc]``. Reference cells should be
-        controls only; the query must include matched control cells. Returns the joint AnnData
-        with ``mapqc_score`` written to ``obs`` (query cells only).
+        controls only; the query must include matched control cells.
+
+        Parameters
+        ----------
+        reference_adata
+            AnnData for reference (control) cells registered with this model.
+        query_adata
+            AnnData for query cells registered with this model.
+        sample_key
+            Key in ``adata.obs`` identifying biological samples (used to define neighborhoods
+            for the mapQC scoring procedure).
+        n_nhoods
+            Number of neighborhoods to sample for mapQC scoring.
+        k_min
+            Minimum neighborhood size (number of nearest neighbors).
+        k_max
+            Maximum neighborhood size (number of nearest neighbors).
+        **kwargs
+            Additional keyword arguments forwarded to
+            :func:`~cytoanvi.mapping_qc.run_mapqc_on_cytoanvi`.
+
+        Returns
+        -------
+        Joint AnnData combining reference and query cells, with ``mapqc_score`` written to
+        ``obs`` for query cells only.
         """
         from cytoanvi import mapping_qc
 

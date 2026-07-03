@@ -1,83 +1,48 @@
-# Last Session Summary — 2026-07-01 (autonomous continuation, session 12)
+# Last Session Summary — 2026-07-03 (session 13, publication-readiness review + fixes)
 
 ## 1. What was accomplished
 
-**Clarity review of all CytoANVI implementation files — 4 improvements committed as `bb52d551`.**
+**Ran a 6-agent parallel publication-readiness review, then a 5-agent parallel implementation pass fixing everything actionable.** All changes verified: `tests/cytoanvi/` **110 passed / 3 skipped**; `tests/benchmarks/` **33 passed / 1 skipped**; `cytoanvi` imports; `pyproject.toml` parses with `name="cytoanvi"`.
 
-16 files reviewed; code is already high quality. Only 4 genuine clarity issues found:
+Review scored six dimensions: code 7.5/10, methods 4.5, benchmarks 5, docs 5.5, tests 6, packaging 4. The load-bearing finding (two agents converged independently): **headline benchmark claims overreach the data** — B3 measures inter-method concordance not accuracy, B5 headline was `best_auroc` while `mean_auroc≈0.46` (below chance).
 
-| ID | File | Change |
-|----|------|--------|
-| C1 | `src/cytoanvi/_continual.py` | Moved `was_training` snapshot before try block; replaced `locals().get("was_training")` antipattern with direct reference in finally |
-| C2 | `src/cytoanvi/_hce.py` | Renamed `cell_type_probs` (reused across 3 semantic stages) to `probs` / `hier_probs` / `log_probs`; added comment explaining `.T` transpose |
-| C3 | `src/cytoanvi/_model.py` | Renamed `_i, j` comprehension variables to `_group, group_dict` in `from_cytovi_model` kwargs flattening; added explanatory comment |
-| C4 | `benchmarks/cytoanvi/tasks.py` | Cached `novelty_auroc(unc_latent, is_novel)` in `latent_result` to eliminate double call |
+**Implemented (disjoint file domains, one agent each):**
 
-**Files verified clean (no changes needed):**
-- `src/cytoanvi/_module.py`, `_uncertainty.py`, `hierarchy.py`, `mapping_qc.py`, `__init__.py`
-- `benchmarks/cytoanvi/run.py`, `metrics.py`, `baselines.py`, `data.py`
-- `benchmarks/common/training.py`, `aggregate_results.py`, `roider_metadata.py`
+| Domain | Key changes |
+|--------|-------------|
+| Code (`src/cytoanvi/`) | `AnnData.concatenate`→`anndata.concat` (L-032); Fisher-approx docstring (L-033); empty-index soft-predict schema fix; missing docstring Params/Returns (`hierarchy_edges`, `reachability_matrix`, `score_query_mapping`, `get_uncertainty`, `from_cytovi_model`); HCE virtual-node error msg; `cytoanvi_model`→`new_model` rename |
+| Docs | CytoANVI citation ("in prep") + scANVI/scArches/scHPL refs; killed broken `https://doi.org/` link + all `<!-- to do -->` placeholders in cytovi.md; new "Descriptive model" section; release-candidate banner replacing internal status table; install → `cytoanvi` package; synthetic-data admonition + preprocessing pointer in tutorial |
+| Tests | new `test_cytoanvi_elbo_components.py` (direct ELBO/nan-mask/classification_ratio/n_labels==0, L-034); `test_cytoanvi_continual.py` Fisher sanity; `@pytest.mark.slow` training-descends; seeded RNG in 2 tests; `--runslow` conftest guard |
+| Packaging | `name="cytoanvi"`, fork URLs/maintainer, CytoANVI description; dual-BSD LICENSE (C2 fix); `[tool.hatch.build.targets.sdist]` excludes + `.gitattributes`; ruff `py312`; CLAUDE.md paths; README fork banner + de-badged |
+| Benchmark reporting | B5 `mean_auroc` primary (D-009); B3 `concordance` relabeled NOT-accuracy (D-010); B4/B6 "PLUMBING ONLY", B9 "BLOCKED", B8 shallow-tree caveat in manifests; B5 single-seed caveat; "Label provenance & limitations" section; inferential-stats note + `bootstrap_ci` helper |
 
-## 2. Cumulative benchmark status
+Living-repo: added D-008/009/010, L-032/033/034; TODO registry updated.
 
-| Task | Status | Result |
-|------|--------|--------|
-| B1 Roider | ✓ pub-grade | Δ+0.121±0.040 ✅ gate |
-| B1 Nuñez inductive | ✓ complete (2026-07-01 05:58) | CytoANVI 0.9751±0.0003, Δ+0.017 (ceiling) |
-| B2 Roider | ✓ | bio +0.108, batch Δ−0.006 |
-| B2 Nuñez r0.05 | ✓ | batch Δ−0.005 |
-| B3 roider-full | RUNNING (job 25132400, 3 seeds) | smoke gate ✅ |
-| B4 | Blocked (pseudo split) | plumbing only |
-| B5 roider-e1000 | ✓ multiseed | best 0.833±0.122, mean 0.462±0.075 |
-| B5 roider-full sweep | RUNNING (job 25132895, seed 0, 47 clusters) | — |
-| B6 | Blocked | plumbing only |
-| B8 | ✅ pub-gate | Δ_hier +0.0862±0.0027 (3-seed) |
-| B9 | Blocked (mapqc) | — |
+## 2. Decisions this session
 
-## 3. SLURM state
+- **D-008**: Distribute standalone as PyPI `cytoanvi` (not upstream PR). Dual-BSD LICENSE retains scvi-tools copyright.
+- **D-009**: B5 headline = `mean_auroc` (≈0.46), `best_auroc` demoted to labeled secondary.
+- **D-010**: B3 metric kept but relabeled inter-method concordance, NOT accuracy.
 
-| Job ID | Name | Status | Purpose |
-|--------|------|--------|---------|
-| 25132400 | cytoanvi_p3a_roider_b3 | RUNNING | B3 full-cohort 3 seeds, 1000 epochs |
-| 25132895 | cytoanvi_p3b_roider_b5sweep | RUNNING | B5 sweep seed 0, 47 clusters |
-| 25089685 | vs_val | PENDING DependencyNeverSatisfied | Stale; USER should cancel |
-| 25102610 | cytoanvi_p7_aggregate | PENDING DependencyNeverSatisfied | Stale; USER should cancel |
-| 25102547 | cytoanvi_p6_b9_mapqc | PENDING DependencyNeverSatisfied | Stale; blocked on mapqc |
+## 3. Remaining blockers — NOT actionable by code (need data/compute/lab)
 
-## 4. Open items checklist
+| Blocker | Needs |
+|---------|-------|
+| Full-cohort Roider B3/B5 artifacts | SLURM jobs 25140597/8 to finish |
+| Real B3 accuracy claim | independent manually-gated panel-2 labels OR FlowSOM/XGBoost baseline |
+| B5 roider-full reproducibility | rerun at 3 seeds (currently `seeds=[0]`) |
+| Meaningful B5 (>0.7) | external novel-cell-type dataset |
+| B4/B6 continual-update validation | real case/control cytometry (pseudo-batch = plumbing only) |
+| B9 mapQC | install `mapqc` + validate |
+| Real DOIs | swap "in preparation" once preprints post |
 
-| ID | Item | Status |
-|----|------|--------|
-| B3-monitor | Check job 25132400 logs; concordance ≥ 0.70 | RUNNING |
-| B5-monitor | Check job 25132895 logs; verify 47th cluster completes | RUNNING |
-| aggregate | Run manifest-mode aggregation after B3+B5 land | Pending B3+B5 |
-| scancel | `scancel 25089685 25102610 25102547` | USER action required |
-| mapqc | Install `mapqc` in conda env | USER action required |
-| B4-real | Real rLN vs FL/MCL split or demote to supplement | USER decision |
-| Figshare | Archive `nunez_annotated.h5ad` | USER credentials required |
-| P5-E | conda lock / REPRODUCE.md / Singularity.def | USER decision |
+## 4. Deliberately deferred (low payoff / high risk this pass)
 
-## 5. Open items for next session
+EWC per-sample-gradient Fisher rewrite (documented instead); GPU-sync profiling optimization (M-1); `reconst_loss` internal rename (M-2).
 
-**Check B3 (job 25132400):**
-```bash
-sacct -j 25132400 --format=JobID,State,Elapsed,ExitCode
-ls -la .scratch/cytoanvi-benchmark/results/roider_full_b3_s{0,1,2}.json
-```
+## 5. Next session
 
-**Check B5 (job 25132895):**
-```bash
-sacct -j 25132895 --format=JobID,State,Elapsed,ExitCode
-cat .scratch/cytoanvi-benchmark/slurm/out/cytoanvi_p3b_roider_b5sweep_25132895.log | tr '\r' '\n' | grep -E "cluster|Epoch 1/1000|train_loss|Error|NaN" | tail -20
-```
-
-**After both complete:**
-```bash
-python benchmarks/common/aggregate_results.py \
-  --manifest .scratch/cytoanvi-benchmark/publication_manifest.json \
-  --output .scratch/cytoanvi-benchmark/results/publication_summary.json
-```
-- Update FINDINGS_REGISTRY with F-012+ (B3) and F-013+ (B5 sweep full).
-
-**Commits this session:** `bb52d551` (C1–C4 clarity)
-**Session 11 commit:** `53bcf24e` (7 correctness fixes)
+- Land B3/B5 full-cohort results; run manifest-mode aggregation; add F-012+/F-013+ findings.
+- Cancel stale jobs; `scancel 25089685 25102610 25102547`.
+- Decide B4 real case/control source; obtain panel-2 gating for B3.
+- Commit scope this session: code + docs + tests + packaging + benchmark-reporting (left `.scratch/` artifacts unstaged per sdist-exclude policy).

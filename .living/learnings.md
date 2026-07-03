@@ -231,3 +231,24 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **mitigation_type**: ambient-awareness
 **structural_mitigation_candidate**: 
 **Body**: `locals().get("was_training")` was used to guard the finally block against an OOM scenario where `was_training` might not yet be assigned. The fix: move the snapshot before the try block. The snapshot is read-only (no side effects), so it can safely execute before the try. The `locals().get()` pattern is always a red flag — if a variable might not be assigned, the real fix is to assign it before the try, not to look it up from the locals dict in finally.
+
+### L-032 — [2026-07-03] AnnData.concatenate is removed in anndata ≥0.10 — use anndata.concat
+**Category**: dependency-drift
+**Tags**: anndata, concatenate, runtime-error, hierarchy, scHPL-update
+**mitigation_type**: ambient-awareness
+**structural_mitigation_candidate**: grep for `.concatenate(` across the codebase in CI
+**Body**: `src/cytoanvi/hierarchy.py` called `reference_adata.concatenate(query_adata)` in the scHPL `mode='update'` path. `AnnData.concatenate` was deprecated in anndata 0.8 and removed in 0.10+, so any user on a current anndata (the scvi-tools default) hit an `AttributeError` at runtime — but only when exercising that specific branch, so no test caught it. Fix: `anndata.concat([reference_adata, query_adata], join="outer", index_unique="-")` (the `index_unique="-"` preserves the batch-suffix obs-name dedup that the old API did implicitly). Lesson: removed-API calls hidden in rarely-exercised branches are invisible to smoke tests — grep for them.
+
+### L-033 — [2026-07-03] EWC Fisher importance here is (E[grad])², not E[grad²] — lambda is not portable
+**Category**: numerical-semantics
+**Tags**: EWC, fisher, continual-update, ewc_importance, batch-mean-gradient
+**mitigation_type**: documentation
+**structural_mitigation_candidate**: per-sample gradients via torch.func.vmap+grad (deferred — too invasive)
+**Body**: `fisher_importances` in `_continual.py` calls `loss.backward()` on a batch-MEAN loss, so the accumulated squared gradient is `(E[grad])²`, the square of the mean gradient — NOT the true diagonal Fisher `E[grad²]`. The two differ by a factor that scales with batch size. Training isn't broken (the bias is absorbed into the `ewc_importance` λ hyperparameter), but λ values are NOT portable across batch sizes or other EWC implementations, and absolute importances are not interpretable. Decision this session: document the approximation in the docstring rather than rewrite to per-sample gradients. Anyone copying an EWC λ from the RNA domain (e.g. 100) will get meaningless strength — λ must be tuned for this codebase.
+
+### L-034 — [2026-07-03] The semi-supervised ELBO had zero direct unit tests — smoke tests can't see a dropped nan-mask
+**Category**: test-coverage
+**Tags**: elbo, unit-test, nan-mask, classification_ratio, N_EPOCHS-2
+**mitigation_type**: structural
+**structural_mitigation_candidate**: DONE — added tests/cytoanvi/test_cytoanvi_elbo_components.py
+**Body**: Every CytoANVI test went through `model.train()` for `N_EPOCHS=2` then checked outputs. None exercised `CytoANVAE.loss()` directly, so a dropped `nan_mask` from the reconstruction term, a wrong KL coefficient, a collapsed M1+M2 hierarchy, or `classification_ratio` silently pinned to 0 would all still "train" and pass. Added a direct-loss test that asserts: finite loss/reconstruction/KL; masked markers do NOT change reconstruction (with `torch.manual_seed` reset to neutralize the stochastic z2 sample); `loss(ratio=1) == loss(ratio=0) + ce_loss`; and `n_labels==0` raises. Key gotcha discovered: `LossOutput.reconstruction_loss`/`kl_local` are dicts (`lo.reconstruction_loss["reconstruction_loss"]`), and the loss path samples z2 stochastically so deterministic comparisons need a seed reset before each call.

@@ -1,3 +1,8 @@
+> **This is the CytoANVI fork of [scvi-tools](https://github.com/scverse/scvi-tools).**
+> CytoANVI adds semi-supervised, annotation-aware variational inference for antibody-based
+> single-cell cytometry (mass cytometry, flow cytometry, CITE-seq protein).
+> The upstream scvi-tools package is maintained by the [scverse community](https://scverse.org).
+
 <a href="https://scvi-tools.org/">
   <img
     src="https://github.com/scverse/scvi-tools/blob/main/docs/_static/scvi-tools-horizontal.svg?raw=true"
@@ -6,13 +11,8 @@
   >
 </a>
 
-[![Stars][gh-stars-badge]][gh-stars-link]
 [![PyPI][pypi-badge]][pypi-link]
 [![PyPIDownloads][pepy-badge]][pepy-link]
-[![CondaDownloads][conda-badge]][conda-link]
-[![Docs][docs-badge]][docs-link]
-[![Build][build-badge]][build-link]
-[![Coverage][coverage-badge]][coverage-link]
 
 [scvi-tools] (single-cell variational inference tools) is a package for probabilistic modeling and
 analysis of single-cell omics data, built on top of [PyTorch] and [AnnData].
@@ -25,6 +25,7 @@ spatial omics data:
 - Dimensionality reduction
 - Data integration
 - Automated annotation
+- Cytometry label transfer with CytoANVI
 - Factor analysis
 - Doublet detection
 - Spatial deconvolution
@@ -33,6 +34,16 @@ spatial omics data:
 In the [user guide], we provide an overview of each model. All model implementations have a
 high-level API that interacts with [Scanpy] and includes standard save/load functions, GPU
 acceleration, etc.
+
+CytoANVI is available as a release-candidate top-level package for semi-supervised cytometry label
+transfer:
+
+```python
+from cytoanvi import CytoANVI
+```
+
+See the CytoANVI user guide for current benchmark status, optional dependencies, and preprocessing
+requirements before using it for publication-scale cytometry analyses.
 
 # Rapid development of novel probabilistic models
 
@@ -46,16 +57,10 @@ deploying new models with scvi-tools.
 
 # Basic installation
 
-For conda,
+For pip,
 
 ```bash
-conda install scvi-tools -c conda-forge
-```
-
-and for pip,
-
-```bash
-pip install scvi-tools
+pip install cytoanvi
 ```
 
 Please be sure to install a version of [PyTorch] that is compatible with your GPU (if applicable).
@@ -113,28 +118,19 @@ professional services, travel, workshops, and a variety of other needs.
 </a>
 </div>
 
-Copyright (c) 2026, Yosef Lab, Weizmann Institute of Science
+Copyright (c) 2020, The scvi-tools development team
+Copyright (c) 2026, CytoANVI contributors (Mikhael Manurung)
 
 [anndata]: https://anndata.readthedocs.io/en/latest/
-[build-badge]: https://github.com/scverse/scvi-tools/actions/workflows/build.yml/badge.svg
-[build-link]: https://github.com/scverse/scvi-tools/actions/workflows/build.yml/
 [codebase overview]: https://docs.scvi-tools.org/en/stable/user_guide/background/codebase_overview.html
-[conda-badge]: https://img.shields.io/conda/dn/conda-forge/scvi-tools?logo=Anaconda
-[conda-link]: https://anaconda.org/conda-forge/scvi-tools
-[contributing guide]: https://docs.scvi-tools.org/en/stable/developer/code.html
-[coverage-badge]: https://codecov.io/gh/scverse/scvi-tools/branch/main/graph/badge.svg
-[coverage-link]: https://codecov.io/gh/scverse/scvi-tools
-[docs-badge]: https://readthedocs.org/projects/scvi/badge/?version=latest
-[docs-link]: https://scvi.readthedocs.io/en/stable/?badge=stable
-[documentation]: https://docs.scvi-tools.org/
+[contributing guide]: https://github.com/mdmanurung/scvi-tools/blob/main/CONTRIBUTING.md
+[documentation]: https://github.com/mdmanurung/scvi-tools
 [forum]: https://discourse.scvi-tools.org
-[gh-stars-badge]: https://img.shields.io/github/stars/scverse/scvi-tools?style=flat&logo=GitHub&color=blue
-[gh-stars-link]: https://github.com/scverse/scvi-tools/stargazers
-[issues]: https://github.com/scverse/scvi-tools/issues
-[pepy-badge]: https://static.pepy.tech/badge/scvi-tools
-[pepy-link]: https://pepy.tech/project/scvi-tools
-[pypi-badge]: https://img.shields.io/pypi/v/scvi-tools.svg
-[pypi-link]: https://pypi.org/project/scvi-tools
+[issues]: https://github.com/mdmanurung/scvi-tools/issues
+[pepy-badge]: https://static.pepy.tech/badge/cytoanvi
+[pepy-link]: https://pepy.tech/project/cytoanvi
+[pypi-badge]: https://img.shields.io/pypi/v/cytoanvi.svg
+[pypi-link]: https://pypi.org/project/cytoanvi
 [pyro]: https://pyro.ai/
 [pytorch]: https://pytorch.org
 [pytorch lightning]: https://lightning.ai/docs/pytorch/stable/

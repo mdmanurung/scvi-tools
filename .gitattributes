@@ -1,0 +1,16 @@
+# Exclude non-source directories and files from git archive / release tarballs.
+.scratch/ export-ignore
+.living/ export-ignore
+todo/ export-ignore
+notes/ export-ignore
+analysis/ export-ignore
+benchmarks/ export-ignore
+vignettes/ export-ignore
+skillpacks/ export-ignore
+tests/ export-ignore
+docs/ export-ignore
+data/ export-ignore
+_test/ export-ignore
+.claude/ export-ignore
+.github/ export-ignore
+*.pdf export-ignore

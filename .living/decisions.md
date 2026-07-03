@@ -75,3 +75,24 @@ Record non-obvious choices made during development. One entry per decision. Refe
 - **#8 HCE routing**: Hand-rolled HCE setup/train can drift from flat arm's config; both arms now route through `train_cytoanvi(hierarchy_edges=...)` (see L-013).
 **Consequences**: No result files were written before cancellation. Resubmitted as job 25108052.
 **Status**: active
+
+### D-008 — [2026-07-03] Distribute CytoANVI as a standalone package named `cytoanvi` (not an upstream scvi-tools PR)
+**Source**: Publication-readiness review (session 13); maintainer decision.
+**Context**: The packaging review found the fork still published under `name = "scvi-tools"` with scverse URLs/maintainers, which would collide with the upstream PyPI package. Two paths existed: upstream PR to scverse, or standalone release.
+**Decision**: Release standalone under PyPI name `cytoanvi`. `pyproject.toml` identity (name, description, authors/maintainers, Source/Home-page URLs) now points to the fork (github.com/mdmanurung/scvi-tools, Mikhael Manurung). All self-referencing optional-dep extras rewritten `scvi-tools[...]` → `cytoanvi[...]`. Install docs/README updated accordingly. LICENSE now carries dual BSD-3 attribution (upstream scvi-tools dev team + CytoANVI contributors) to satisfy BSD-3 clause 1.
+**Consequences**: The wheel still ships both `scvi` and `cytoanvi` packages. A new `[tool.hatch.build.targets.sdist]` exclude list + `.gitattributes` export-ignore keep `.scratch/`, `.living/`, `todo/`, logs, and PDFs out of published artifacts.
+**Status**: active
+
+### D-009 — [2026-07-03] B5 novelty headline metric is mean AUROC, not best AUROC
+**Source**: Benchmark-rigor + methods reviews (session 13).
+**Context**: B5 results led with `best_auroc` (max over ~47 held-out cell types ≈ 0.83) while `mean_auroc` (≈ 0.46, below chance) was buried. `best_auroc` is a maximum, not a summary statistic — reporting it as headline overstates the uncertainty module's utility.
+**Decision**: `mean_auroc` (and `mean_auroc_fdr_sig`) is the PRIMARY reported field everywhere (task return dict, aggregation, manifest). `best_auroc` retained only as an explicitly-labeled secondary/alias (kept because `test_aggregate_results.py` asserts on it). Underlying computation unchanged — only presentation and labels.
+**Consequences**: The user guide and manifests now report B5 honestly as near-chance on most T-cell subtypes; a genuine improvement requires either a better uncertainty formulation or an external novel-cell-type dataset.
+**Status**: active
+
+### D-010 — [2026-07-03] B3 cross-panel metric is inter-method concordance, labeled as NOT accuracy
+**Source**: Benchmark-rigor + methods reviews (session 13).
+**Context**: `task_b3_panel_divergent` reports `p2_inter_method_agreement_vs_knn` — agreement between CytoANVI predict() and CytoVI-kNN on panel-2, where both share the CytoVI encoder backbone and there is NO panel-2 ground truth. Two methods that are both wrong would score high.
+**Decision**: Keep the metric (no independent labels available) but relabel it unmistakably as inter-method concordance, NOT ground-truth accuracy, in the metric docstring, task note, and ANALYSIS_MANIFEST. A definitive cross-panel claim requires independent manually-gated panel-2 labels or an architecturally-independent baseline (FlowSOM/XGBoost).
+**Consequences**: B3 cannot be presented as validating cross-panel correctness until independent labels are obtained. Tracked as an open blocker.
+**Status**: active

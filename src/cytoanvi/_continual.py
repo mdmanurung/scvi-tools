@@ -58,6 +58,32 @@ def fisher_importances(
     Uses the **semi-supervised ELBO** including the classification term for labeled cells; Fisher
     importances thus protect classifier weights proportional to their contribution. For large
     references, subsamples to ``max_cells`` cells before estimation.
+
+    .. note::
+        **Fisher approximation bias.** This function calls ``loss.backward()`` once per
+        *batch-mean* loss, so the accumulated squared gradient equals ``(E[grad])^2`` rather
+        than the true diagonal Fisher ``E[grad^2]``.  The result is therefore a biased
+        diagonal-Fisher proxy: it underestimates importance for parameters whose per-sample
+        gradients cancel in expectation, and its absolute scale depends on ``batch_size`` and
+        ``max_cells``.  Consequently, ``ewc_importance`` (lambda) **must be tuned for this
+        codebase** and cannot be copied from RNA-domain EWC implementations that use a
+        different estimator.
+
+    Parameters
+    ----------
+    model
+        Trained CytoANVI model whose module importances are to be estimated.
+    adata
+        AnnData registered with ``model``. Cells to estimate importances over.
+    max_cells
+        Subsample to at most this many cells (``None`` to use all). Reduces memory and
+        compute at the cost of estimator variance. Controlled by convention C-003.
+    batch_size
+        Mini-batch size for the backward pass. Affects the absolute scale of the returned
+        importances (see note above); keep consistent across reference and query-control
+        calls within one :class:`ContinualUpdate`. Default: 256.
+    seed
+        Random seed for subsampling when ``max_cells`` is active.
     """
     if adata.n_obs == 0:
         raise ValueError("fisher_importances requires a non-empty AnnData")

@@ -74,11 +74,18 @@ def pytest_addoption(parser):
         default=False,
         help="Run tests that are private.",
     )
+    parser.addoption(
+        "--runslow",
+        action="store_true",
+        default=False,
+        help="Run tests that are marked as slow.",
+    )
 
 
 def pytest_configure(config):
     """Docstring for pytest_configure."""
     config.addinivalue_line("markers", "optional: mark test as optional.")
+    config.addinivalue_line("markers", "slow: mark test as slow.")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -183,6 +190,17 @@ def pytest_collection_modifyitems(config, items):
         # Skip all tests not marked with `pytest.mark.mlflow` if `--mlflow-tests` passed
         elif run_mlflow and ("mlflow" not in item.keywords):
             item.add_marker(skip_non_mlflow)
+
+    run_slow = config.getoption("--runslow")
+    skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+    skip_non_slow = pytest.mark.skip(reason="test not having a pytest.mark.slow decorator")
+    for item in items:
+        # All tests marked with `pytest.mark.slow` get skipped unless `--runslow` passed
+        if not run_slow and ("slow" in item.keywords):
+            item.add_marker(skip_slow)
+        # Skip all tests not marked with `pytest.mark.slow` if `--runslow` passed
+        elif run_slow and ("slow" not in item.keywords):
+            item.add_marker(skip_non_slow)
 
 
 @pytest.fixture(scope="session")

@@ -112,27 +112,35 @@ pip install -U scvi-tools[tutorials]
 
 ### CytoANVI optional dependencies
 
+:::{warning}
+**Not yet published to PyPI; install from source into a clean environment.** The `cytoanvi`
+distribution bundles a *modified* `scvi` (CytoVI lives at `scvi.external.cytovi`), so it ships both
+the `scvi` and `cytoanvi` import packages. It must **not** be installed alongside the upstream
+`scvi-tools` package — both provide the `scvi` import and would overwrite each other. Install it
+alone, in a fresh virtualenv/conda env.
+:::
+
 CytoANVI's core label-transfer, uncertainty, save/load, and panel-aware query-mapping APIs install
-with the base package:
+with the base package (installed from a checkout of this repository):
 
 ```bash
-pip install -U cytoanvi
+pip install .
 python -c "from cytoanvi import CytoANVI; print(CytoANVI.__name__)"
 ```
 
 Install only the optional CytoANVI backend you need:
 
 ```bash
-pip install -U "cytoanvi[cytoanvi-hierarchy]"     # scHPL/treeArches helpers
-pip install -U "cytoanvi[cytoanvi-mapping-qc]"    # mapQC query-mapping QC
-pip install -U "cytoanvi[cytoanvi-annbatch]"      # experimental benchmark loader
-pip install -U "cytoanvi[cytoanvi-baselines]"     # FlowSOM benchmark baseline
+pip install ".[cytoanvi-hierarchy]"     # scHPL/treeArches helpers
+pip install ".[cytoanvi-mapping-qc]"    # mapQC query-mapping QC
+pip install ".[cytoanvi-annbatch]"      # experimental benchmark loader
+pip install ".[cytoanvi-baselines]"     # FlowSOM benchmark baseline
 ```
 
 The RAPIDS graph baseline is a benchmark dependency, not part of the stable CytoANVI model API:
 
 ```bash
-pip install -U "cytoanvi[rapids]"
+pip install ".[rapids]"
 ```
 
 For large CytoANVI cytometry atlases, use a CUDA-capable Linux environment when possible. The

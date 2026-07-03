@@ -96,3 +96,10 @@ Record non-obvious choices made during development. One entry per decision. Refe
 **Decision**: Keep the metric (no independent labels available) but relabel it unmistakably as inter-method concordance, NOT ground-truth accuracy, in the metric docstring, task note, and ANALYSIS_MANIFEST. A definitive cross-panel claim requires independent manually-gated panel-2 labels or an architecturally-independent baseline (FlowSOM/XGBoost).
 **Consequences**: B3 cannot be presented as validating cross-panel correctness until independent labels are obtained. Tracked as an open blocker.
 **Status**: active
+
+### D-011 — [2026-07-03] Defer public packaging; ship standalone cytoanvi for internal/clean-env use only
+**Source**: Engineering-maturity review (session 13); maintainer decision on the scvi/ namespace collision (L-035).
+**Context**: dist `cytoanvi` ships both `scvi/` and `cytoanvi/` import packages (the fork needs a modified scvi for CytoVI at `scvi.external.cytovi`), which collides with upstream `scvi-tools` on the `scvi/` import name. Options were Replace / Coexist (vendor CytoVI) / upstream-PR / defer.
+**Decision**: DEFER public/PyPI packaging. Keep the standalone dual-package wheel for research/internal/HPC use, installed alone in a clean environment. Document the "install from source, do not co-install with scvi-tools, not on PyPI" constraint in README + installation docs. Revisit the Replace-vs-Coexist-vs-upstream-PR decision before any PyPI upload.
+**Consequences**: `pip install cytoanvi` from PyPI is intentionally NOT offered; docs use `pip install .` from a checkout. The dual-package collision is acceptable under the clean-env constraint. Version 1.5.0rc1 (inherited from scvi-tools) is left as-is until a real release.
+**Status**: active

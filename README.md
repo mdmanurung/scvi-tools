@@ -2,6 +2,12 @@
 > CytoANVI adds semi-supervised, annotation-aware variational inference for antibody-based
 > single-cell cytometry (mass cytometry, flow cytometry, CITE-seq protein).
 > The upstream scvi-tools package is maintained by the [scverse community](https://scverse.org).
+>
+> **Status: research/internal use — not yet on PyPI.** This fork bundles a *modified* `scvi`
+> (CytoVI lives at `scvi.external.cytovi`), so it ships both the `scvi` and `cytoanvi` import
+> packages. Install it **from source into a clean environment** and do **not** install it alongside
+> the upstream `scvi-tools` package (they collide on the `scvi` import). Public packaging is
+> deferred pending resolution of that namespace decision.
 
 <a href="https://scvi-tools.org/">
   <img

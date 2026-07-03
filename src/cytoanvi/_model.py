@@ -143,18 +143,16 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         encoder_marker_list: list | None = None,
         linear_classifier: bool = False,
         y_prior: Literal["uniform", "empirical"] | torch.Tensor | None = "uniform",
-        class_weighting: Literal[
-            "none", "inverse_frequency", "sqrt_inverse_frequency"
-        ] | torch.Tensor | None = "none",
+        class_weighting: Literal["none", "inverse_frequency", "sqrt_inverse_frequency"]
+        | torch.Tensor
+        | None = "none",
         class_weight_clip: float = 10.0,
         hierarchy_edges: dict[str, list[str]] | None = None,
         reachability_matrix: np.ndarray | torch.Tensor | None = None,
         **model_kwargs,
     ):
         if hierarchy_edges is not None and reachability_matrix is not None:
-            raise ValueError(
-                "Pass only one of hierarchy_edges or reachability_matrix, not both."
-            )
+            raise ValueError("Pass only one of hierarchy_edges or reachability_matrix, not both.")
         if latent_distribution != "normal":
             raise NotImplementedError(
                 "CytoANVI only supports latent_distribution='normal'; the semi-supervised z1 "
@@ -193,17 +191,11 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         )
 
         y_prior_tensor = self._resolve_y_prior(y_prior, n_labels)
-        class_weights = self._resolve_class_weights(
-            class_weighting, class_weight_clip, n_labels
-        )
+        class_weights = self._resolve_class_weights(class_weighting, class_weight_clip, n_labels)
         self.class_weighting_ = (
-            "tensor"
-            if isinstance(class_weighting, torch.Tensor)
-            else (class_weighting or "none")
+            "tensor" if isinstance(class_weighting, torch.Tensor) else (class_weighting or "none")
         )
-        self.class_weight_clip_ = (
-            None if class_weights is None else float(class_weight_clip)
-        )
+        self.class_weight_clip_ = None if class_weights is None else float(class_weight_clip)
         self.class_weights_ = (
             None if class_weights is None else class_weights.detach().cpu().numpy()
         )
@@ -275,9 +267,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     def _sync_encoder_marker_mask_attr(self) -> None:
         """Persist backbone mask on the model for save/load and path-only query prep."""
         enc = getattr(self.module, "encoder_marker_mask", None)
-        self.encoder_marker_mask_ = (
-            np.asarray(enc, dtype=bool) if enc is not None else None
-        )
+        self.encoder_marker_mask_ = np.asarray(enc, dtype=bool) if enc is not None else None
 
     def _observed_label_names(self) -> list[str]:
         """Return observed label category names (excluding the unlabeled category)."""
@@ -620,9 +610,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
     def _resolve_class_weights(
         self,
-        class_weighting: Literal[
-            "none", "inverse_frequency", "sqrt_inverse_frequency"
-        ] | torch.Tensor | None,
+        class_weighting: Literal["none", "inverse_frequency", "sqrt_inverse_frequency"]
+        | torch.Tensor
+        | None,
         class_weight_clip: float,
         n_labels: int,
     ) -> torch.Tensor | None:
@@ -782,9 +772,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             if key not in allowed_missing_keys
             and not any(key.startswith(prefix) for prefix in allowed_missing_prefixes)
         }
-        disallowed_unexpected = {
-            key for key in unexpected if not key.startswith("prior_")
-        }
+        disallowed_unexpected = {key for key in unexpected if not key.startswith("prior_")}
         if disallowed_missing or disallowed_unexpected:
             raise RuntimeError(
                 "Unexpected CytoVI -> CytoANVI state transfer mismatch. "
@@ -1066,8 +1054,12 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         # One module owns the whole update (anchor, both Fishers, combine rule, replay buffer).
         model.module.continual = ContinualUpdate.configure(
-            reference_model, model, replay_adata, control_adata,
-            combine_type=combine_type, seed=seed,
+            reference_model,
+            model,
+            replay_adata,
+            control_adata,
+            combine_type=combine_type,
+            seed=seed,
         )
         # Persisted across save/load (replay buffer excluded); reattached in CytoANVAE.on_load.
         model.continual_update_state_ = model.module.continual.persistable_state()
@@ -1126,9 +1118,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         else:
             self.class_weights_ = self.module.class_weights.detach().cpu().numpy()
         if getattr(self.module, "reachability_matrix_", None) is not None:
-            self.hierarchy_reachability_ = (
-                self.module.reachability_matrix_.detach().cpu().numpy()
-            )
+            self.hierarchy_reachability_ = self.module.reachability_matrix_.detach().cpu().numpy()
         return super().save(
             dir_path,
             prefix=prefix,
@@ -1188,8 +1178,11 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                         nan_mask = full_mask
                 scores.append(
                     compute_uncertainty_scores(
-                        inference_inputs, self.module, tta_rep=tta_rep,
-                        nan_mask=nan_mask, mode=mode,
+                        inference_inputs,
+                        self.module,
+                        tta_rep=tta_rep,
+                        nan_mask=nan_mask,
+                        mode=mode,
                     )
                 )
         return torch.cat(scores).cpu().numpy()

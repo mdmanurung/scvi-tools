@@ -80,9 +80,7 @@ def validate_reachability_matrix(matrix: np.ndarray, n_labels: int) -> None:
         )
 
 
-def build_reachability_matrix(
-    label_names: list[str], edges: dict[str, list[str]]
-) -> np.ndarray:
+def build_reachability_matrix(label_names: list[str], edges: dict[str, list[str]]) -> np.ndarray:
     """Build a reachability matrix from a parent→children edge dictionary.
 
     Every name appearing in ``edges`` (as a parent key or a child value) must also appear
@@ -111,9 +109,7 @@ def build_reachability_matrix(
     """
     if len(label_names) != len(set(label_names)):
         duplicates = sorted({n for n in label_names if label_names.count(n) > 1})
-        raise ValueError(
-            f"label_names must not contain duplicates; repeated names: {duplicates}."
-        )
+        raise ValueError(f"label_names must not contain duplicates; repeated names: {duplicates}.")
 
     if not edges and len(label_names) == 0:
         return np.zeros((0, 0), dtype=np.float32)
@@ -140,9 +136,7 @@ def build_reachability_matrix(
 
     missing = sorted(set(label_names) - nodes)
     if missing:
-        raise ValueError(
-            f"label_names not present in hierarchy edges: {missing}."
-        )
+        raise ValueError(f"label_names not present in hierarchy edges: {missing}.")
     extra_nodes = sorted(nodes - set(label_names))
     if extra_nodes:
         raise ValueError(
@@ -198,16 +192,12 @@ def _validate_dag(children: dict[str, list[str]], nodes: set[str]) -> None:
         if node in visiting:
             cycle_start = stack.index(node)
             cycle = stack[cycle_start:] + [node]
-            raise ValueError(
-                "hierarchy edges contain a cycle: " + " -> ".join(cycle) + "."
-            )
+            raise ValueError("hierarchy edges contain a cycle: " + " -> ".join(cycle) + ".")
         visiting.add(node)
         stack.append(node)
         for child in children.get(node, []):
             if child not in nodes:
-                raise ValueError(
-                    f"hierarchy edge references unknown node {child!r}."
-                )
+                raise ValueError(f"hierarchy edge references unknown node {child!r}.")
             dfs(child, stack)
         stack.pop()
         visiting.remove(node)

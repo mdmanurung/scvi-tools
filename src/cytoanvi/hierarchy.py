@@ -59,10 +59,7 @@ def _ensure_model_labels_represented(
         except ValueError:
             missing.append(label)
     if missing:
-        raise ValueError(
-            "Model labels not represented in scHPL tree: "
-            f"{sorted(missing, key=str)}"
-        )
+        raise ValueError(f"Model labels not represented in scHPL tree: {sorted(missing, key=str)}")
 
 
 def _infer_leaf_to_model_mapping(
@@ -76,9 +73,7 @@ def _infer_leaf_to_model_mapping(
         if len(candidates) == 1:
             mapping[leaf] = candidates[0]
         elif len(candidates) > 1:
-            raise ValueError(
-                f"Ambiguous mapping for scHPL leaf {leaf!r}: matches {candidates}"
-            )
+            raise ValueError(f"Ambiguous mapping for scHPL leaf {leaf!r}: matches {candidates}")
 
     return mapping
 
@@ -159,8 +154,7 @@ def reachability_from_schpl_tree(
     _ensure_model_labels_represented(root, label_names, leaf_to_model)
 
     representatives = {
-        label: _representative_schpl_node(label, root, leaf_to_model)
-        for label in label_names
+        label: _representative_schpl_node(label, root, leaf_to_model) for label in label_names
     }
     n_labels = len(label_names)
     matrix = np.zeros((n_labels, n_labels), dtype=np.float32)

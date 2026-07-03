@@ -43,6 +43,7 @@ _NAN_LAYER_KEY = CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK  # "nan_layer"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_adata(n_genes: int = 20, n_batches: int = 2, n_labels: int = 5):
     """Minimal synthetic cytometry AnnData (mirrors test_cytoanvi._make_adata)."""
     adata = synthetic_iid(
@@ -94,6 +95,7 @@ def _forward(module, tensors):
 # C1-a: ELBO returns finite scalar loss and finite per-cell components
 # ---------------------------------------------------------------------------
 
+
 def test_elbo_returns_finite_loss():
     """loss(), reconstruction_loss, and kl_local are all finite scalars/tensors."""
     adata = _make_adata()
@@ -125,6 +127,7 @@ def test_elbo_returns_finite_loss():
 # ---------------------------------------------------------------------------
 # C1-b: nan-mask contract — masked columns do NOT contribute to reconst loss
 # ---------------------------------------------------------------------------
+
 
 def test_nan_mask_excludes_missing_markers():
     """Cells/markers with nan_mask=0 must NOT contribute to reconstruction loss.
@@ -203,6 +206,7 @@ def test_nan_mask_excludes_missing_markers():
 # C1-c: classification_ratio controls the CE contribution
 # ---------------------------------------------------------------------------
 
+
 def test_classification_ratio_controls_ce_contribution():
     """With ratio=0 CE is not added to loss; with ratio=1 it is.
 
@@ -242,12 +246,15 @@ def test_classification_ratio_controls_ce_contribution():
     )
 
     # The CE values from both calls must be the same (same seed)
-    torch.testing.assert_close(lo0.classification_loss, lo1.classification_loss, atol=1e-6, rtol=0.0)
+    torch.testing.assert_close(
+        lo0.classification_loss, lo1.classification_loss, atol=1e-6, rtol=0.0
+    )
 
 
 # ---------------------------------------------------------------------------
 # C1-d: n_labels == 0 guard raises ValueError cleanly
 # ---------------------------------------------------------------------------
+
 
 def test_cytoanvae_n_labels_zero_raises():
     """Constructing CytoANVAE with n_labels < 1 must raise a descriptive ValueError."""
@@ -260,6 +267,7 @@ def test_cytoanvae_n_labels_zero_raises():
 # ---------------------------------------------------------------------------
 # M3: training descends (slow — requires ~20 epochs)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.slow
 def test_training_elbo_descends():

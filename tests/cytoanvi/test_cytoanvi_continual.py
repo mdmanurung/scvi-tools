@@ -65,6 +65,7 @@ def _setup_and_train(adata, max_epochs: int = 2):
 # I1: Fisher importances are non-negative and finite
 # ---------------------------------------------------------------------------
 
+
 def test_fisher_importances_are_nonnegative_and_finite():
     """fisher_importances returns per-parameter CPU tensors that are non-negative and finite.
 

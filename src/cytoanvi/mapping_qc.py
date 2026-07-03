@@ -18,8 +18,7 @@ if TYPE_CHECKING:
     from cytoanvi._model import CytoANVI
 
 _MAPQC_INSTALL_MSG = (
-    "mapqc is required for mapping QC. "
-    "Install with: pip install scvi-tools[cytoanvi-mapping-qc]"
+    "mapqc is required for mapping QC. Install with: pip install scvi-tools[cytoanvi-mapping-qc]"
 )
 
 DEFAULT_EMB_KEY = "X_CytoANVI"

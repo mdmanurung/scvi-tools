@@ -13,7 +13,7 @@ Tracks future work items, ideas, and planned improvements.
 | Roider Phase-3 B5 holdout sweep (job 25140598 RUNNING ~11h, seed 0; supersedes 25132895/25132401) | critical | in_progress | analysis | 2026-07-03 | mdmanurung | — |
 | Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | done | analysis | 2026-06-29 | mdmanurung | — |
 | Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
-| B5 3-seed auto-merge ARMED: job 25144367 (afterany dep on B5 s0/s1/s2) → roider_full_b5_sweep_multiseed.json; then repoint manifest B5 to it | high | in_progress | infrastructure | 2026-07-03 | mdmanurung | — |
+| B5 47-cluster sweep infeasible (L-038): 3 jobs + merge CANCELLED 2026-07-04. Redesigned to 11 types + CytoVI OOD baseline + incremental writes; smoke-verified; scripts prepped, NOT submitted (awaiting approval) | high | in_progress | analysis | 2026-07-04 | mdmanurung | — |
 | Fix ruff lint findings on cytoanvi package | medium | done | infrastructure | 2026-06-29 | mdmanurung | — |
 | Fix B5 AUROC SE formula (Wilcoxon numerator missing — FDR all-significant) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Fix unseeded np.random.choice in test_hierarchy_schpl_mock.py | low | done | testing | 2026-06-30 | mdmanurung | — |

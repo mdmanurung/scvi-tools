@@ -22,6 +22,7 @@ from benchmarks.common.training import (
 from . import metrics
 from .baselines import (
     cytovi_latent_and_knn,
+    cytovi_novelty_score,
     flowsom_knn,
     harmony_latent_and_knn,
     rapids_graph_knn,
@@ -85,9 +86,7 @@ def _optional_label_transfer_metrics(
             seed=seed,
             **baseline_kwargs,
         )
-        return _label_transfer_metrics_from_unlabeled(
-            true, masked, held, pred_unlab, unlab_mask
-        )
+        return _label_transfer_metrics_from_unlabeled(true, masked, held, pred_unlab, unlab_mask)
     except error_types as e:
         # Optional baselines should be recorded in JSON without aborting B1.
         import traceback
@@ -468,8 +467,18 @@ def task_b5_novelty(
     cytoanvi_training_config=None,
     b5_mode="transductive",
     specificity=0.95,
+    compute_logit=True,
+    cytovi_baseline=False,
+    cytovi_n_neighbors=15,
 ):
-    """B5: does get_uncertainty flag a cell type held out of the reference entirely?"""
+    """B5: does get_uncertainty flag a cell type held out of the reference entirely?
+
+    ``compute_logit`` controls whether the second (``mode="logit"``) TTA uncertainty pass runs;
+    the headline metric uses the ``latent`` pass, so skip logit (``compute_logit=False``) to
+    roughly halve the per-holdout evaluation cost. ``cytovi_baseline=True`` (inductive mode) also
+    fits an unsupervised CytoVI novelty baseline (latent kNN-distance OOD score) on the seen cells
+    reports its AUROC alongside CytoANVI's, turning B5 into a comparative benchmark.
+    """
     if b5_mode not in {"transductive", "inductive"}:
         raise ValueError("b5_mode must be one of {'transductive', 'inductive'}.")
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -545,25 +554,32 @@ def task_b5_novelty(
             annbatch_config=annbatch_config,
             **_training_config(cytoanvi_training_config),
         )
-        unc_latent = model.get_uncertainty(eval_adata, mode="latent", batch_size=batch_size)
-        unc_logit = model.get_uncertainty(eval_adata, mode="logit", batch_size=batch_size)
         calib_mask = ~eval_is_novel
+        unc_latent = model.get_uncertainty(eval_adata, mode="latent", batch_size=batch_size)
         latent_extra = metrics.precision_at_specificity(
             unc_latent,
             eval_is_novel,
             specificity=specificity,
             uncertainty_ref=unc_latent[calib_mask],
         )
-        logit_extra = metrics.precision_at_specificity(
-            unc_logit,
-            eval_is_novel,
-            specificity=specificity,
-            uncertainty_ref=unc_logit[calib_mask],
-        )
         latent_result = metrics.novelty_auroc(unc_latent, eval_is_novel)
-        logit_result = metrics.novelty_auroc(unc_logit, eval_is_novel)
         latent_result.update(latent_extra)
-        logit_result.update(logit_extra)
+
+        # Secondary logit-space uncertainty pass — a second full TTA sweep, so it is skipped when
+        # compute_logit is False to roughly halve the per-holdout evaluation cost.
+        logit_result = None
+        if compute_logit:
+            unc_logit = model.get_uncertainty(eval_adata, mode="logit", batch_size=batch_size)
+            logit_result = metrics.novelty_auroc(unc_logit, eval_is_novel)
+            logit_result.update(
+                metrics.precision_at_specificity(
+                    unc_logit,
+                    eval_is_novel,
+                    specificity=specificity,
+                    uncertainty_ref=unc_logit[calib_mask],
+                )
+            )
+
         import gc
 
         import torch as _torch
@@ -572,6 +588,31 @@ def task_b5_novelty(
         gc.collect()
         if _torch.cuda.is_available():
             _torch.cuda.empty_cache()
+
+        # Unsupervised CytoVI novelty baseline on the SAME seen cells (fair holdout): reports an
+        # independent AUROC so B5 answers "is CytoANVI's uncertainty better than a plain CytoVI
+        # OOD detector at flagging the novel population?" rather than a bare, baseline-free number.
+        cytovi_result = None
+        if cytovi_baseline:
+            try:
+                cytovi_score = cytovi_novelty_score(
+                    work,
+                    eval_adata,
+                    batch_key=batch_key,
+                    sample_key=sample_key,
+                    nan_layer=nan_layer,
+                    n_neighbors=cytovi_n_neighbors,
+                    max_epochs=max_epochs,
+                    n_latent=n_latent,
+                    batch_size=batch_size,
+                )
+                cytovi_result = metrics.novelty_auroc(cytovi_score, eval_is_novel)
+                gc.collect()
+                if _torch.cuda.is_available():
+                    _torch.cuda.empty_cache()
+            except Exception as exc:  # noqa: BLE001 - baseline must never abort the CytoANVI result
+                cytovi_result = {"auroc": float("nan"), "error": repr(exc)}
+
         return {
             "task": "b5_novelty",
             "seed": seed,
@@ -584,6 +625,7 @@ def task_b5_novelty(
             "n_eval": int(len(eval_idx)),
             "latent": latent_result,
             "logit": logit_result,
+            "cytovi_baseline": cytovi_result,
             **metrics.novelty_auroc(unc_latent, eval_is_novel),
         }
 
@@ -630,6 +672,11 @@ def task_b5_holdout_sweep(
     cytoanvi_training_config=None,
     b5_mode="transductive",
     specificity=0.95,
+    max_holdout_types=None,
+    checkpoint_path=None,
+    compute_logit=True,
+    cytovi_baseline=False,
+    cytovi_n_neighbors=15,
 ):
     """B5 sweep: novelty-detection AUROC for each cell type held out in turn.
 
@@ -640,9 +687,24 @@ def task_b5_holdout_sweep(
     ``best_auroc`` — the MAX over cell types — is also retained for secondary analysis but
     is a cherry-picked single-type result and MUST NOT be presented as the summary statistic
     for novelty detection.  Use ``mean_auroc`` as the headline.
+
+    Scaling / comparison options:
+
+    - ``max_holdout_types`` — if set, sweep only the N **most populous** cell types instead of all
+      of them. On roider-full the label set is ~47 Leiden clusters and a full sweep (one training
+      per type) is infeasible in a 48h job; limiting to the major populations (e.g. 11) is both
+      tractable and more interpretable than holding out tiny arbitrary sub-clusters.
+    - ``checkpoint_path`` — if set, the accumulated per-type results are written after **each**
+      type, so a job killed mid-sweep still yields partial results (the sweep otherwise only
+      returns at the end).
+    - ``compute_logit`` / ``cytovi_baseline`` — forwarded to :func:`task_b5_novelty`; the latter
+      adds an unsupervised CytoVI OOD baseline AUROC per type (inductive mode) for comparison.
     """
     labels = np.asarray(adata.obs[labels_key].astype(str))
     types = sorted(t for t in set(labels) if t != unlabeled_category)
+    if max_holdout_types is not None and len(types) > max_holdout_types:
+        freq = {t: int((labels == t).sum()) for t in types}
+        types = sorted(sorted(types, key=lambda t: freq[t], reverse=True)[:max_holdout_types])
     per_type = {}
     for ht in types:
         per_type[ht] = task_b5_novelty(
@@ -661,7 +723,23 @@ def task_b5_holdout_sweep(
             cytoanvi_training_config=cytoanvi_training_config,
             b5_mode=b5_mode,
             specificity=specificity,
+            compute_logit=compute_logit,
+            cytovi_baseline=cytovi_baseline,
+            cytovi_n_neighbors=cytovi_n_neighbors,
         )
+        if checkpoint_path is not None:
+            from benchmarks.common.seeds import save_json
+
+            save_json(
+                checkpoint_path,
+                {
+                    "task": "b5_holdout_sweep_partial",
+                    "seed": seed,
+                    "swept_types": list(types),
+                    "completed_types": list(per_type),
+                    "per_type": per_type,
+                },
+            )
     valid_types = [ht for ht, v in per_type.items() if not np.isnan(v.get("auroc", float("nan")))]
     aurocs = [per_type[ht]["auroc"] for ht in valid_types]
 
@@ -682,12 +760,8 @@ def task_b5_holdout_sweep(
         _, fdr_q, _, _ = multipletests(p_vals, method="fdr_bh")
         sig_types = [ht for ht, q in zip(valid_types, fdr_q, strict=True) if q < 0.05]
         fdr_fields = {
-            "auroc_pvalues": {
-                ht: float(p) for ht, p in zip(valid_types, p_vals, strict=True)
-            },
-            "auroc_fdr_q": {
-                ht: float(q) for ht, q in zip(valid_types, fdr_q, strict=True)
-            },
+            "auroc_pvalues": {ht: float(p) for ht, p in zip(valid_types, p_vals, strict=True)},
+            "auroc_fdr_q": {ht: float(q) for ht, q in zip(valid_types, fdr_q, strict=True)},
             "n_fdr_significant": len(sig_types),
             "mean_auroc_fdr_sig": (
                 float(np.mean([per_type[ht]["auroc"] for ht in sig_types]))
@@ -728,8 +802,23 @@ def task_b5_holdout_sweep(
         # best_auroc: MAX over cell types — retained for secondary analysis only.
         # This is the AUROC of the single best-detected novel type, not the mean.
         "best_auroc": float(max(aurocs)) if aurocs else float("nan"),
+        "n_holdout_types": len(types),
+        # CytoVI OOD baseline: mean AUROC across types (when cytovi_baseline=True). Compare
+        # against mean_auroc above — CytoANVI's uncertainty is only useful if it beats this.
+        "cytovi_mean_auroc": _cytovi_mean_auroc(per_type),
         **fdr_fields,
     }
+
+
+def _cytovi_mean_auroc(per_type: dict) -> float:
+    """Mean of the CytoVI baseline AUROCs across held-out types (NaN if baseline not run)."""
+    vals = [
+        v["cytovi_baseline"]["auroc"]
+        for v in per_type.values()
+        if isinstance(v.get("cytovi_baseline"), dict)
+        and not np.isnan(v["cytovi_baseline"].get("auroc", float("nan")))
+    ]
+    return float(np.mean(vals)) if vals else float("nan")
 
 
 def _split_reference_query(
@@ -830,9 +919,7 @@ def _b4_setup(
 
     labels = np.asarray(adata.obs[labels_key].astype(str))
     use_real_split = (
-        case_control_key is not None
-        and control_values is not None
-        and case_values is not None
+        case_control_key is not None and control_values is not None and case_values is not None
     )
     if use_real_split:
         ref_adata, query_adata, _fallback_split = _split_reference_query_by_case_control(
@@ -1266,9 +1353,7 @@ def _assign_mapqc_pseudo_samples(adata, batch_key: str, seed: int):
     # rng is reserved exclusively for the subsequent randomised status assignment.
     sample_col = np.empty(adata.n_obs, dtype=object)
     sample_col[ref_idx] = np.take(ref_samples, np.arange(len(ref_idx)) % len(ref_samples))
-    sample_col[query_idx] = np.take(
-        query_samples, np.arange(len(query_idx)) % len(query_samples)
-    )
+    sample_col[query_idx] = np.take(query_samples, np.arange(len(query_idx)) % len(query_samples))
     adata.obs[MAPQC_SAMPLE_KEY] = sample_col
 
     # Preserve rng.choice call order: status is drawn after sample assignment.

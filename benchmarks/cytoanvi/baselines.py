@@ -28,6 +28,8 @@ def cytovi_latent_and_knn(
     max_epochs: int = 1000,
     n_latent: int | None = None,
     batch_size: int | None = None,
+    accelerator: str = "auto",
+    devices: int | list[int] | str = "auto",
 ):
     """Train CytoVI, then k-NN-transfer labels in its latent.
 
@@ -49,6 +51,8 @@ def cytovi_latent_and_knn(
         n_latent=n_latent,
         max_epochs=max_epochs,
         batch_size=batch_size,
+        accelerator=accelerator,
+        devices=devices,
     )
     latent = model.get_latent_representation()
 
@@ -62,6 +66,52 @@ def cytovi_latent_and_knn(
     else:
         pred_unlabeled = np.array([], dtype=object)
     return pred_unlabeled, latent, unlabeled_mask
+
+
+def cytovi_novelty_score(
+    seen_adata,
+    eval_adata,
+    *,
+    batch_key: str | None = "batch",
+    sample_key: str | None = None,
+    nan_layer: str | None = None,
+    n_neighbors: int = 15,
+    max_epochs: int = 1000,
+    n_latent: int | None = None,
+    batch_size: int | None = None,
+    accelerator: str = "auto",
+    devices: int | list[int] | str = "auto",
+) -> np.ndarray:
+    """Unsupervised CytoVI novelty baseline for the B5 holdout sweep.
+
+    Trains CytoVI on the *seen* reference cells (the held-out type is absent from
+    ``seen_adata``, so CytoVI never sees it — a fair novelty holdout), then scores each eval cell
+    by the mean Euclidean distance to its ``n_neighbors`` nearest reference cells in CytoVI latent.
+    Higher distance = further from any seen population = higher novelty score, directly comparable
+    to CytoANVI's TTA uncertainty via :func:`~benchmarks.cytoanvi.metrics.novelty_auroc`.
+
+    Returns a per-eval-cell novelty score aligned with ``eval_adata`` (higher = more novel).
+    """
+    from sklearn.neighbors import NearestNeighbors
+
+    model, _ = train_cytovi(
+        seen_adata,
+        batch_key=batch_key,
+        sample_key=sample_key,
+        nan_layer=nan_layer,
+        layer=SCALED_LAYER,
+        n_latent=n_latent,
+        max_epochs=max_epochs,
+        batch_size=batch_size,
+        accelerator=accelerator,
+        devices=devices,
+    )
+    z_ref = np.asarray(model.get_latent_representation())
+    z_eval = np.asarray(model.get_latent_representation(eval_adata))
+    k = max(1, min(n_neighbors, len(z_ref)))
+    nn = NearestNeighbors(n_neighbors=k).fit(z_ref)
+    dist, _ = nn.kneighbors(z_eval)
+    return dist.mean(axis=1)
 
 
 def raw_marker_knn(
@@ -110,7 +160,8 @@ def harmony_latent_and_knn(
 
     meta_df = adata.obs[[batch_key]].copy().astype(str)
     ho = hm.run_harmony(Z_pca, meta_df, batch_key, random_state=seed, verbose=False)
-    # harmonypy ≥0.2.0 returns Z_corr as (n_cells, n_components); older versions as (n_components, n_cells).
+    # harmonypy >=0.2.0 returns Z_corr as (n_cells, n_components);
+    # older versions use (n_components, n_cells).
     Z_harmony = ho.Z_corr.T if ho.Z_corr.shape[0] == n_comp else ho.Z_corr
 
     labels = np.asarray(adata.obs[labels_key].astype(str))
@@ -140,8 +191,8 @@ def xgboost_classifier(
     """
     try:
         from xgboost import XGBClassifier
-    except ImportError:
-        raise ImportError("xgboost is required: pip install xgboost")
+    except ImportError as err:
+        raise ImportError("xgboost is required: pip install xgboost") from err
     from sklearn.preprocessing import LabelEncoder
 
     X = _get_dense(adata, layer)
@@ -160,57 +211,95 @@ def xgboost_classifier(
     return pred_unlabeled, X, unlabeled_mask
 
 
-def phenograph_knn(
-    adata,
-    labels_key: str,
-    unlabeled_category: str,
-    k: int = 30,
-    seed: int = 0,
-    layer: str = SCALED_LAYER,
+def _cluster_majority_vote_transfer(
+    clusters,
+    X: np.ndarray,
+    labels: np.ndarray,
+    labelled: np.ndarray,
 ):
-    """Phenograph community detection → majority-vote label assignment.
+    """Assign unlabeled cells from cluster plurality labels with marker-kNN fallback."""
+    cluster_labels = np.asarray(clusters).astype(str)
+    if cluster_labels.shape[0] != X.shape[0]:
+        raise ValueError(
+            f"Cluster label count ({cluster_labels.shape[0]}) does not match n_obs ({X.shape[0]})."
+        )
+    n_labelled = int(labelled.sum())
+    if n_labelled == 0:
+        raise ValueError("At least one labelled cell is required for cluster label transfer.")
 
-    Clusters all cells (labeled + unlabeled) jointly, then assigns each
-    community the plurality label from labeled cells in that community.
-    Orphan communities (no labeled cells) fall back to kNN on markers.
-
-    Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
-
-    Requires: ``pip install phenograph``
-    """
-    try:
-        import phenograph
-    except ImportError:
-        raise ImportError("phenograph is required: pip install phenograph")
-
-    X = _get_dense(adata, layer)
-    labels = np.asarray(adata.obs[labels_key].astype(str))
-    labelled = labels != unlabeled_category
-
-    communities, _, _ = phenograph.cluster(X, k=k, seed=seed)
-
-    fallback_knn = KNeighborsClassifier(n_neighbors=min(5, int(labelled.sum())))
+    fallback_knn = KNeighborsClassifier(n_neighbors=min(5, n_labelled))
     fallback_knn.fit(X[labelled], labels[labelled])
 
-    comm_to_label: dict[int, str] = {}
-    for c in np.unique(communities):
-        if c < 0:
+    cluster_to_label: dict[str, str] = {}
+    for c in np.unique(cluster_labels):
+        if c == "-1":
             continue
-        in_comm = (communities == c) & labelled
-        if in_comm.any():
-            vals, counts = np.unique(labels[in_comm], return_counts=True)
-            comm_to_label[c] = vals[np.argmax(counts)]
+        in_cluster = (cluster_labels == c) & labelled
+        if in_cluster.any():
+            vals, counts = np.unique(labels[in_cluster], return_counts=True)
+            cluster_to_label[c] = vals[np.argmax(counts)]
 
     unlabeled_mask = ~labelled
     if unlabeled_mask.any():
         preds = []
         for i in np.where(unlabeled_mask)[0]:
-            c = int(communities[i])
-            preds.append(comm_to_label[c] if c in comm_to_label else fallback_knn.predict(X[[i]])[0])
+            c = cluster_labels[i]
+            preds.append(
+                cluster_to_label[c] if c in cluster_to_label else fallback_knn.predict(X[[i]])[0]
+            )
         pred_unlabeled = np.array(preds, dtype=object)
     else:
         pred_unlabeled = np.array([], dtype=object)
     return pred_unlabeled, X, unlabeled_mask
+
+
+def rapids_graph_knn(
+    adata,
+    labels_key: str,
+    unlabeled_category: str,
+    k: int = 30,
+    resolution: float = 1.0,
+    seed: int = 0,
+    layer: str = SCALED_LAYER,
+):
+    """RAPIDS SingleCell graph clustering plus majority-vote label assignment.
+
+    Clusters all cells (labeled + unlabeled) jointly, then assigns each
+    Leiden community the plurality label from labeled cells in that community.
+    Orphan communities with no labeled cells fall back to kNN on markers.
+
+    Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
+
+    Requires: ``pip install rapids-singlecell[rapids]``
+    """
+    try:
+        import rapids_singlecell as rsc
+    except ImportError as err:
+        raise ImportError(
+            "rapids-singlecell is required: install scvi-tools[rapids] "
+            "or pip install rapids-singlecell[rapids]"
+        ) from err
+    import anndata as ad
+
+    X = _get_dense(adata, layer).astype(np.float32, copy=False)
+    labels = np.asarray(adata.obs[labels_key].astype(str))
+    labelled = labels != unlabeled_category
+    if X.shape[0] < 2:
+        raise ValueError("RAPIDS graph clustering requires at least two cells.")
+
+    graph_adata = ad.AnnData(X=X.copy())
+    graph_adata.obsm["X_baseline"] = X
+    n_neighbors = min(int(k), X.shape[0] - 1)
+    rsc.pp.neighbors(graph_adata, n_neighbors=n_neighbors, use_rep="X_baseline")
+    rsc.tl.leiden(
+        graph_adata,
+        key_added="rapids_graph_clusters",
+        resolution=resolution,
+        random_state=seed,
+    )
+    communities = np.asarray(graph_adata.obs["rapids_graph_clusters"])
+
+    return _cluster_majority_vote_transfer(communities, X, labels, labelled)
 
 
 def flowsom_knn(
@@ -223,52 +312,47 @@ def flowsom_knn(
     seed: int = 0,
     layer: str = SCALED_LAYER,
 ):
-    """FlowSOM SOM + hierarchical metaclustering → majority-vote label assignment.
+    """FlowSOM Python metaclustering plus majority-vote label assignment.
 
     Builds a self-organizing map on all cells in marker space, metaclusters
-    the SOM nodes via agglomerative clustering, then assigns each metacluster
-    the plurality label from labeled cells in that metacluster.
-    Metaclusters with no labeled cells fall back to kNN on markers.
+    the SOM nodes, then assigns each metacluster the plurality label from
+    labeled cells in that metacluster. Metaclusters with no labeled cells fall
+    back to kNN on markers.
 
     Returns ``(pred_for_unlabeled, X, unlabeled_mask)``.
 
-    Requires: ``pip install pyFlowSOM``
+    Requires: ``pip install flowsom``
     """
     try:
-        from pyFlowSOM import map_data_to_nodes, som
-    except ImportError:
-        raise ImportError("pyFlowSOM is required: pip install pyFlowSOM")
-    from sklearn.cluster import AgglomerativeClustering
+        import flowsom
+    except (ImportError, RuntimeError) as err:
+        raise ImportError(
+            "flowsom is required and must import successfully: pip install flowsom"
+        ) from err
+    import anndata as ad
 
-    X = _get_dense(adata, layer)
+    X = _get_dense(adata, layer).astype(np.float32, copy=False)
     labels = np.asarray(adata.obs[labels_key].astype(str))
     labelled = labels != unlabeled_category
 
-    fsom = som(X, xdim=xdim, ydim=ydim, seed=seed)
-    node_per_cell = map_data_to_nodes(X, fsom)
+    flow_adata = ad.AnnData(X=X.copy())
+    if len(adata.var_names) == X.shape[1]:
+        flow_adata.var_names = adata.var_names.astype(str)
+    n_meta = max(1, min(int(n_metaclusters), X.shape[0], int(xdim) * int(ydim)))
+    fsom = flowsom.FlowSOM(
+        flow_adata,
+        n_clusters=n_meta,
+        xdim=xdim,
+        ydim=ydim,
+        seed=seed,
+    )
 
-    node_repr = fsom["codes"]
-    n_meta = min(n_metaclusters, len(node_repr))
-    meta_per_node = AgglomerativeClustering(n_clusters=n_meta).fit_predict(node_repr)
-    metacluster_per_cell = meta_per_node[node_per_cell]
-
-    fallback_knn = KNeighborsClassifier(n_neighbors=min(5, int(labelled.sum())))
-    fallback_knn.fit(X[labelled], labels[labelled])
-
-    meta_to_label: dict[int, str] = {}
-    for c in range(n_meta):
-        in_meta = (metacluster_per_cell == c) & labelled
-        if in_meta.any():
-            vals, counts = np.unique(labels[in_meta], return_counts=True)
-            meta_to_label[c] = vals[np.argmax(counts)]
-
-    unlabeled_mask = ~labelled
-    if unlabeled_mask.any():
-        preds = []
-        for i in np.where(unlabeled_mask)[0]:
-            c = int(metacluster_per_cell[i])
-            preds.append(meta_to_label[c] if c in meta_to_label else fallback_knn.predict(X[[i]])[0])
-        pred_unlabeled = np.array(preds, dtype=object)
+    if hasattr(fsom, "get_cell_data"):
+        cell_data = fsom.get_cell_data()
     else:
-        pred_unlabeled = np.array([], dtype=object)
-    return pred_unlabeled, X, unlabeled_mask
+        cell_data = fsom.mudata["cell_data"]
+    if "metaclustering" not in cell_data.obs:
+        raise KeyError("FlowSOM did not write cell-level 'metaclustering' labels.")
+    metacluster_per_cell = np.asarray(cell_data.obs["metaclustering"])
+
+    return _cluster_majority_vote_transfer(metacluster_per_cell, X, labels, labelled)

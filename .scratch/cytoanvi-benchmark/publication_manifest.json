@@ -135,16 +135,18 @@
     {
       "phase": "P3",
       "task": "b5",
-      "path": "results/roider_full_b5_sweep_s0.json",
+      "path": "results/roider_full_b5_sweep_multiseed.json",
       "dataset": "roider-full",
       "seeds": [
-        0
+        0,
+        1,
+        2
       ],
-      "job_id": "25145052",
-      "status": "running",
+      "job_id": "25145052,25145053,25145054",
+      "status": "complete",
       "required": true,
-      "note": "B5 REDESIGN submitted 2026-07-04 (L-038/L-039): jobs 25145052/25145053/25145054 (seeds 0/1/2), batch_size=16384. Holds out the 11 most populous Leiden clusters (--b5-max-holdout-types 11; feasible vs the infeasible 47-cluster sweep) and adds an unsupervised CytoVI kNN-distance OOD baseline per type (--b5-cytovi-baseline) so B5 is a COMPARISON, not a bare number. Incremental checkpoint roider_full_b5_sweep_s{0,1,2}_partial.json survives timeouts. Auto-merge armed: job 25145055 (afterany) -> roider_full_b5_sweep_multiseed.json. Profiling (job 25145028): per cluster ~88% CytoANVI training, TTA free, CytoVI baseline ~6%.",
-      "caveat": "3-seed redesign IN PROGRESS. Held-out set = 11 largest LEIDEN clusters (not manually-gated biological types; roider-full has no manual gating). PRIMARY metric mean_auroc; compare to cytovi_mean_auroc (a novelty benchmark needs the baseline). best_auroc is max-over-types, NOT a summary statistic."
+      "note": "B5 REDESIGN complete 2026-07-04 (jobs 25145052/53/54, merge 25145055): 3-seed, 11 most-populous Leiden holdouts, CytoVI OOD baseline, batch 16384. RESULT: CytoANVI mean_auroc 0.484\u00b10.019 (below chance) vs CytoVI kNN-distance OOD baseline 0.775\u00b10.002 \u2014 CytoANVI's TTA-uncertainty novelty detection is decisively BEATEN by a trivial CytoVI baseline on all 11 types (0/11).",
+      "caveat": "NEGATIVE RESULT (robust, 3 seeds): B5 does NOT support CytoANVI for novelty detection. Held-out set = 11 largest Leiden clusters (proxy, not manual gating). PRIMARY mean_auroc; best_auroc is max-over-types (not a summary). Follow-up: kNN-distance OOD in CytoANVI's OWN latent to separate 'bad TTA method' vs 'bad latent'."
     },
     {
       "phase": "P5",

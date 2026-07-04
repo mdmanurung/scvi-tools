@@ -82,12 +82,19 @@ def main() -> None:
     # Numeric summary across seeds (mean ± std for all numeric leaves).
     summary = _summarize_numeric(per_seed)
 
-    # Headline metrics across seeds
-    best_aurocs = [per_seed[str(s)].get("best_auroc", float("nan")) for s in found if str(s) in per_seed]
-    mean_aurocs = [per_seed[str(s)].get("mean_auroc", float("nan")) for s in found if str(s) in per_seed]
-    n_fdr_sigs = [per_seed[str(s)].get("n_fdr_significant", 0) for s in found if str(s) in per_seed]
-
     import numpy as np
+
+    # Headline metrics across seeds
+    def _seed_vals(key, default=float("nan")):
+        return [per_seed[str(s)].get(key, default) for s in found if str(s) in per_seed]
+
+    best_aurocs = _seed_vals("best_auroc")
+    mean_aurocs = _seed_vals("mean_auroc")
+    n_fdr_sigs = _seed_vals("n_fdr_significant", 0)
+    # CytoVI OOD baseline (present when the sweep was run with --b5-cytovi-baseline). The
+    # comparison of mean_auroc vs cytovi_mean_auroc is the point of the redesigned B5.
+    cytovi_aurocs = [v for v in _seed_vals("cytovi_mean_auroc") if not np.isnan(v)]
+
     payload = {
         "seeds": found,
         "per_seed": per_seed,
@@ -100,6 +107,13 @@ def main() -> None:
             "mean_auroc_mean": float(np.mean(mean_aurocs)),
             "mean_auroc_std": float(np.std(mean_aurocs, ddof=1)) if len(mean_aurocs) > 1 else 0.0,
             "n_fdr_significant_mean": float(np.mean(n_fdr_sigs)),
+            # BASELINE — CytoANVI's mean_auroc is only useful if it beats this.
+            "cytovi_mean_auroc_mean": (
+                float(np.mean(cytovi_aurocs)) if cytovi_aurocs else float("nan")
+            ),
+            "cytovi_mean_auroc_std": (
+                float(np.std(cytovi_aurocs, ddof=1)) if len(cytovi_aurocs) > 1 else 0.0
+            ),
             # SECONDARY — max over types; not a summary statistic.
             "best_auroc_mean": float(np.mean(best_aurocs)),
             "best_auroc_std": float(np.std(best_aurocs, ddof=1)) if len(best_aurocs) > 1 else 0.0,
@@ -108,8 +122,9 @@ def main() -> None:
 
     save_json(OUT, payload)
     print(f"\nWrote {OUT}")
-    print(f"  [PRIMARY] mean_auroc: {payload['headline']['mean_auroc_mean']:.3f} ± {payload['headline']['mean_auroc_std']:.3f}")
-    print(f"  n_fdr_sig:            {payload['headline']['n_fdr_significant_mean']:.1f}")
+    print(f"  [PRIMARY] mean_auroc:        {payload['headline']['mean_auroc_mean']:.3f} ± {payload['headline']['mean_auroc_std']:.3f}")
+    print(f"  [BASELINE] cytovi_mean_auroc:{payload['headline']['cytovi_mean_auroc_mean']:.3f} ± {payload['headline']['cytovi_mean_auroc_std']:.3f}")
+    print(f"  n_fdr_sig:                   {payload['headline']['n_fdr_significant_mean']:.1f}")
     print(f"  [secondary] best_auroc (max over types, NOT summary): {payload['headline']['best_auroc_mean']:.3f} ± {payload['headline']['best_auroc_std']:.3f}")
 
     # Per-type AUROC summary

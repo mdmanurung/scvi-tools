@@ -26,10 +26,22 @@ from benchmarks.common.fetch_data import VIGNETTE as _VIGNETTE
 from benchmarks.common.training import NAN_LAYER, SCALED_LAYER  # noqa: F401 — re-export
 
 FIGSHARE = {name: fig_id for name, (fig_id, _) in _VIGNETTE.items()}
+FIGSHARE.update(
+    {
+        "roider_p1.h5ad": FIGSHARE["Roider_et_al_BNHL_panel1.h5ad"],
+        "roider_p2.h5ad": FIGSHARE["Roider_et_al_BNHL_panel2.h5ad"],
+    }
+)
+
+ROIDER_PANEL_ALIASES = {
+    "panel1": ("Roider_et_al_BNHL_panel1.h5ad", "roider_p1.h5ad"),
+    "panel2": ("Roider_et_al_BNHL_panel2.h5ad", "roider_p2.h5ad"),
+}
 
 # Entity split for B4/B6 continual-update tasks using the Roider BNHL cohort.
 # FL+DLBCL are used as the reference atlas; MCL+rLN are the novel query entities added in Phase 2.
-# Requires ``adata.obs["Entity"]`` populated by ``benchmarks.common.roider_metadata.annotate_roider_obs``.
+# Requires ``adata.obs["Entity"]`` populated by
+# ``benchmarks.common.roider_metadata.annotate_roider_obs``.
 BNHL_CONTINUAL_SPLIT: dict[str, list[str]] = {
     "ref": ["FL", "DLBCL"],
     "query": ["MCL", "rLN"],
@@ -48,6 +60,15 @@ def _resolve_file(data_dir: str, name: str) -> str:
         if os.path.exists(p) and os.path.getsize(p) > 0:
             return p
     return os.path.join(data_dir, name)
+
+
+def _resolve_any_file(data_dir: str, names: tuple[str, ...]) -> str | None:
+    """Find the first existing file among a set of canonical/legacy names."""
+    for name in names:
+        p = _resolve_file(data_dir, name)
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            return p
+    return None
 
 
 def holdout_safe_name(holdout_type: str) -> str:
@@ -106,18 +127,18 @@ def load_roider(data_dir: str, auto_download: bool = True):
     from scvi.external import cytovi
 
     paths = {}
-    for name in ("roider_p1.h5ad", "roider_p2.h5ad"):
-        p = os.path.join(data_dir, name)
-        if not (os.path.exists(p) and os.path.getsize(p) > 0):
+    for panel_key, names in ROIDER_PANEL_ALIASES.items():
+        p = _resolve_any_file(data_dir, names)
+        if p is None:
             if not auto_download:
                 raise FileNotFoundError(
-                    f"{p} missing; run with auto-download or fetch it (README)."
+                    f"{names[0]} missing; run with auto-download or fetch it (README)."
                 )
-            p = download(name, data_dir)
-        paths[name] = p
+            p = download(names[0], data_dir)
+        paths[panel_key] = p
 
-    p1 = _ensure_scaled(sc.read(paths["roider_p1.h5ad"]))
-    p2 = _ensure_scaled(sc.read(paths["roider_p2.h5ad"]))
+    p1 = _ensure_scaled(sc.read(paths["panel1"]))
+    p2 = _ensure_scaled(sc.read(paths["panel2"]))
     merged = cytovi.merge_batches([p1, p2], batch_key="panel_batch")
     return merged, p1, p2
 
@@ -140,7 +161,16 @@ def _leiden_labels(
     a = adata[:, proteins].copy()
     a.X = np.asarray(a.layers[layer])
     sc.pp.neighbors(a, n_neighbors=15, use_rep="X")
-    sc.tl.leiden(a, resolution=resolution, flavor="igraph", directed=False, seed=seed)
+    # scanpy>=1.12 forwards `seed=` into igraph's community_leiden, which igraph 1.0.0 rejects
+    # ("unexpected keyword argument"). Seed igraph's own RNG instead (it wants a random.Random,
+    # not a numpy Generator) and drop the seed kwarg. n_iterations=2 matches scanpy's igraph-flavor
+    # default; this keeps recompute deterministic and available at any resolution.
+    import random
+
+    import igraph
+
+    igraph.set_random_number_generator(random.Random(seed))
+    sc.tl.leiden(a, resolution=resolution, flavor="igraph", directed=False, n_iterations=2)
     adata.obs[labels_key] = a.obs["leiden"].astype(str).values
     return adata
 

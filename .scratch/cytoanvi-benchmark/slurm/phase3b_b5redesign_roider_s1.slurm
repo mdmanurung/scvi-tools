@@ -5,7 +5,9 @@
 #       (major populations; feasible in 48h AND more interpretable than 47 sub-clusters).
 #   * --b5-cytovi-baseline        -> unsupervised CytoVI OOD baseline AUROC per type, so B5
 #       is a COMPARISON (CytoANVI uncertainty vs CytoVI kNN-distance), not a bare number.
-#   * --b5-no-logit               -> skip the 2nd TTA pass (headline uses latent) to cut cost.
+#   * batch_size 16384 attacks the DOMINANT cost: profiling (job 25145028) shows a cluster is
+#       ~88% CytoANVI training, ~6% CytoVI baseline, and TTA is FREE (0.3s/50 reps). Logit TTA
+#       is kept (also free). Training scales with cells/batch, so a bigger batch = fewer steps.
 #   * --b5-checkpoint             -> incremental per-type write, so a timeout yields partial results.
 # Est: 11 types x ~3h/type (CytoANVI train + latent TTA + CytoVI train + scoring) ~= 33-46h; the
 # checkpoint is the safety net if wall-time is exceeded.
@@ -34,7 +36,6 @@ $PY -m benchmarks.cytoanvi.run \
   --holdout-sweep \
   --b5-max-holdout-types 11 \
   --b5-cytovi-baseline \
-  --b5-no-logit \
   --b5-checkpoint "$RESULTS/roider_full_b5_sweep_s1_partial.json" \
   --out "$RESULTS/roider_full_b5_sweep_s1.json"
 

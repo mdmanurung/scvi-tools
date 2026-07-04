@@ -18,10 +18,13 @@ source /exports/para-lipg-hpc/mdmanurung/scvi-tools/.scratch/cytoanvi-benchmark/
 echo "=== B5 single-cluster PROFILE (roider-full, 6 patients, batch_size=16384) ==="
 echo "Start: $(date)"
 
+# Coarse Leiden (r=0.3 -> few large clusters) + 14 patients so every label clears the inductive
+# >=5-seen-per-label floor; phase PROPORTIONS (train/TTA/cytovi/data) still transfer to full scale.
 $PY -m benchmarks.cytoanvi.run \
   --dataset roider-full --task b5 \
   --labels-key cell_type --batch-key batch \
-  --roider-max-patients 6 \
+  --roider-max-patients 14 \
+  --leiden-resolution 0.3 \
   --b5-mode inductive --b5-cytovi-baseline \
   --max-epochs 1000 --seed 0 \
   --batch-size 16384 \

@@ -98,11 +98,11 @@
       "seeds": [
         0
       ],
-      "job_id": "25140597",
-      "status": "timed_out",
+      "job_id": "25145151",
+      "status": "running",
       "required": true,
-      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400.",
-      "caveat": "Job 25140597 TIMED OUT at 14h wall-limit with no results written (L-037): B3 per seed runs ~4 sequential 1000-epoch trainings on the 1.24M-cell merged cohort; serial 3-seed B3 needs ~40-50h. HELD per maintainer decision 2026-07-03 \u2014 resubmit right-sized (3 parallel single-seed jobs or --time=3-00:00:00) before any B3 full-cohort claim."
+      "note": "B3 RERUN submitted 2026-07-04 (seed 0, job 25145151), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
+      "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
     },
     {
       "phase": "P3",
@@ -112,11 +112,11 @@
       "seeds": [
         1
       ],
-      "job_id": "25140597",
-      "status": "timed_out",
+      "job_id": "25145152",
+      "status": "running",
       "required": true,
-      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400.",
-      "caveat": "Job 25140597 TIMED OUT at 14h wall-limit with no results written (L-037): B3 per seed runs ~4 sequential 1000-epoch trainings on the 1.24M-cell merged cohort; serial 3-seed B3 needs ~40-50h. HELD per maintainer decision 2026-07-03 \u2014 resubmit right-sized (3 parallel single-seed jobs or --time=3-00:00:00) before any B3 full-cohort claim."
+      "note": "B3 RERUN submitted 2026-07-04 (seed 1, job 25145152), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
+      "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
     },
     {
       "phase": "P3",
@@ -126,11 +126,11 @@
       "seeds": [
         2
       ],
-      "job_id": "25140597",
-      "status": "timed_out",
+      "job_id": "25145153",
+      "status": "running",
       "required": true,
-      "note": "Rerun job 25140597 started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication and current trainer-routing/stable-loss fixes. Supersedes failed job 25132400.",
-      "caveat": "Job 25140597 TIMED OUT at 14h wall-limit with no results written (L-037): B3 per seed runs ~4 sequential 1000-epoch trainings on the 1.24M-cell merged cohort; serial 3-seed B3 needs ~40-50h. HELD per maintainer decision 2026-07-03 \u2014 resubmit right-sized (3 parallel single-seed jobs or --time=3-00:00:00) before any B3 full-cohort claim."
+      "note": "B3 RERUN submitted 2026-07-04 (seed 2, job 25145153), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
+      "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
     },
     {
       "phase": "P3",

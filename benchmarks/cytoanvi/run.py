@@ -322,10 +322,11 @@ def _run_tasks(args, p1, p2, unlab, seed):
 
 def main():
     """CLI entry point — parse arguments and dispatch benchmark tasks."""
-    # Allow TF32 matmul on Ampere+/Ada GPUs (L40S, A100). Free speedup for the fp32 MLP matmuls;
-    # a no-op on pre-Ampere cards (V100, TitanXp) and numerically negligible for these models.
-    # (Whether it materially helps depends on whether training is matmul- or launch-bound — see
-    # the speed A/B in .scratch/cytoanvi-benchmark/profile_speed.py.)
+    # Standard Tensor-Core hygiene (PyTorch itself warns to set this). NOTE: the A/B profile
+    # (job 25145234, L-041) showed this gives NO measurable CytoANVI-training speedup — that
+    # training is launch/overhead-bound by the ~n_labels-way ELBO marginalization (many tiny
+    # kernels), not matmul-bound. Kept as harmless hygiene (may help CytoVI/scib matmuls); the
+    # real training-speed lever is fewer label classes (coarser Leiden), not this.
     import torch
 
     torch.set_float32_matmul_precision("high")

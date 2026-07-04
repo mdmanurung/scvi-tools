@@ -5,6 +5,7 @@ Each task returns a plain dict of metrics; run.py serializes them to JSON.
 
 from __future__ import annotations
 
+import time
 import warnings
 
 import numpy as np
@@ -536,11 +537,20 @@ def task_b5_novelty(
         calib_seen = np.concatenate(calib_seen_parts)
         eval_idx = np.concatenate([calib_seen, novel_idx])
 
+        def _timing(phase, since):
+            # Per-phase wall-clock breakdown, printed to the job log so the B5 bottleneck
+            # (data prep vs training vs TTA vs baseline) is observable per held-out type.
+            secs = time.perf_counter() - since
+            print(f"[B5-TIMING] holdout={holdout_type} phase={phase} secs={secs:.1f}", flush=True)
+            return time.perf_counter()
+
+        _t = time.perf_counter()
         work = adata[train_seen].copy()
         eval_adata = adata[eval_idx].copy()
         eval_labels = labels[eval_idx]
         eval_is_novel = eval_labels == holdout_type
         eval_adata.obs[labels_key] = unlabeled_category
+        _t = _timing("data_prep", _t)
         model, a = train_cytoanvi(
             work,
             labels_key=labels_key,
@@ -554,8 +564,10 @@ def task_b5_novelty(
             annbatch_config=annbatch_config,
             **_training_config(cytoanvi_training_config),
         )
+        _t = _timing("cytoanvi_train", _t)
         calib_mask = ~eval_is_novel
         unc_latent = model.get_uncertainty(eval_adata, mode="latent", batch_size=batch_size)
+        _t = _timing("latent_tta", _t)
         latent_extra = metrics.precision_at_specificity(
             unc_latent,
             eval_is_novel,
@@ -579,6 +591,7 @@ def task_b5_novelty(
                     uncertainty_ref=unc_logit[calib_mask],
                 )
             )
+            _t = _timing("logit_tta", _t)
 
         import gc
 
@@ -610,6 +623,7 @@ def task_b5_novelty(
                 gc.collect()
                 if _torch.cuda.is_available():
                     _torch.cuda.empty_cache()
+                _t = _timing("cytovi_baseline", _t)
             except Exception as exc:  # noqa: BLE001 - baseline must never abort the CytoANVI result
                 cytovi_result = {"auroc": float("nan"), "error": repr(exc)}
 

@@ -21,14 +21,14 @@
 set -euo pipefail
 source /exports/para-lipg-hpc/mdmanurung/scvi-tools/.scratch/cytoanvi-benchmark/slurm/_env.sh
 
-echo "=== B5 REDESIGN roider-full sweep seed 1 (11 types, CytoVI baseline, batch_size=8192) ==="
+echo "=== B5 REDESIGN roider-full sweep seed 1 (11 types, CytoVI baseline, batch_size=16384) ==="
 echo "Start: $(date)"
 
 $PY -m benchmarks.cytoanvi.run \
   --dataset roider-full --task b5 \
   --labels-key cell_type \
   --max-epochs 1000 --seed 1 \
-  --batch-size 8192 \
+  --batch-size 16384 \
   --cytoanvi-recipe publication \
   --b5-mode inductive \
   --holdout-sweep \

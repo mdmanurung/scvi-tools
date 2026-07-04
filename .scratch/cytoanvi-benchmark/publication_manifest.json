@@ -140,11 +140,11 @@
       "seeds": [
         0
       ],
-      "job_id": "25140598",
+      "job_id": "25145052",
       "status": "running",
       "required": true,
-      "note": "Rerun job 25140598 (seed 0) started 2026-07-03 on res-hpc-gpu11 with --cytoanvi-recipe publication, --b5-mode inductive, and current stable-loss fixes. Supersedes failed job 25132895. Seeds 1 and 2 submitted 2026-07-03 as jobs 25144240 (s1, res-hpc-gpu16) and 25144241 (s2, res-hpc-gpu15) \u2192 roider_full_b5_sweep_s{1,2}.json. After all three land, merge to results/roider_full_b5_sweep_multiseed.json and repoint this artifact (seeds [0,1,2]). Auto-merge armed: job 25144367 (afterany:25140598:25144240:25144241, partition=short) runs aggregate_b5_multiseed.py the moment all 3 seeds finish \u2192 results/roider_full_b5_sweep_multiseed.json. Repoint this artifact to that file (seeds [0,1,2], status complete) after the merge log confirms.",
-      "caveat": "3-seed run IN PROGRESS (s0=25140598, s1=25144240, s2=25144241). Until all land and are merged, treat as exploratory \u2014 no variance estimate yet. PRIMARY metric is mean_auroc (mean over all held-out cell types); best_auroc is max over types (cherry-picked) and must NOT be presented as the headline novelty-detection statistic."
+      "note": "B5 REDESIGN submitted 2026-07-04 (L-038/L-039): jobs 25145052/25145053/25145054 (seeds 0/1/2), batch_size=16384. Holds out the 11 most populous Leiden clusters (--b5-max-holdout-types 11; feasible vs the infeasible 47-cluster sweep) and adds an unsupervised CytoVI kNN-distance OOD baseline per type (--b5-cytovi-baseline) so B5 is a COMPARISON, not a bare number. Incremental checkpoint roider_full_b5_sweep_s{0,1,2}_partial.json survives timeouts. Auto-merge armed: job 25145055 (afterany) -> roider_full_b5_sweep_multiseed.json. Profiling (job 25145028): per cluster ~88% CytoANVI training, TTA free, CytoVI baseline ~6%.",
+      "caveat": "3-seed redesign IN PROGRESS. Held-out set = 11 largest LEIDEN clusters (not manually-gated biological types; roider-full has no manual gating). PRIMARY metric mean_auroc; compare to cytovi_mean_auroc (a novelty benchmark needs the baseline). best_auroc is max-over-types, NOT a summary statistic."
     },
     {
       "phase": "P5",

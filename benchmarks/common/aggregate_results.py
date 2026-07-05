@@ -56,6 +56,22 @@ def summarize_multiseed(path: Path, data: dict[str, Any] | None = None) -> dict[
     if p2_conc:
         out["b3_p2_inter_method_agreement"] = p2_conc
 
+    # B5 headline metrics live in the "headline" key produced by aggregate_b5_multiseed.py.
+    headline = data.get("headline", {})
+    if isinstance(headline, dict) and headline:
+        for key in (
+            "mean_auroc_mean",
+            "mean_auroc_std",
+            "cytovi_mean_auroc_mean",
+            "cytovi_mean_auroc_std",
+            "best_auroc_mean",
+            "best_auroc_std",
+            "n_fdr_significant_mean",
+        ):
+            val = headline.get(key)
+            if val is not None:
+                out[f"b5_{key}"] = val
+
     return out
 
 

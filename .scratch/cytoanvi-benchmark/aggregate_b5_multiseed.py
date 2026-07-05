@@ -58,6 +58,7 @@ def _parse_args(argv: list[str] | None = None) -> None:
 
 def main() -> None:
     per_seed: dict[str, dict] = {}
+    dataset: str | None = None
     for s, path in SEED_FILES.items():
         if not path.exists():
             print(f"  MISSING: {path}")
@@ -67,6 +68,8 @@ def main() -> None:
         # The b5 sub-dict is the task_b5_holdout_sweep result.
         b5 = data.get("b5", data)  # fallback: top-level is the task result
         per_seed[str(s)] = b5
+        if dataset is None:
+            dataset = data.get("dataset")
         n_types = len(b5.get("per_type", {}))
         mean_a = b5.get("mean_auroc", float("nan"))
         best_a = b5.get("best_auroc", float("nan"))
@@ -97,6 +100,7 @@ def main() -> None:
 
     payload = {
         "seeds": found,
+        "dataset": dataset,
         "per_seed": per_seed,
         "summary": summary,
         # REPORTING NOTE: mean_auroc is the PRIMARY headline — unweighted mean over ALL

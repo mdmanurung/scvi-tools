@@ -5,7 +5,15 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
 
 ## Version 1.5
 
-### 1.5.0 (2026-XX-XX)
+### 1.5.0rc1 (2026-07-03)
+
+This release candidate exposes the top-level `cytoanvi` package and associated benchmark
+infrastructure. Full-cohort Roider B3 (3 seeds) and B5 (3 seeds) are complete as of 2026-07-05
+and `publication_summary.json` is produced. Key full-cohort results: B1 CytoANVI 0.9751±0.0003
+vs kNN 0.9581±0.0007 (Δ+0.017); B2 bio 0.770, batch 0.798; B3 p1 macro-F1 0.828±0.015 (p2
+inter-method agreement 0.671±0.008 — concordance, NOT accuracy); B5 mean_auroc 0.484±0.019
+(NEGATIVE — below chance vs CytoVI kNN-OOD 0.775±0.002); B8 Δ_hierarchical_vs_flat +0.086±0.003.
+Not final journal/PyPI release (GitHub-only, branch feat/cytoanvi); preprint in preparation.
 
 #### Added
 
@@ -21,17 +29,24 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
     comparative-atlas (cscanvi) paper. The continual update is owned by a single `ContinualUpdate`
     module whose EWC anchor and Fisher importances persist across `save`/`load` (the session-scoped
     replay buffer is not persisted). Adds `select_replay_by_uncertainty`, saved-model panel prep
-    via `encoder_marker_mask_`, and benchmark tasks B4/B6. Install with
-    `pip install cytoanvi` (standalone package, not `scvi.external`).
+    via `encoder_marker_mask_`, and benchmark tasks B4/B6. The stable public surface is the
+    top-level `cytoanvi` package (`CytoANVI`, advanced module class `CytoANVAE`,
+    `get_uncertainty_threshold`, `hierarchy`, and `mapping_qc`); the previous
+    `scvi.external.CytoANVI` / `scvi.external.cytoanvi` path is removed.
 - Add optional hierarchical cross-entropy (HCE) for CytoANVI via explicit reachability matrix
     (`set_hierarchy`, `predict_hierarchical`; flat CE remains default). Add optional
-    `cytoanvi-hierarchy` extra (`pip install cytoanvi[hierarchy]`) with scHPL
+    `cytoanvi-hierarchy` extra (`pip install scvi-tools[cytoanvi-hierarchy]`) with scHPL
     treeArches helpers in `cytoanvi.hierarchy` (`learn_hierarchy`,
     `update_hierarchy`, `predict_schpl`, `set_hierarchy_from_schpl`,
     `run_tree_arches_pipeline`, `latent_to_anndata`).
-- Add optional mapQC query-mapping QC for CytoANVI (`pip install cytoanvi[mapping-qc]`)
+- Add optional mapQC query-mapping QC for CytoANVI
+    (`pip install scvi-tools[cytoanvi-mapping-qc]`)
     with helpers in `cytoanvi.mapping_qc` and :meth:`~cytoanvi.CytoANVI.score_query_mapping`.
     Benchmark task B9 compares control mapQC rates after query surgery.
+- Add benchmark-only CytoANVI extras for AnnBatch loading
+    (`pip install scvi-tools[cytoanvi-annbatch]`) and classical cytometry baselines
+    (`pip install scvi-tools[cytoanvi-baselines]`). AnnBatch, FlowSOM, RAPIDS, and benchmark
+    runners are intentionally outside the CytoANVI model API.
 
 #### Fixed
 

@@ -97,6 +97,20 @@ Record non-obvious choices made during development. One entry per decision. Refe
 **Consequences**: B3 cannot be presented as validating cross-panel correctness until independent labels are obtained. Tracked as an open blocker.
 **Status**: active
 
+### D-012 — [2026-07-05] Honest full-cohort numbers reconciliation: p2 concordance gate NOT met; B5 is a robust negative result
+**Context**: Full-cohort Roider B3/B5 results (jobs 25145151/52/53) arrived and substantially differed from roider-e1000 subset numbers. Every prose surface (ANALYSIS_MANIFEST, FINDINGS_REGISTRY, cross-panel-mapping, CHANGELOG, notes, plans) still showed the stale subset values.
+**Decision**: (1) Update ALL prose surfaces to the honest full-cohort numbers (B3 p1 0.828±0.015, B3 p2 concordance 0.671±0.008, B5 mean_auroc 0.484±0.019 NEGATIVE). (2) The p2 concordance gate (≥0.80) is NOT met and must not be claimed as such — p1 macro-F1 (0.828) is the defensible supervised headline. (3) B5 TTA-uncertainty is a robust negative result — properly framed, not buried. (4) Historical docs annotated as SUPERSEDED rather than rewritten (they record what we believed at the time).
+**Rationale**: Presenting stale numbers as current is an honesty liability regardless of whether the gate was met. The full-cohort result is the ground truth; all other numbers are exploratory history.
+**Consequences**: B3 p2 concordance gate "≥0.80" will not be met unless independent panel-2 ground-truth labels are obtained (see Idea 4 in analysis/ideas/). This is explicitly tracked as an open blocker, not ignored.
+**Status**: active
+
+### D-013 — [2026-07-05] Version bump feat/cytoanvi to 0.1.0; push branch to GitHub origin
+**Context**: `pyproject.toml` still carried the inherited upstream version `1.5.0rc1`. The feat/cytoanvi branch had never been pushed to origin (github.com/mdmanurung/scvi-tools).
+**Decision**: Bump to `version = "0.1.0"` — signals this is an independent standalone release that predates any PyPI upload and does not collide semantically with upstream scvi-tools versions. Push `feat/cytoanvi` to origin.
+**Rationale**: `0.1.0` is honest: the package is usable but not yet publication-released. `1.5.0rc1` implies we're shipping an scvi-tools release candidate, which is misleading.
+**Consequences**: `importlib.metadata.version("cytoanvi")` returns `"0.1.0"` after `pip install -e .`. No PyPI upload yet (deferred, see D-011).
+**Status**: active
+
 ### D-011 — [2026-07-03] Defer public packaging; ship standalone cytoanvi for internal/clean-env use only
 **Source**: Engineering-maturity review (session 13); maintainer decision on the scvi/ namespace collision (L-035).
 **Context**: dist `cytoanvi` ships both `scvi/` and `cytoanvi/` import packages (the fork needs a modified scvi for CytoVI at `scvi.external.cytovi`), which collides with upstream `scvi-tools` on the `scvi/` import name. Options were Replace / Coexist (vendor CytoVI) / upstream-PR / defer.

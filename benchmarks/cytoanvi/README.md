@@ -8,15 +8,14 @@ vignettes use. Plan: `notes/2026-06-10-cytoanvi-benchmark-plan.md`.
   synthetic loader for the smoke test.
 - `metrics.py` — dependency-light metrics (scanpy + sklearn): label-transfer F1, kNN batch-mixing
   (iLISI-like), ARI/NMI/silhouette bio-conservation, novelty AUROC, concordance.
-- `baselines.py` — CytoVI latent + k-NN label transfer (the vignette's method).
+- `baselines.py` — CytoVI latent + k-NN label transfer plus optional FlowSOM and RAPIDS graph baselines.
 - `tasks.py` — B1 (label transfer), B2 (integration), B3 (panel-divergent map), B5 (novelty).
 - `paired_rna_cytof.py` — B7 paired scRNA+CyTOF integration (scennep + CytoANVI, Plan A).
 - `run.py` — CLI.
 
 ## Smoke test (no download — proves the plumbing)
 ```bash
-ENV=/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test
-PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
+PYTHONPATH=src:. python \
   -m benchmarks.cytoanvi.run --dataset synthetic --task all --max-epochs 3 \
   --subsample-per-batch 200
 ```
@@ -26,7 +25,7 @@ Requires `scib-metrics` (and `python-igraph` + `leidenalg` for some scib metrics
 ### B7 — paired RNA + CyTOF (scennep + CytoANVI)
 
 ```bash
-PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
+PYTHONPATH=src:. python \
   -m benchmarks.cytoanvi.run --dataset paired-rna-cytof --task b7 --max-epochs 30
 ```
 
@@ -39,59 +38,79 @@ Vignette: `python vignettes/rna_cytof_cocluster.py --smoke` (writes `.scratch/pa
 
 ## Real data
 
-**The sandbox cannot download the Figshare files (HTTP 202 / blocked egress).** Fetch them into
-`benchmarks/cytoanvi/data/` from a networked shell (e.g. `! curl ...` in the Claude session):
+Use repo-root `data/` as the canonical local cache. `benchmarks/cytoanvi/data/` is an optional
+vignette-only fallback and remains gitignored except for metadata files.
 
-| file | Figshare id | dataset |
-|------|-------------|---------|
-| `roider_p1.h5ad` | 56891468 | D1 panel 1 (labelled) |
-| `roider_p2.h5ad` | 56891471 | D1 panel 2 (unlabelled) |
-| `Nunez_PBMCs_batch1.fcs` | 55982654 | D2 batch 1 |
-| `Nunez_PBMCs_batch2.fcs` | 55982657 | D2 batch 2 |
+| Canonical file | Figshare id / source | dataset |
+|----------------|-----------------------|---------|
+| `data/Roider_et_al_BNHL_panel1.h5ad` | 56891468 | D1 vignette panel 1 |
+| `data/Roider_et_al_BNHL_panel2.h5ad` | 56891471 | D1 vignette panel 2 |
+| `data/Nunez_PBMCs_batch1.fcs` | 55982654 | D2 batch 1 |
+| `data/Nunez_PBMCs_batch2.fcs` | 55982657 | D2 batch 2 |
+| `data/nunez_annotated.h5ad` | derived by `annotate_nunez.py --inductive` | D2 publication input |
+| `data/roider_full/merged.h5ad` | derived from Roider raw archive | full-cohort B3/B5 input |
 
-Place Nuñez files in **`data/`** at the repo root (preferred) or `benchmarks/cytoanvi/data/`.
-The loader resolves both automatically.
+The loader resolves Nuñez files from both `--data-dir` and repo-root `data/`. Full Roider runs use
+repo-root `data/roider_full/` by default.
 
 **Nuñez labels (D2):** FCS files have no cell types. For the 11 PBMC subsets from the CytoVI
-tutorial, generate once and reuse:
+tutorial, generate the inductive annotation once and reuse it:
 
 ```bash
-PYTHONPATH=src:. LD_LIBRARY_PATH=$ENV/lib $ENV/bin/python \
+PYTHONPATH=src:. python \
   -m benchmarks.cytoanvi.annotate_nunez \
-  --data-dir data --out data/nunez_annotated.h5ad --max-epochs 100
+  --data-dir data \
+  --out data/nunez_annotated.h5ad \
+  --max-epochs 1000 \
+  --inductive \
+  --metadata-out data/nunez_annotated.json
 ```
 
 `load_nunez()` prefers `data/nunez_annotated.h5ad` when present (skips FCS + proxy Leiden).
 Checkpoint: `.scratch/cytoanvi-benchmark/nunez_cytovi_ckpt` for fast re-runs.
 
 ```bash
-cd benchmarks/cytoanvi/data
-for id in 56891468 56891471; do curl -L -o $id.h5ad "https://figshare.com/ndownloader/files/$id"; done
-# rename to roider_p1.h5ad / roider_p2.h5ad
+mkdir -p data
+curl -L -o data/Roider_et_al_BNHL_panel1.h5ad "https://figshare.com/ndownloader/files/56891468"
+curl -L -o data/Roider_et_al_BNHL_panel2.h5ad "https://figshare.com/ndownloader/files/56891471"
+curl -L -o data/Nunez_PBMCs_batch1.fcs "https://figshare.com/ndownloader/files/55982654"
+curl -L -o data/Nunez_PBMCs_batch2.fcs "https://figshare.com/ndownloader/files/55982657"
 ```
 
-Then **inspect** to discover the real obs-column names (label/batch/sample keys), since they're not
-known until the data is in hand:
+Then inspect to verify obs-column names:
 ```bash
-... python -m benchmarks.cytoanvi.run --dataset roider --inspect
+PYTHONPATH=src:. python -m benchmarks.cytoanvi.run --dataset roider --data-dir data --inspect
 ```
 
 Fetch or validate vignette files:
 ```bash
-PYTHONPATH=src:. $ENV/bin/python -m benchmarks.common.fetch_data --fetch
-PYTHONPATH=src:. $ENV/bin/python -m benchmarks.common.fetch_data --validate-only
-PYTHONPATH=src:. $ENV/bin/python -m benchmarks.common.fetch_data --list-full-cohort
+PYTHONPATH=src:. python -m benchmarks.common.fetch_data --data-dir data --fetch
+PYTHONPATH=src:. python -m benchmarks.common.fetch_data --data-dir data --validate-only
+PYTHONPATH=src:. python -m benchmarks.common.fetch_data --list-full-cohort
 ```
 and run with the discovered keys:
 ```bash
-... python -m benchmarks.cytoanvi.run --dataset roider --task all \
+PYTHONPATH=src:. python -m benchmarks.cytoanvi.run --dataset roider --task all \
+    --data-dir data \
     --labels-key <cell_type_col> --batch-key <batch_col> --sample-key <patient_col> \
     --unlabeled Unknown --out roider_results.json
 ```
 
+Strict publication aggregation must use the manifest:
+
+```bash
+PYTHONPATH=src:. python benchmarks/common/aggregate_results.py \
+  --manifest .scratch/cytoanvi-benchmark/publication_manifest.json \
+  --output .scratch/cytoanvi-benchmark/results/final_summary.json
+```
+
+The command fails until every required manifest artifact is present and marked `complete`.
+
 ### Dependency notes
 - **`scib-metrics`** required for B2 (and Track A A2). Install in the benchmark env.
 - **D2 (Nuñez `.fcs`)** — `readfcs`/`flowio` (pulled in by cyCombinePy or cytovi).
+- **B1 optional baselines** — `scvi-tools[cytoanvi-baselines]` enables FlowSOM; `scvi-tools[rapids]` enables the RAPIDS SingleCell graph baseline.
+  Use `--b1-baselines fast`, `none`, `rapids-graph`, or a comma-separated set to avoid slow optional baselines in smoke runs.
 - **Track A cyCombine baseline:** [cyCombinePy](https://github.com/mdmanurung/cyCombinePy) — batch correction only, not imputation.
 - Metrics use **scib-metrics** aggregates (`batch_correction`, `bio_conservation`, `total`).
 

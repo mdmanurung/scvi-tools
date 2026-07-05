@@ -1,48 +1,55 @@
-# Last Session Summary — 2026-07-03 (session 13, publication-readiness review + fixes)
+# Last Session Summary — 2026-07-05 (session 14, honest-numbers + B5 diagnostic + branch push)
 
 ## 1. What was accomplished
 
-**Ran a 6-agent parallel publication-readiness review, then a 5-agent parallel implementation pass fixing everything actionable.** All changes verified: `tests/cytoanvi/` **110 passed / 3 skipped**; `tests/benchmarks/` **33 passed / 1 skipped**; `cytoanvi` imports; `pyproject.toml` parses with `name="cytoanvi"`.
+Three tasks from the approved plan were executed:
 
-Review scored six dimensions: code 7.5/10, methods 4.5, benchmarks 5, docs 5.5, tests 6, packaging 4. The load-bearing finding (two agents converged independently): **headline benchmark claims overreach the data** — B3 measures inter-method concordance not accuracy, B5 headline was `best_auroc` while `mean_auroc≈0.46` (below chance).
+**Task 1 — B5 CytoANVI-latent kNN-distance OOD diagnostic (complete, diagnostic pending)**
 
-**Implemented (disjoint file domains, one agent each):**
+Added `knn_distance_novelty(z_ref, z_eval, n_neighbors)` helper to `benchmarks/cytoanvi/baselines.py`, refactored `cytovi_novelty_score` to call it, and wired up a `cytoanvi_knn_baseline` result in the inductive branch of `task_b5_novelty` (extracted from live model BEFORE `del model`). Surfaced `cytoanvi_knn_mean_auroc` from `task_b5_holdout_sweep` and propagated to `aggregate_b5_multiseed.py` and `aggregate_results.py`. Added `--b5-cytovi-baseline` flag to all three B5 SLURM seed scripts. Submitted diagnostic re-run jobs 25149032 (seed 0), 25149033 (seed 1), 25149034 (seed 2). These were PENDING at session end. After completion, re-run `aggregate_b5_multiseed.py` and `aggregate_results.py --manifest` to regenerate `publication_summary.json` with both `cytovi_knn_mean_auroc` and `cytoanvi_knn_mean_auroc`. Committed as `66a1b806`.
 
-| Domain | Key changes |
-|--------|-------------|
-| Code (`src/cytoanvi/`) | `AnnData.concatenate`→`anndata.concat` (L-032); Fisher-approx docstring (L-033); empty-index soft-predict schema fix; missing docstring Params/Returns (`hierarchy_edges`, `reachability_matrix`, `score_query_mapping`, `get_uncertainty`, `from_cytovi_model`); HCE virtual-node error msg; `cytoanvi_model`→`new_model` rename |
-| Docs | CytoANVI citation ("in prep") + scANVI/scArches/scHPL refs; killed broken `https://doi.org/` link + all `<!-- to do -->` placeholders in cytovi.md; new "Descriptive model" section; release-candidate banner replacing internal status table; install → `cytoanvi` package; synthetic-data admonition + preprocessing pointer in tutorial |
-| Tests | new `test_cytoanvi_elbo_components.py` (direct ELBO/nan-mask/classification_ratio/n_labels==0, L-034); `test_cytoanvi_continual.py` Fisher sanity; `@pytest.mark.slow` training-descends; seeded RNG in 2 tests; `--runslow` conftest guard |
-| Packaging | `name="cytoanvi"`, fork URLs/maintainer, CytoANVI description; dual-BSD LICENSE (C2 fix); `[tool.hatch.build.targets.sdist]` excludes + `.gitattributes`; ruff `py312`; CLAUDE.md paths; README fork banner + de-badged |
-| Benchmark reporting | B5 `mean_auroc` primary (D-009); B3 `concordance` relabeled NOT-accuracy (D-010); B4/B6 "PLUMBING ONLY", B9 "BLOCKED", B8 shallow-tree caveat in manifests; B5 single-seed caveat; "Label provenance & limitations" section; inferential-stats note + `bootstrap_ci` helper |
+**Task 2 — Propagate honest full-cohort numbers to all prose surfaces (complete)**
 
-Living-repo: added D-008/009/010, L-032/033/034; TODO registry updated.
+Updated all human-readable surfaces to show honest full-cohort Roider results:
+- `benchmarks/ANALYSIS_MANIFEST.md`: B3 row shows p1 0.828±0.015 / p2 0.671±0.008 (gate NOT met); B5 row shows 0.484±0.019 NEGATIVE vs CytoVI kNN 0.775; prior smoke table renamed SUPERSEDED.
+- `.living/findings/FINDINGS_REGISTRY.md`: F-006 → SUPERSEDED by F-012; F-007 → SUPERSEDED by F-013; added F-012 (B3 full-cohort) and F-013 (B5 full-cohort NEGATIVE).
+- `.living/findings/cross-panel-mapping.md`: annotated F-006/F-007/F-010 as SUPERSEDED; appended full F-012 and F-013 sections.
+- `CHANGELOG.md`: replaced "not yet final-publication ready" with all final full-cohort numbers.
+- `docs/plans/2026-06-27-cytoanvi-execution-queue.md`: Phase 3 metrics annotated as "(⚠️ SUPERSEDED — roider-e1000 subset)" with inline full-cohort corrections.
+- `notes/2026-06-18-cytoanvi-strengthening.md`: B3 and B5 rows annotated with full-cohort corrections.
+- `analysis/ideas/2026-06-30-publication-readiness/02_statistical-methods-critic.md`: inline annotation at the 0.877 figure.
+- `.living/decisions.md`: added D-012 (honest numbers) and D-013 (version + push).
+
+**Task 3 — Package & push (complete)**
+
+`pyproject.toml` version bumped from `1.5.0rc1` → `0.1.0`. Branch `feat/cytoanvi` pushed to `origin` (github.com/mdmanurung/scvi-tools) — first push ever.
 
 ## 2. Decisions this session
 
-- **D-008**: Distribute standalone as PyPI `cytoanvi` (not upstream PR). Dual-BSD LICENSE retains scvi-tools copyright.
-- **D-009**: B5 headline = `mean_auroc` (≈0.46), `best_auroc` demoted to labeled secondary.
-- **D-010**: B3 metric kept but relabeled inter-method concordance, NOT accuracy.
+- **D-012**: Honest full-cohort numbers must replace stale e1000 numbers in all prose. B3 p2 concordance gate NOT met. B5 is a robust negative result.
+- **D-013**: Version `0.1.0` for standalone CytoANVI. Branch pushed; no PyPI upload yet.
 
-## 3. Remaining blockers — NOT actionable by code (need data/compute/lab)
+## 3. Key numbers (publication-grade, full-cohort Roider, 3 seeds)
 
-| Blocker | Needs |
-|---------|-------|
-| Full-cohort Roider B3/B5 artifacts | SLURM jobs 25140597/8 to finish |
-| Real B3 accuracy claim | independent manually-gated panel-2 labels OR FlowSOM/XGBoost baseline |
-| B5 roider-full reproducibility | rerun at 3 seeds (currently `seeds=[0]`) |
-| Meaningful B5 (>0.7) | external novel-cell-type dataset |
-| B4/B6 continual-update validation | real case/control cytometry (pseudo-batch = plumbing only) |
-| B9 mapQC | install `mapqc` + validate |
-| Real DOIs | swap "in preparation" once preprints post |
+| Task | Metric | Value |
+|------|--------|-------|
+| B3 | p1 holdout macro-F1 | **0.828 ± 0.015** ✅ defensible headline |
+| B3 | p2 concordance vs CytoVI-kNN | **0.671 ± 0.008** ❌ gate NOT met (≥0.80 required) |
+| B5 | TTA mean_auroc | **0.484 ± 0.019** ❌ NEGATIVE (below chance) |
+| B5 | CytoVI kNN-OOD baseline | **0.775 ± 0.002** (for comparison) |
 
-## 4. Deliberately deferred (low payoff / high risk this pass)
+## 4. Open blockers (compute/data)
 
-EWC per-sample-gradient Fisher rewrite (documented instead); GPU-sync profiling optimization (M-1); `reconst_loss` internal rename (M-2).
+| Blocker | Status |
+|---------|--------|
+| B5 diagnostic re-run (CytoANVI-kNN) | Jobs 25149032/33/34 PENDING — re-aggregate after completion |
+| B3 p2 ground-truth labels (Roider panel-2 gating) | Data acquisition required — see Idea 4 in analysis/ideas/ |
+| B5 better-than-chance novelty detection | Requires new formulation or external OOD dataset |
+| B4/B6 real case/control | Pseudo-batch = plumbing only; real validation blocked |
+| Real DOIs | Swap "in preparation" once preprints post |
 
 ## 5. Next session
 
-- Land B3/B5 full-cohort results; run manifest-mode aggregation; add F-012+/F-013+ findings.
-- Cancel stale jobs; `scancel 25089685 25102610 25102547`.
-- Decide B4 real case/control source; obtain panel-2 gating for B3.
-- Commit scope this session: code + docs + tests + packaging + benchmark-reporting (left `.scratch/` artifacts unstaged per sdist-exclude policy).
+1. Check job status for 25149032/33/34 (`squeue -j 25149032,25149033,25149034`). If complete, run `python .scratch/cytoanvi-benchmark/aggregate_b5_multiseed.py` then `python -m benchmarks.common.aggregate_results --manifest ...` to update `publication_summary.json` with diagnostic results.
+2. Interpret `cytoanvi_knn_mean_auroc` vs `cytovi_mean_auroc` to resolve the TTA-vs-latent diagnostic question (see F-013 pending note).
+3. Consider whether to open a GitHub issue/discussion for the B3 ground-truth labels (Roider contact or FCS audit).

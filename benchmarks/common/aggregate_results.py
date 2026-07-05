@@ -64,6 +64,8 @@ def summarize_multiseed(path: Path, data: dict[str, Any] | None = None) -> dict[
             "mean_auroc_std",
             "cytovi_mean_auroc_mean",
             "cytovi_mean_auroc_std",
+            "cytoanvi_knn_mean_auroc_mean",
+            "cytoanvi_knn_mean_auroc_std",
             "best_auroc_mean",
             "best_auroc_std",
             "n_fdr_significant_mean",

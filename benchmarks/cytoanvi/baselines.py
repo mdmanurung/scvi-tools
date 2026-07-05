@@ -68,6 +68,42 @@ def cytovi_latent_and_knn(
     return pred_unlabeled, latent, unlabeled_mask
 
 
+def knn_distance_novelty(
+    z_ref: np.ndarray,
+    z_eval: np.ndarray,
+    n_neighbors: int = 15,
+) -> np.ndarray:
+    """Mean Euclidean kNN-distance novelty score in a pre-computed latent space.
+
+    Given reference and eval embeddings, scores each eval cell by the mean Euclidean
+    distance to its ``n_neighbors`` nearest reference cells.  Higher = more novel.
+
+    This is the shared distance step used by both the CytoVI OOD baseline and the
+    CytoANVI-latent OOD diagnostic so the two scores are identical in methodology and
+    differ only in which latent space they operate on.
+
+    Parameters
+    ----------
+    z_ref
+        Latent embeddings of the *seen* (reference) cells, shape ``(n_ref, n_latent)``.
+    z_eval
+        Latent embeddings of the eval cells (includes both seen calibration and held-out
+        novel cells), shape ``(n_eval, n_latent)``.
+    n_neighbors
+        Number of nearest reference neighbours to average.  Clipped to ``len(z_ref)``.
+
+    Returns
+    -------
+    np.ndarray of shape ``(n_eval,)`` — per-eval-cell novelty score.
+    """
+    from sklearn.neighbors import NearestNeighbors
+
+    k = max(1, min(n_neighbors, len(z_ref)))
+    nn = NearestNeighbors(n_neighbors=k).fit(z_ref)
+    dist, _ = nn.kneighbors(z_eval)
+    return dist.mean(axis=1)
+
+
 def cytovi_novelty_score(
     seen_adata,
     eval_adata,
@@ -92,8 +128,6 @@ def cytovi_novelty_score(
 
     Returns a per-eval-cell novelty score aligned with ``eval_adata`` (higher = more novel).
     """
-    from sklearn.neighbors import NearestNeighbors
-
     model, _ = train_cytovi(
         seen_adata,
         batch_key=batch_key,
@@ -108,10 +142,7 @@ def cytovi_novelty_score(
     )
     z_ref = np.asarray(model.get_latent_representation())
     z_eval = np.asarray(model.get_latent_representation(eval_adata))
-    k = max(1, min(n_neighbors, len(z_ref)))
-    nn = NearestNeighbors(n_neighbors=k).fit(z_ref)
-    dist, _ = nn.kneighbors(z_eval)
-    return dist.mean(axis=1)
+    return knn_distance_novelty(z_ref, z_eval, n_neighbors)
 
 
 def raw_marker_knn(

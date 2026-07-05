@@ -26,7 +26,7 @@
 set -euo pipefail
 source /exports/para-lipg-hpc/mdmanurung/scvi-tools/.scratch/cytoanvi-benchmark/slurm/_env.sh
 
-echo "=== B5 Roider holdout sweep seed 0 (batch_size=8192) ==="
+echo "=== B5 Roider calibrated holdout sweep seed 0 (batch_size=8192) ==="
 echo "Start: $(date)"
 
 $PY -m benchmarks.cytoanvi.run \
@@ -34,7 +34,10 @@ $PY -m benchmarks.cytoanvi.run \
   --labels-key cell_type \
   --max-epochs 1000 --seed 0 \
   --batch-size 8192 \
+  --cytoanvi-recipe publication \
+  --b5-mode inductive \
   --holdout-sweep \
+  --b5-cytovi-baseline \
   --out "$RESULTS/roider_full_b5_sweep_s0.json"
 
 echo "Phase 3b (B5 sweep) complete at $(date)"

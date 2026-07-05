@@ -26,6 +26,7 @@ $PY -m benchmarks.cytoanvi.run \
   --cytoanvi-recipe publication \
   --b5-mode inductive \
   --holdout-sweep \
+  --b5-cytovi-baseline \
   --out "$RESULTS/roider_full_b5_sweep_s1.json"
 
 echo "Phase 3b (B5 sweep seed 1) complete at $(date)"

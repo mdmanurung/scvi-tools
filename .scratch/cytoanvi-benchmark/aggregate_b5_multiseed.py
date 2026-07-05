@@ -97,6 +97,10 @@ def main() -> None:
     # CytoVI OOD baseline (present when the sweep was run with --b5-cytovi-baseline). The
     # comparison of mean_auroc vs cytovi_mean_auroc is the point of the redesigned B5.
     cytovi_aurocs = [v for v in _seed_vals("cytovi_mean_auroc") if not np.isnan(v)]
+    # CytoANVI-latent kNN-distance OOD diagnostic: same procedure as cytovi_mean_auroc but
+    # using CytoANVI's own latent.  cytoanvi_knn ≈ cytovi → TTA is weak; cytoanvi_knn ≈ 0.5
+    # → CytoANVI's latent is itself the weaker OOD space.
+    cytoanvi_knn_aurocs = [v for v in _seed_vals("cytoanvi_knn_mean_auroc") if not np.isnan(v)]
 
     payload = {
         "seeds": found,
@@ -117,6 +121,14 @@ def main() -> None:
             ),
             "cytovi_mean_auroc_std": (
                 float(np.std(cytovi_aurocs, ddof=1)) if len(cytovi_aurocs) > 1 else 0.0
+            ),
+            # DIAGNOSTIC — CytoANVI-latent kNN-distance: isolates TTA-method weakness
+            # from latent-space weakness.
+            "cytoanvi_knn_mean_auroc_mean": (
+                float(np.mean(cytoanvi_knn_aurocs)) if cytoanvi_knn_aurocs else float("nan")
+            ),
+            "cytoanvi_knn_mean_auroc_std": (
+                float(np.std(cytoanvi_knn_aurocs, ddof=1)) if len(cytoanvi_knn_aurocs) > 1 else 0.0
             ),
             # SECONDARY — max over types; not a summary statistic.
             "best_auroc_mean": float(np.mean(best_aurocs)),

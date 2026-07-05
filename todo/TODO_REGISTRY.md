@@ -7,13 +7,13 @@ Tracks future work items, ideas, and planned improvements.
 | Full Nuñez/Roider benchmarks at max_epochs=1000 | critical | open | analysis | 2026-06-10 | mdmanurung | [b-track-full-benchmarks.md](b-track-full-benchmarks.md) |
 | Real case/control axis for B4 biological validation | high | open | analysis | 2026-06-18 | mdmanurung | — |
 | Tune and document CytoVI-specific default λ after B6 sweep | medium | open | analysis | 2026-06-18 | mdmanurung | — |
-| Push feat/cytoanvi branch + upstream PR | high | open | infrastructure | 2026-06-18 | mdmanurung | — |
+| Push feat/cytoanvi branch + upstream PR | high | done | infrastructure | 2026-06-18 | mdmanurung | — |
 | B9 mapQC on query controls after surgery | medium | blocked | validation | 2026-06-29 | mdmanurung | — |
 | Roider Phase-3 B3 full-cohort (job 25140597 RUNNING ~11h, seed 0; supersedes 25132400) | critical | in_progress | analysis | 2026-07-03 | mdmanurung | — |
 | Roider Phase-3 B5 holdout sweep (job 25140598 RUNNING ~11h, seed 0; supersedes 25132895/25132401) | critical | in_progress | analysis | 2026-07-03 | mdmanurung | — |
 | Nuñez B8 seed-2 recovery (job 25108052 running ~3.5h as of 2026-06-29) | high | done | analysis | 2026-06-29 | mdmanurung | — |
-| Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | open | infrastructure | 2026-06-29 | mdmanurung | — |
-| B5 REDESIGN SUBMITTED 2026-07-04: jobs 25145052/53/54 (seeds 0/1/2, 11 types, CytoVI baseline, batch 16384, checkpoint) + auto-merge 25145055. Profiling L-039: cost is ~90% training, TTA free. Then repoint manifest to multiseed | high | in_progress | analysis | 2026-07-04 | mdmanurung | — |
+| Run manifest-mode aggregation after all Phase-3/5 artifacts land | high | done | infrastructure | 2026-06-29 | mdmanurung | — |
+| B5 REDESIGN COMPLETE: jobs 25145052/53/54 (seeds 0/1/2, 11 types, CytoVI baseline, batch 16384) + merge 25145055. RESULT: CytoANVI mean_auroc 0.484±0.019 (NEGATIVE) vs CytoVI kNN 0.775±0.002. Diagnostic jobs 25149032/33/34 running (CytoANVI-kNN in own latent) | high | done | analysis | 2026-07-04 | mdmanurung | — |
 | Fix ruff lint findings on cytoanvi package | medium | done | infrastructure | 2026-06-29 | mdmanurung | — |
 | Fix B5 AUROC SE formula (Wilcoxon numerator missing — FDR all-significant) | critical | done | analysis | 2026-06-30 | mdmanurung | — |
 | Fix unseeded np.random.choice in test_hierarchy_schpl_mock.py | low | done | testing | 2026-06-30 | mdmanurung | — |
@@ -38,16 +38,17 @@ Tracks future work items, ideas, and planned improvements.
 | Standalone packaging: name=cytoanvi, dual-BSD LICENSE, sdist excludes, .gitattributes (D-008) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | B5 mean_auroc primary; B3 concordance-not-accuracy relabel; B4/B6/B9/B8 demoted in manifests (D-009/D-010) | high | done | analysis | 2026-07-03 | mdmanurung | — |
 | BLOCKER (needs data): independent manually-gated panel-2 labels for a real B3 accuracy claim | critical | open | analysis | 2026-07-03 | mdmanurung | — |
-| BLOCKER (needs compute): rerun B5 roider-full at 3 seeds (currently seeds=[0] only) | critical | open | analysis | 2026-07-03 | mdmanurung | — |
+| BLOCKER (needs compute): rerun B5 roider-full at 3 seeds (currently seeds=[0] only) | critical | done | analysis | 2026-07-03 | mdmanurung | — |
 | BLOCKER (needs data): external novel-cell-type dataset to make B5 mean AUROC meaningful (>0.7) | high | open | analysis | 2026-07-03 | mdmanurung | — |
 | Fill real CytoANVI/CytoVI preprint DOIs in docs once posted (currently "in preparation") | medium | open | documentation | 2026-07-03 | mdmanurung | — |
 | Deferred code items DONE: EWC per-sample Fisher (exact E[grad²], default); GPU-sync opt-out (CYTOANVI_DISABLE_FINITE_CHECKS); reconst_loss→reconstruction_term rename | low | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | Session-13 actions DONE: scancel 3 stale jobs; mapqc installed (B9 import unblocked); B5 seeds 1-2 submitted (25144240/1) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
-| B9 mapQC: import unblocked (mapqc 0.1.1 in scvi-test env); full validation still needs a real query-mapping run | medium | open | validation | 2026-07-03 | mdmanurung | — |
+| B9 mapQC RESUBMITTED 2026-07-06: job 25149329 (phase6_b9_mapqc.slurm); mapqc 0.1.1 confirmed installed → real B9 run (not blocked JSON). Check result nunez_b9_s0.json after completion | medium | in_progress | validation | 2026-07-06 | mdmanurung | — |
+| B1 Roider full-cohort SUBMITTED 2026-07-06: 3 parallel jobs 25149326/27/28 (seeds 0/1/2, batch 16384, 48h). Phase scripts: phase_b1_roider_s{0,1,2}.slurm. Re-aggregate after completion and add to publication_manifest.json | high | in_progress | analysis | 2026-07-06 | mdmanurung | — |
 | Engineering maturity DONE: fixed 15 CI workflows (scvi-tools→cytoanvi install target), py.typed, __version__, ruff lint+format clean, build verified (L-036) | high | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | scvi/ namespace collision (L-035): DEFERRED per D-011 — internal/clean-env use only, not on PyPI. Revisit Replace vs Coexist vs upstream-PR before any public upload | high | deferred | infrastructure | 2026-07-03 | mdmanurung | — |
-| Reset dist version from inherited scvi-tools 1.5.0rc1 for standalone cytoanvi release (release-strategy) | medium | open | infrastructure | 2026-07-03 | mdmanurung | — |
+| Reset dist version from inherited scvi-tools 1.5.0rc1 for standalone cytoanvi release (release-strategy) | medium | done | infrastructure | 2026-07-03 | mdmanurung | — |
 | Leiden recompute FIXED (L-040): scanpy 1.12/igraph 1.0.0 seed incompat — unblocks coarser resolutions (faster training + more interpretable labels) | medium | done | infrastructure | 2026-07-04 | mdmanurung | — |
-| B5 FINDING (partial, 5 types/1 seed): CytoVI kNN-distance OOD BEATS CytoANVI TTA-uncertainty on every held-out type (e.g. 0.59 vs 0.21). Diagnostic to add later: kNN-distance OOD in CytoANVI's OWN latent, to separate 'bad uncertainty method' from 'bad latent'. Confirm after full 3-seed run | high | open | analysis | 2026-07-04 | mdmanurung | — |
+| B5 DIAGNOSTIC RUNNING: kNN-distance OOD in CytoANVI's OWN latent (jobs 25149032/33/34). Will add cytoanvi_knn_mean_auroc to publication_summary.json. Re-aggregate after completion to resolve TTA-vs-latent question (F-013 pending) | high | in_progress | analysis | 2026-07-05 | mdmanurung | — |
 | COARSE-Leiden B3/B5 PREPARED (L-041 speed lever): 6 scripts phase3{a,b}_{b3,b5}coarse_*.slurm w/ __RES__ placeholder; calibration job 25145242 picks resolution ~12 clusters (~3-4x faster training + more interpretable). NOT submitted — run after current jobs finish | medium | open | analysis | 2026-07-04 | mdmanurung | — |
-| B3 RERUN SUBMITTED 2026-07-04: 3 parallel single-seed jobs 25145151/52/53 (batch 16384, 48h each) — supersedes timed-out serial 25140597 (L-037). Metric still concordance-not-accuracy (needs panel-2 labels) | high | in_progress | analysis | 2026-07-04 | mdmanurung | — |
+| B3 RERUN COMPLETE: jobs 25145151/52/53 (seeds 0/1/2). RESULT: p1 macro-F1 0.828±0.015 ✅, p2 concordance 0.671±0.008 ❌ (gate ≥0.80 NOT met — concordance not accuracy). Panel-2 ground-truth labels still unavailable (see BLOCKER row) | high | done | analysis | 2026-07-04 | mdmanurung | — |

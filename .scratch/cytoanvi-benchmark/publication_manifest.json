@@ -99,7 +99,7 @@
         0
       ],
       "job_id": "25145151",
-      "status": "running",
+      "status": "complete",
       "required": true,
       "note": "B3 RERUN submitted 2026-07-04 (seed 0, job 25145151), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
       "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
@@ -113,7 +113,7 @@
         1
       ],
       "job_id": "25145152",
-      "status": "running",
+      "status": "complete",
       "required": true,
       "note": "B3 RERUN submitted 2026-07-04 (seed 1, job 25145152), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
       "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
@@ -127,7 +127,7 @@
         2
       ],
       "job_id": "25145153",
-      "status": "running",
+      "status": "complete",
       "required": true,
       "note": "B3 RERUN submitted 2026-07-04 (seed 2, job 25145153), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
       "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
@@ -217,6 +217,39 @@
       "caveat": "PLUMBING ONLY \u2014 uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. \u03bb sweep results do NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
     },
     {
+      "phase": "P3",
+      "task": "b1",
+      "path": "results/roider_full_b1_s0.json",
+      "dataset": "roider-full",
+      "seeds": [0],
+      "job_id": "25149326",
+      "status": "in_progress",
+      "required": true,
+      "note": "B1 Roider full-cohort submitted 2026-07-06 (seed 0, job 25149326), batch_size=16384, 3 parallel single-seed jobs (25149326/27/28)."
+    },
+    {
+      "phase": "P3",
+      "task": "b1",
+      "path": "results/roider_full_b1_s1.json",
+      "dataset": "roider-full",
+      "seeds": [1],
+      "job_id": "25149327",
+      "status": "in_progress",
+      "required": true,
+      "note": "B1 Roider full-cohort submitted 2026-07-06 (seed 1, job 25149327), batch_size=16384."
+    },
+    {
+      "phase": "P3",
+      "task": "b1",
+      "path": "results/roider_full_b1_s2.json",
+      "dataset": "roider-full",
+      "seeds": [2],
+      "job_id": "25149328",
+      "status": "in_progress",
+      "required": true,
+      "note": "B1 Roider full-cohort submitted 2026-07-06 (seed 2, job 25149328), batch_size=16384."
+    },
+    {
       "phase": "P6",
       "task": "b9",
       "path": "results/nunez_b9_s0.json",
@@ -224,10 +257,10 @@
       "seeds": [
         0
       ],
-      "job_id": "25104251",
-      "status": "blocked",
+      "job_id": "25149329",
+      "status": "in_progress",
       "required": false,
-      "caveat": "BLOCKED \u2014 optional dependency scvi-tools[cytoanvi-mapping-qc] not installed; task logic has NOT been validated end-to-end. Not reportable. Do not include in publication claims."
+      "caveat": "RESUBMITTED 2026-07-06 (job 25149329); mapqc 0.1.1 now installed. Prior run (job 25104251) produced blocked JSON. Task logic not yet validated end-to-end. Not reportable until result verified."
     }
   ]
 }

@@ -1,55 +1,78 @@
-# Last Session Summary — 2026-07-05 (session 14, honest-numbers + B5 diagnostic + branch push)
+# Last Session Summary — 2026-07-06 (session 15, compute jobs + registry cleanup)
 
 ## 1. What was accomplished
 
-Three tasks from the approved plan were executed:
+This session continued the "Do all" instruction from session 14. Five actions taken:
 
-**Task 1 — B5 CytoANVI-latent kNN-distance OOD diagnostic (complete, diagnostic pending)**
+**B1 Roider full-cohort submitted (3 seeds)**
 
-Added `knn_distance_novelty(z_ref, z_eval, n_neighbors)` helper to `benchmarks/cytoanvi/baselines.py`, refactored `cytovi_novelty_score` to call it, and wired up a `cytoanvi_knn_baseline` result in the inductive branch of `task_b5_novelty` (extracted from live model BEFORE `del model`). Surfaced `cytoanvi_knn_mean_auroc` from `task_b5_holdout_sweep` and propagated to `aggregate_b5_multiseed.py` and `aggregate_results.py`. Added `--b5-cytovi-baseline` flag to all three B5 SLURM seed scripts. Submitted diagnostic re-run jobs 25149032 (seed 0), 25149033 (seed 1), 25149034 (seed 2). These were PENDING at session end. After completion, re-run `aggregate_b5_multiseed.py` and `aggregate_results.py --manifest` to regenerate `publication_summary.json` with both `cytovi_knn_mean_auroc` and `cytoanvi_knn_mean_auroc`. Committed as `66a1b806`.
+Created `phase_b1_roider_s{0,1,2}.slurm` mirroring the B3 Roider pattern:
+- `--dataset roider-full --task b1 --batch-size 16384 --cytoanvi-recipe publication --max-epochs 1000`
+- 3 parallel single-seed jobs: 25149326 (s0), 25149327 (s1), 25149328 (s2)
+- Output: `roider_full_b1_s{0,1,2}.json`
+- All PENDING as of submission; added to `publication_manifest.json` as `in_progress`
 
-**Task 2 — Propagate honest full-cohort numbers to all prose surfaces (complete)**
+**B9 mapQC resubmitted**
 
-Updated all human-readable surfaces to show honest full-cohort Roider results:
-- `benchmarks/ANALYSIS_MANIFEST.md`: B3 row shows p1 0.828±0.015 / p2 0.671±0.008 (gate NOT met); B5 row shows 0.484±0.019 NEGATIVE vs CytoVI kNN 0.775; prior smoke table renamed SUPERSEDED.
-- `.living/findings/FINDINGS_REGISTRY.md`: F-006 → SUPERSEDED by F-012; F-007 → SUPERSEDED by F-013; added F-012 (B3 full-cohort) and F-013 (B5 full-cohort NEGATIVE).
-- `.living/findings/cross-panel-mapping.md`: annotated F-006/F-007/F-010 as SUPERSEDED; appended full F-012 and F-013 sections.
-- `CHANGELOG.md`: replaced "not yet final-publication ready" with all final full-cohort numbers.
-- `docs/plans/2026-06-27-cytoanvi-execution-queue.md`: Phase 3 metrics annotated as "(⚠️ SUPERSEDED — roider-e1000 subset)" with inline full-cohort corrections.
-- `notes/2026-06-18-cytoanvi-strengthening.md`: B3 and B5 rows annotated with full-cohort corrections.
-- `analysis/ideas/2026-06-30-publication-readiness/02_statistical-methods-critic.md`: inline annotation at the 0.877 figure.
-- `.living/decisions.md`: added D-012 (honest numbers) and D-013 (version + push).
+`sbatch phase6_b9_mapqc.slurm` → job 25149329 (PENDING). mapqc 0.1.1 is installed in scvi-test
+env, so this will execute the real B9 run (not a blocked JSON). Updated manifest: `in_progress`.
 
-**Task 3 — Package & push (complete)**
+**TODO registry cleaned up**
 
-`pyproject.toml` version bumped from `1.5.0rc1` → `0.1.0`. Branch `feat/cytoanvi` pushed to `origin` (github.com/mdmanurung/scvi-tools) — first push ever.
+Stale statuses corrected:
+- "Push feat/cytoanvi branch" → done
+- "Reset dist version" → done
+- "BLOCKER: rerun B5 3 seeds" → done
+- "B5 REDESIGN" → done (results 0.484±0.019 NEGATIVE; diagnostic running)
+- "B3 RERUN" → done (results 0.828±0.015 p1, 0.671±0.008 p2)
+- "manifest-mode aggregation" → done
+- Added new in_progress rows: B1 Roider (25149326/27/28), B9 (25149329), B5 diagnostic (25149032/33/34)
+
+**publication_manifest.json updated**
+
+Added B1 Roider entries (3 seeds, in_progress) and updated B9 from `blocked` → `in_progress` (job 25149329).
+
+**B5 diagnostic still running**
+
+Jobs 25149032 (seed 0) and 25149033 (seed 1) were RUNNING at ~31min; 25149034 (seed 2) PENDING.
+These add `cytoanvi_knn_mean_auroc` to the B5 result to resolve the TTA-vs-latent question.
 
 ## 2. Decisions this session
 
-- **D-012**: Honest full-cohort numbers must replace stale e1000 numbers in all prose. B3 p2 concordance gate NOT met. B5 is a robust negative result.
-- **D-013**: Version `0.1.0` for standalone CytoANVI. Branch pushed; no PyPI upload yet.
+No new architectural decisions. All work was compute/registry maintenance.
 
-## 3. Key numbers (publication-grade, full-cohort Roider, 3 seeds)
+## 3. Key numbers (publication-grade, unchanged from session 14)
 
 | Task | Metric | Value |
 |------|--------|-------|
+| B1 (Nuñez full) | CytoANVI macro-F1 | **0.9751 ± 0.0003** ✅ |
 | B3 | p1 holdout macro-F1 | **0.828 ± 0.015** ✅ defensible headline |
 | B3 | p2 concordance vs CytoVI-kNN | **0.671 ± 0.008** ❌ gate NOT met (≥0.80 required) |
 | B5 | TTA mean_auroc | **0.484 ± 0.019** ❌ NEGATIVE (below chance) |
 | B5 | CytoVI kNN-OOD baseline | **0.775 ± 0.002** (for comparison) |
+| B8 | Δ_hierarchical_vs_flat | **+0.0862 ± 0.0027** ✅ |
 
 ## 4. Open blockers (compute/data)
 
-| Blocker | Status |
-|---------|--------|
-| B5 diagnostic re-run (CytoANVI-kNN) | Jobs 25149032/33/34 PENDING — re-aggregate after completion |
-| B3 p2 ground-truth labels (Roider panel-2 gating) | Data acquisition required — see Idea 4 in analysis/ideas/ |
-| B5 better-than-chance novelty detection | Requires new formulation or external OOD dataset |
-| B4/B6 real case/control | Pseudo-batch = plumbing only; real validation blocked |
-| Real DOIs | Swap "in preparation" once preprints post |
+| Blocker | Status | Job(s) |
+|---------|--------|--------|
+| B1 Roider full-cohort (3 seeds) | RUNNING/PENDING | 25149326/27/28 |
+| B5 diagnostic (CytoANVI-kNN) | RUNNING/PENDING | 25149032/33/34 |
+| B9 mapQC full run | PENDING | 25149329 |
+| B3 p2 ground-truth labels (Roider panel-2 gating) | Data acquisition required |  |
+| B5 better-than-chance novelty detection | Requires new formulation or external OOD dataset | |
+| B4/B6 real case/control | Pseudo-batch = plumbing only; real validation blocked | |
+| Real DOIs | Swap "in preparation" once preprints post | |
 
 ## 5. Next session
 
-1. Check job status for 25149032/33/34 (`squeue -j 25149032,25149033,25149034`). If complete, run `python .scratch/cytoanvi-benchmark/aggregate_b5_multiseed.py` then `python -m benchmarks.common.aggregate_results --manifest ...` to update `publication_summary.json` with diagnostic results.
-2. Interpret `cytoanvi_knn_mean_auroc` vs `cytovi_mean_auroc` to resolve the TTA-vs-latent diagnostic question (see F-013 pending note).
-3. Consider whether to open a GitHub issue/discussion for the B3 ground-truth labels (Roider contact or FCS audit).
+1. **B5 diagnostic re-aggregation** (after 25149032/33/34 complete):
+   - `python .scratch/cytoanvi-benchmark/aggregate_b5_multiseed.py`
+   - `python -m benchmarks.common.aggregate_results --manifest .scratch/cytoanvi-benchmark/publication_manifest.json`
+   - Update F-013 with verdict: if `cytoanvi_knn_mean_auroc ≈ 0.77` → TTA is the weak link (ship latent-kNN novelty scorer); if `≈ 0.48` → latent itself is weak (negative stands, strengthened).
+2. **B1 Roider results** (after 25149326/27/28 complete):
+   - Write `aggregate_b1_roider_multiseed.py` analogous to `aggregate_b5_multiseed.py`
+   - Update manifest + ANALYSIS_MANIFEST.md with final B1 Roider numbers
+3. **B9 result verification** (after 25149329 complete):
+   - Check `nunez_b9_s0.json` is not a blocked JSON
+   - If successful: update manifest `status: complete`, update ANALYSIS_MANIFEST.md, consider adding F-014

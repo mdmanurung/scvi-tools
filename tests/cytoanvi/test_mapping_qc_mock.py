@@ -202,3 +202,37 @@ def test_run_mapqc_raises_without_extra(monkeypatch):
             k_min=10,
             k_max=20,
         )
+
+
+def test_patched_get_per_cell_filtering_info_guards_empty_mode():
+    """mapqc 0.1.1 crashes on ``mode().iloc[0]`` when no cell has a filter reason (empty mode).
+
+    Reproduces the B9 blocker: all neighbourhoods pass (filter_info all None) so pandas
+    ``mode()`` returns a 0-row frame. The upstream ``.iloc[0]`` raises IndexError; our guarded
+    reimplementation must not crash and must still label scored/unsampled cells correctly.
+    """
+    import pandas as pd
+
+    f = mapping_qc._patched_get_per_cell_filtering_info
+    n_nhoods, n_cells = 4, 6
+    scores = np.array([0.5, np.nan, 1.2, np.nan, np.nan, np.nan])
+    mask = np.zeros((n_nhoods, n_cells), dtype=int)
+    mask[0, [0, 1]] = 1
+    mask[1, [2, 3]] = 1
+    mask[2, [4]] = 1  # cell 5 in zero neighbourhoods
+
+    # empty-mode case (all filter_info None) — the exact upstream crash
+    out = f(scores, mask, pd.DataFrame({"filter_info": [None] * n_nhoods}))
+    assert out[0] == "pass" and out[2] == "pass"
+    assert out[5] == "not sampled"
+
+    # non-empty case — most-prevalent reason still filled for sampled-but-unscored cells
+    out2 = f(scores, mask, pd.DataFrame({"filter_info": ["low_n", None, "low_n", "high_var"]}))
+    assert out2[1] == "low_n"
+    assert out2[0] == "pass" and out2[5] == "not sampled"
+
+
+def test_patch_mapqc_empty_mode_noop_without_mapqc():
+    """The patch installer must be a safe no-op when mapqc is not importable."""
+    # Should not raise regardless of whether mapqc is installed.
+    mapping_qc._patch_mapqc_empty_mode()

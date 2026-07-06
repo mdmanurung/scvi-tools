@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import warnings
 
 SCALED_LAYER = "scaled"
@@ -143,6 +144,8 @@ def train_cytoanvi(
     classification_ratio: float | None = None,
     learning_rate: float | None = None,
     gradient_clip_val: float | None = None,
+    precision: str | None = None,
+    early_stopping: bool | None = None,
 ):
     """Train CytoANVI with paper-aligned CYTOVI backbone defaults.
 
@@ -195,6 +198,15 @@ def train_cytoanvi(
         "n_samples_per_label": n_samples_per_label,
         "plan_kwargs": plan_kw or None,
     }
+    # Mixed precision (L-044): bf16-mixed is ~27% faster/step — the label-marginalized ELBO is
+    # compute-bound and dominated by memory-bound elementwise ops that bf16 accelerates. The
+    # explicit ``precision`` arg wins; otherwise fall back to the CYTOANVI_TRAIN_PRECISION env var
+    # (e.g. "bf16-mixed"). ``None`` preserves Lightning's fp32 default.
+    precision = precision or os.environ.get("CYTOANVI_TRAIN_PRECISION")
+    if precision:
+        train_kw["precision"] = precision
+    if early_stopping is not None:
+        train_kw["early_stopping"] = early_stopping
     if batch_size is not None:
         train_kw["batch_size"] = batch_size
     train_kw.update(

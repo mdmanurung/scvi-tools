@@ -1,0 +1,35 @@
+name: cytoanvi-release
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  - anndata>=0.11
+  - h5py
+  - jupyter
+  - leidenalg
+  - lightning>=2.6
+  - matplotlib
+  - numba
+  - numpy>=2.0
+  - pandas>=2.3
+  - pyarrow
+  - python-igraph
+  - pytorch>=2.6
+  - pytorch-cuda=12.8
+  - scanpy>=1.10
+  - scikit-learn>=1.7
+  - scipy>=1.15
+  - scib-metrics>=0.5
+  - tensorboard
+  - tqdm
+  - twine
+  - pip:
+      - annbatch[zarrs]>=0.2.0
+      - flowsom>=0.2.0
+      - mapqc
+      - pyro-ppl
+      - readfcs
+      - -e .[dev,docs,cytoanvi-hierarchy,cytoanvi-mapping-qc,cytoanvi-annbatch,cytoanvi-baselines]

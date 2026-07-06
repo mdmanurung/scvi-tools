@@ -11,7 +11,7 @@ from . import data, model, external, utils, criticism
 
 from importlib.metadata import version
 
-package_name = "scvi-tools"
+package_name = "cytoanvi"
 __version__ = version(package_name)
 
 settings.verbosity = logging.INFO

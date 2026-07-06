@@ -4,44 +4,27 @@ import numpy as np
 import pytest
 import torch
 
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    N_EPOCHS,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    make_adata,
+    setup_cytoanvi,
+)
+
 from cytoanvi import CytoANVI
 from cytoanvi._hce import (
     build_reachability_matrix,
     hierarchical_cross_entropy_loss,
 )
-from scvi.data import synthetic_iid
-from scvi.external import cytovi as cytovi_pp
-
-SCALED_LAYER_KEY = "scaled"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"
-N_EPOCHS = 2
-
-
-def _make_adata(n_genes=30, n_batches=2, n_labels=5):
-    adata = synthetic_iid(
-        batch_size=256,
-        n_genes=n_genes,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
-        ["group_a", "group_b"], size=adata.shape[0]
-    )
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
 
 
 @pytest.fixture
 def adata():
-    return _make_adata()
+    return make_adata()
 
 
 def _toy_dag_edges():
@@ -153,20 +136,8 @@ def _synthetic_hierarchy_edges():
     }
 
 
-def _setup_cytoanvi(adata):
-    CytoANVI.setup_anndata(
-        adata,
-        layer=SCALED_LAYER_KEY,
-        batch_key=BATCH_KEY,
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        sample_key=SAMPLE_KEY,
-    )
-    return CytoANVI(adata, n_latent=10)
-
-
 def test_cytoanvi_set_hierarchy_train_uses_hce(adata):
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     model.set_hierarchy(_synthetic_hierarchy_edges())
     assert model.hierarchy_reachability_ is not None
     assert model.module.reachability_matrix_ is not None
@@ -176,14 +147,14 @@ def test_cytoanvi_set_hierarchy_train_uses_hce(adata):
 
 
 def test_predict_hierarchical_raises_without_hierarchy(adata):
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     model.train(max_epochs=N_EPOCHS)
     with pytest.raises(ValueError, match="hierarchy"):
         model.predict_hierarchical()
 
 
 def test_predict_hierarchical_soft_returns_hierarchy_adjusted_scores(adata):
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     model.set_hierarchy(_synthetic_hierarchy_edges())
     model.train(max_epochs=N_EPOCHS)
 
@@ -198,14 +169,14 @@ def test_predict_hierarchical_soft_returns_hierarchy_adjusted_scores(adata):
 
 
 def test_set_hierarchy_raises_on_label_mismatch(adata):
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     bad_edges = {"not_a_real_label": ["also_fake"]}
     with pytest.raises(ValueError):
         model.set_hierarchy(bad_edges)
 
 
 def test_set_hierarchy_twice(adata):
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     edges = _synthetic_hierarchy_edges()
     model.set_hierarchy(edges)
     reach_first = model.hierarchy_reachability_.copy()
@@ -215,7 +186,7 @@ def test_set_hierarchy_twice(adata):
 
 
 def test_cytoanvi_hierarchy_save_load(adata, tmp_path):
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     model.set_hierarchy(_synthetic_hierarchy_edges())
     model.train(max_epochs=N_EPOCHS)
     reach_before = model.hierarchy_reachability_.copy()
@@ -235,7 +206,7 @@ def test_cytoanvi_hierarchy_save_load(adata, tmp_path):
 
 def test_set_hierarchy_twice_save_load(adata, tmp_path):
     """Save/load round-trip after calling set_hierarchy more than once."""
-    model = _setup_cytoanvi(adata)
+    model = setup_cytoanvi(adata)
     edges = _synthetic_hierarchy_edges()
     model.set_hierarchy(edges)
     model.set_hierarchy(edges)

@@ -61,8 +61,8 @@ jobs:
 
       - name: git tag
         run: |
-          git config --global user.email "ori.kronfeld@scverse.org"
-          git config --global user.name "scvi-tools release"
+          git config --global user.email "mikhael.manurung@gmail.com"
+          git config --global user.name "cytoanvi release"
           git tag -m "${{ inputs.tag }}" "${{ inputs.tag }}"
           # If there is duplicate tag, this will fail. The publish to pypi action will have been a noop (due to skip
           # existing), so we make a non-destructive exit here
@@ -85,7 +85,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          name: scvi-tools ${{ inputs.tag }}
+          name: cytoanvi ${{ inputs.tag }}
           tag_name: ${{ inputs.tag }}
           generate_release_notes: false
           body_path: .github/workflows/release_notes.md
@@ -97,11 +97,11 @@ jobs:
     needs: tag-release
     environment:
       name: pypi
-      url: https://pypi.org/p/scvi-tools
+      url: https://pypi.org/p/cytoanvi
     permissions:
       id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
-    # If you don't set an input tag, it's a dry run (no uploads).
-    if: ${{ inputs.tag }}
+    # Disabled: GitHub-only release for now; PyPI publishing deferred until the preprint is out.
+    if: false
 
     steps:
       - uses: actions/checkout@v4
@@ -132,8 +132,9 @@ jobs:
       fail-fast: false
       matrix:
         dependencies: ["", "dev", "tutorials", "runtime"]
-    # If you don't set an input tag, it's a dry run (no uploads).
-    if: ${{ inputs.tag }}
+    # Disabled: the fork has no write access to ghcr.io/scverse/scvi-tools. Re-enable and
+    # repoint to a cytoanvi registry when a container release is actually wanted.
+    if: false
 
     steps:
       - uses: actions/checkout@v4
@@ -155,9 +156,9 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          cache-from: type=registry,ref=ghcr.io/scverse/scvi-tools:buildcache
-          cache-to: type=inline,ref=ghcr.io/scverse/scvi-tools:buildcache
+          cache-from: type=registry,ref=ghcr.io/mdmanurung/cytoanvi:buildcache
+          cache-to: type=inline,ref=ghcr.io/mdmanurung/cytoanvi:buildcache
           target: build
-          tags: ghcr.io/scverse/scvi-tools:py3.13-cu12-${{ inputs.tag }}-${{ matrix.dependencies }},ghcr.io/scverse/scvi-tools:py3.13-cu12-stable-${{ matrix.dependencies }}
+          tags: ghcr.io/mdmanurung/cytoanvi:py3.13-cu12-${{ inputs.tag }}-${{ matrix.dependencies }},ghcr.io/mdmanurung/cytoanvi:py3.13-cu12-stable-${{ matrix.dependencies }}
           build-args: |
             DEPENDENCIES=${{ matrix.dependencies }}

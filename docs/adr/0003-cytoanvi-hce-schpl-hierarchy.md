@@ -6,7 +6,7 @@ CytoANVI supports two optional hierarchy features:
    reachability matrix (Microsoft [hce-classification](https://github.com/microsoft/hce-classification)).
 2. **treeArches-style workflows** — learn, update, and predict cell-type hierarchies on CytoANVI
    latents with [scHPL](https://schpl.readthedocs.io/), behind
-   `pip install scvi-tools[cytoanvi-hierarchy]`.
+   `pip install cytoanvi[cytoanvi-hierarchy]`.
 
 Both are **opt-in**. Flat cross-entropy remains the default when no reachability matrix is set.
 
@@ -25,7 +25,7 @@ Both are **opt-in**. Flat cross-entropy remains the default when no reachability
 
 - treeArches helpers live in the top-level `cytoanvi.hierarchy` module.
 - Functions lazy-import scHPL and raise `ImportError` with
-  `pip install scvi-tools[cytoanvi-hierarchy]` when missing.
+  `pip install cytoanvi[cytoanvi-hierarchy]` when missing.
 - `pyproject.toml` defines `cytoanvi-hierarchy = ["scHPL"]`.
 
 ### Fail-fast, no silent fallbacks

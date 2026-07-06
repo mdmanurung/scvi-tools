@@ -11,54 +11,20 @@ The existing test_cytoanvi.py already covers:
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 
-from cytoanvi import CytoANVI
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    make_adata,
+    setup_and_train,
+)
+
 from cytoanvi._continual import fisher_importances
-from scvi.data import synthetic_iid
-from scvi.external import cytovi as cytovi_pp
-
-SCALED_LAYER_KEY = "scaled"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"
-
-
-def _make_adata(n_genes: int = 20, n_batches: int = 2, n_labels: int = 5):
-    """Minimal synthetic cytometry AnnData (mirrors test_cytoanvi._make_adata)."""
-    adata = synthetic_iid(
-        batch_size=64,
-        n_genes=n_genes,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
-        ["group_a", "group_b"], size=adata.shape[0]
-    )
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
-
-
-def _setup_and_train(adata, max_epochs: int = 2):
-    CytoANVI.setup_anndata(
-        adata,
-        layer=SCALED_LAYER_KEY,
-        batch_key=BATCH_KEY,
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        sample_key=SAMPLE_KEY,
-    )
-    model = CytoANVI(adata, n_latent=10)
-    model.train(max_epochs=max_epochs, accelerator="cpu")
-    return model
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +38,8 @@ def test_fisher_importances_are_nonnegative_and_finite():
     Because importances are mean-squared gradients they must be >= 0 everywhere.
     Every trained parameter must appear in the output.
     """
-    adata = _make_adata()
-    model = _setup_and_train(adata, max_epochs=2)
+    adata = make_adata(n_genes=20, batch_size=64)
+    model = setup_and_train(adata, max_epochs=2)
 
     importances = fisher_importances(model, adata, max_cells=256, seed=0)
 

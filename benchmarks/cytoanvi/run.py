@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 import scvi
 from benchmarks.common.annbatch import AnnBatchConfig
@@ -50,8 +51,6 @@ def _load(
     if dataset == "nunez":
         res = 0.05 if leiden_resolution is None else leiden_resolution
         if require_annotated_nunez:
-            import os
-
             h5ad = data_mod._resolve_file(data_dir, "nunez_annotated.h5ad")
             if not (os.path.exists(h5ad) and os.path.getsize(h5ad) > 0):
                 raise FileNotFoundError(
@@ -322,11 +321,10 @@ def _run_tasks(args, p1, p2, unlab, seed):
 
 def main():
     """CLI entry point — parse arguments and dispatch benchmark tasks."""
-    # Standard Tensor-Core hygiene (PyTorch itself warns to set this). NOTE: the A/B profile
-    # (job 25145234, L-041) showed this gives NO measurable CytoANVI-training speedup — that
-    # training is launch/overhead-bound by the ~n_labels-way ELBO marginalization (many tiny
-    # kernels), not matmul-bound. Kept as harmless hygiene (may help CytoVI/scib matmuls); the
-    # real training-speed lever is fewer label classes (coarser Leiden), not this.
+    # Standard Tensor-Core hygiene (PyTorch itself warns to set this). A/B profiling showed this
+    # gives NO measurable CytoANVI-training speedup — training is launch/overhead-bound by the
+    # ~n_labels-way ELBO marginalization (many tiny kernels), not matmul-bound. Kept as harmless
+    # hygiene (may help CytoVI/scib matmuls); the real lever is fewer label classes (coarser Leiden).
     import torch
 
     torch.set_float32_matmul_precision("high")
@@ -551,11 +549,6 @@ def main():
         type=float,
         default=None,
         help="Override Lightning gradient_clip_val for CytoANVI training.",
-    )
-    ap.add_argument(
-        "--warm-start-cytovi",
-        action="store_true",
-        help="Reserved for future B1 CytoVI warm-start reuse; not enabled by recipes.",
     )
     args = ap.parse_args()
 

@@ -2,17 +2,19 @@
 
 import numpy as np
 import pytest
-from conftest import MockTreeNode, ScalarNameTreeNode
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    MockTreeNode,
+    ScalarNameTreeNode,
+    make_adata,
+    setup_cytoanvi,
+)
 
 from cytoanvi import CytoANVI, hierarchy
-from scvi.data import synthetic_iid
-from scvi.external import cytovi as cytovi_pp
-
-SCALED_LAYER_KEY = "scaled"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"
 
 
 def _mock_schpl_tree():
@@ -39,40 +41,9 @@ def _mock_schpl_tree_coarse():
     return root
 
 
-def _make_adata(n_genes=30, n_batches=2, n_labels=3):
-    adata = synthetic_iid(
-        batch_size=256,
-        n_genes=n_genes,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
-        ["group_a", "group_b"], size=adata.shape[0]
-    )
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
-
-
-def _setup_cytoanvi(adata):
-    CytoANVI.setup_anndata(
-        adata,
-        layer=SCALED_LAYER_KEY,
-        batch_key=BATCH_KEY,
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        sample_key=SAMPLE_KEY,
-    )
-    return CytoANVI(adata, n_latent=10)
-
-
 @pytest.fixture
 def adata_two_labels():
-    return _make_adata(n_labels=3)
+    return make_adata(n_labels=3)
 
 
 def test_reachability_from_schpl_tree_mock():
@@ -124,7 +95,7 @@ N_EPOCHS = 2
 
 
 def test_predict_hierarchical_leaf_only():
-    adata = _make_adata(n_labels=4)
+    adata = make_adata(n_labels=4)
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -148,7 +119,7 @@ def test_predict_hierarchical_default_returns_leaves():
     Pins the corrected default (leaf_only=True). If the default were reverted to False the
     argmax over subtree masses would almost always pick the root, breaking this assertion.
     """
-    adata = _make_adata(n_labels=4)
+    adata = make_adata(n_labels=4)
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -176,7 +147,7 @@ def test_predict_hierarchical_default_returns_leaves():
 
 
 def test_set_hierarchy_from_schpl_allows_internal_nodes(adata_two_labels):
-    model = _setup_cytoanvi(adata_two_labels)
+    model = setup_cytoanvi(adata_two_labels)
     tree = _mock_schpl_tree()
     label_map = {"CD4": "label_1", "CD8": "label_2"}
 
@@ -190,8 +161,8 @@ def test_set_hierarchy_from_schpl_allows_internal_nodes(adata_two_labels):
 
 
 def test_run_tree_arches_pipeline_learn_mock(monkeypatch):
-    adata = _make_adata(n_labels=5)
-    model = _setup_cytoanvi(adata)
+    adata = make_adata(n_labels=5)
+    model = setup_cytoanvi(adata)
     model.train(max_epochs=N_EPOCHS, accelerator="cpu")
 
     mock_tree = _mock_schpl_tree()

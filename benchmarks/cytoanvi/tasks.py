@@ -5,10 +5,12 @@ Each task returns a plain dict of metrics; run.py serializes them to JSON.
 
 from __future__ import annotations
 
+import gc
 import time
 import warnings
 
 import numpy as np
+import torch as _torch
 
 from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
 from benchmarks.common.training import (
@@ -132,6 +134,7 @@ def _training_config(cytoanvi_training_config=None, **overrides) -> dict:
     config = dict(cytoanvi_training_config or {})
     for key, value in overrides.items():
         if isinstance(value, bool):
+            # bool=False means "use base config default"; only True explicitly enables a flag.
             if value:
                 config[key] = value
         elif value is not None:
@@ -492,10 +495,6 @@ def task_b5_novelty(
     def _finish(model, unc_latent, unc_logit, eval_is_novel, *, extra=None, mode_note=""):
         latent_result = metrics.novelty_auroc(unc_latent, eval_is_novel)
         logit_result = metrics.novelty_auroc(unc_logit, eval_is_novel)
-        import gc
-
-        import torch as _torch
-
         del model
         gc.collect()
         if _torch.cuda.is_available():
@@ -609,10 +608,6 @@ def task_b5_novelty(
                 _t = _timing("cytoanvi_knn_baseline", _t)
             except Exception as exc:  # noqa: BLE001 - diagnostic must not abort the main result
                 cytoanvi_knn_result = {"auroc": float("nan"), "error": repr(exc)}
-
-        import gc
-
-        import torch as _torch
 
         del model
         gc.collect()
@@ -837,38 +832,22 @@ def task_b5_holdout_sweep(
         "n_holdout_types": len(types),
         # CytoVI OOD baseline: mean AUROC across types (when cytovi_baseline=True). Compare
         # against mean_auroc above — CytoANVI's uncertainty is only useful if it beats this.
-        "cytovi_mean_auroc": _cytovi_mean_auroc(per_type),
+        "cytovi_mean_auroc": _mean_baseline_auroc(per_type, "cytovi_baseline"),
         # CytoANVI-latent kNN-distance OOD diagnostic: same kNN-distance procedure as
         # cytovi_mean_auroc but using CytoANVI's own latent.  Compare against cytovi_mean_auroc
         # to determine whether the B5 negative result is due to a bad TTA method or a bad latent.
-        "cytoanvi_knn_mean_auroc": _cytoanvi_knn_mean_auroc(per_type),
+        "cytoanvi_knn_mean_auroc": _mean_baseline_auroc(per_type, "cytoanvi_knn_baseline"),
         **fdr_fields,
     }
 
 
-def _cytovi_mean_auroc(per_type: dict) -> float:
-    """Mean of the CytoVI baseline AUROCs across held-out types (NaN if baseline not run)."""
+def _mean_baseline_auroc(per_type: dict, key: str) -> float:
+    """Mean AUROC across held-out types for a given per-type baseline key (NaN if not run)."""
     vals = [
-        v["cytovi_baseline"]["auroc"]
+        v[key]["auroc"]
         for v in per_type.values()
-        if isinstance(v.get("cytovi_baseline"), dict)
-        and not np.isnan(v["cytovi_baseline"].get("auroc", float("nan")))
-    ]
-    return float(np.mean(vals)) if vals else float("nan")
-
-
-def _cytoanvi_knn_mean_auroc(per_type: dict) -> float:
-    """Mean of the CytoANVI-latent kNN-distance OOD AUROCs across held-out types.
-
-    NaN when ``cytovi_baseline=False`` (the diagnostic is not run in that case).
-    Compare against :func:`_cytovi_mean_auroc` to isolate TTA-method weakness from
-    latent-space weakness in the B5 negative-result interpretation.
-    """
-    vals = [
-        v["cytoanvi_knn_baseline"]["auroc"]
-        for v in per_type.values()
-        if isinstance(v.get("cytoanvi_knn_baseline"), dict)
-        and not np.isnan(v["cytoanvi_knn_baseline"].get("auroc", float("nan")))
+        if isinstance(v.get(key), dict)
+        and not np.isnan(v[key].get("auroc", float("nan")))
     ]
     return float(np.mean(vals)) if vals else float("nan")
 

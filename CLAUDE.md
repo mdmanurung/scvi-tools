@@ -5,7 +5,7 @@
 This is a fork of [scvi-tools](https://scvi-tools.org/) extended with **CytoANVI** — a semi-supervised, annotation-aware variational autoencoder for antibody-based single-cell cytometry (mass cytometry, flow cytometry, CITE-seq protein).
 
 **Active branch**: `feat/cytoanvi`
-**Status**: Implementation complete; pending publication-grade benchmarks at max_epochs=1000.
+**Status**: Full-cohort B1/B3/B5/B8 complete (max_epochs=1000, 3 seeds); B2 Roider-full pending; B9 blocked (upstream mapqc bug). B5 diagnostic (kNN-OOD in CytoANVI latent) in flight.
 
 ## Domain language
 

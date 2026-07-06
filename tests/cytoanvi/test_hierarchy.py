@@ -1,18 +1,20 @@
 import numpy as np
 import pytest
-from conftest import MockTreeNode as _MockTreeNode  # shared stub; avoids duplicating the class
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    N_EPOCHS,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    MockTreeNode as _MockTreeNode,
+    make_adata,
+    setup_and_train,
+)
 
-from cytoanvi import CytoANVI, hierarchy
+from cytoanvi import hierarchy
 from cytoanvi._hce import build_reachability_matrix
-from scvi.data import synthetic_iid
-from scvi.external import cytovi as cytovi_pp
 
-SCALED_LAYER_KEY = "scaled"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"
-N_EPOCHS = 2
 CELLTYPE_BATCH_KEY = "celltype_batch"
 
 
@@ -53,8 +55,8 @@ def test_reachability_from_schpl_tree_uses_model_labels_not_internal_nodes():
 
 
 def test_set_hierarchy_from_schpl_accepts_internal_schpl_nodes():
-    adata = _make_adata(n_labels=5)
-    model = _setup_and_train(adata)
+    adata = make_adata(n_labels=5)
+    model = setup_and_train(adata)
     leaf_to_model = {
         "label_2-b1": "label_2",
         "label_3-b1": "label_3",
@@ -77,42 +79,11 @@ def test_set_hierarchy_from_schpl_accepts_internal_schpl_nodes():
     np.testing.assert_array_equal(model.hierarchy_reachability_, expected)
 
 
-def _make_adata(n_genes=30, n_batches=2, n_labels=5):
-    adata = synthetic_iid(
-        batch_size=256,
-        n_genes=n_genes,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(["group_a", "group_b"], size=adata.shape[0])
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
-
-
-def _setup_and_train(adata):
-    CytoANVI.setup_anndata(
-        adata,
-        layer=SCALED_LAYER_KEY,
-        batch_key=BATCH_KEY,
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        sample_key=SAMPLE_KEY,
-    )
-    model = CytoANVI(adata, n_latent=10)
-    model.train(max_epochs=N_EPOCHS, accelerator="cpu")
-    return model
-
-
 @pytest.mark.optional
 def test_learn_hierarchy_on_synthetic_latent():
     pytest.importorskip("scHPL")
-    adata = _make_adata(n_batches=2, n_labels=5)
-    model = _setup_and_train(adata)
+    adata = make_adata(n_batches=2, n_labels=5)
+    model = setup_and_train(adata)
 
     latent_adata = hierarchy.latent_to_anndata(model, adata)
     assert latent_adata.n_obs == adata.n_obs

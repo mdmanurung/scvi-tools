@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
+
 _REPO_DATA = Path(__file__).resolve().parents[2] / "data"
 ENTITY_JSON = _REPO_DATA / "roider_full" / "patient_entity.json"
 LEIDEN_CACHE_DIR = _REPO_DATA / "roider_full"
@@ -26,8 +28,6 @@ def normalize_entity(raw: str) -> str:
 
 def entity_map_from_supplementary(xlsx: Path | None = None) -> dict[str, str]:
     """PatientID → disease entity from Nature Supplementary Table 1 (MOESM3 workbook)."""
-    import pandas as pd
-
     path = xlsx or SUPPLEMENTARY_XLSX
     if not path.exists():
         raise FileNotFoundError(f"supplementary workbook missing at {path}")
@@ -109,8 +109,6 @@ def apply_leiden_cell_types(
 
     cache = _leiden_cache_path(labels_key, resolution)
     if cache.exists() and not refresh:
-        import pandas as pd
-
         table = pd.read_parquet(cache)
         if labels_key not in table.columns:
             raise KeyError(f"{cache} missing column {labels_key!r}")

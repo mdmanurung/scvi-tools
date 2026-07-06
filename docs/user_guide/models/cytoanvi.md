@@ -127,20 +127,35 @@ replay/EWC is available for experimentation, but the replay-resume limitation ab
 
 ## Benchmark evidence
 
-```{note}
-Release candidate — full-cohort benchmarks in progress.
-```
+Full-cohort results (max_epochs=1000, 3 seeds). Numbers are mean ± std across seeds.
 
-Completed benchmarks supporting claims in this release:
+| Task | Dataset | Metric | CytoANVI | Baseline | Verdict |
+|------|---------|--------|----------|----------|---------|
+| B1 label transfer | Roider BNHL | macro-F1 | **0.9317 ± 0.0022** | CytoVI-kNN 0.8928 ± 0.0034 | ✅ Δ +0.0388 (passes ≥+0.03 gate) |
+| B1 label transfer | Nuñez PBMC | macro-F1 | 0.9751 ± 0.0003 | CytoVI-kNN 0.9581 ± 0.0007 | Δ +0.017 (near-ceiling) |
+| B2 batch integration | Nuñez PBMC | scib batch Δ | no regression | CytoVI latent | ✅ within ±0.05 |
+| B3 (p1) cross-panel | Roider BNHL | panel-1 holdout macro-F1 | **0.828 ± 0.015** | — | ✅ defensible supervised headline |
+| B3 (p2) cross-panel | Roider BNHL | inter-method concordance | 0.671 ± 0.008 | CytoVI-kNN | ❌ below ≥0.80 gate — **concordance, not accuracy** |
+| B5 novelty detection | Roider BNHL | mean AUROC | 0.484 ± 0.019 | CytoVI kNN-OOD 0.775 ± 0.002 | ❌ **NEGATIVE** — TTA uncertainty below chance |
+| B8 HCE vs flat CE | Nuñez PBMC | Δ macro-F1 | **+0.0862 ± 0.0027** | flat CE | ✅ hierarchy helps on coarse labels |
 
-| Task | Dataset | Finding |
-|------|---------|---------|
-| B1 label transfer | Nuñez PBMC | Classifier label transfer is competitive with CytoVI k-NN on the Nuñez cohort. |
-| B2 batch integration | Nuñez PBMC | `classification_ratio` tunes the batch–biology tradeoff (see Training details). |
-| B8 HCE vs flat CE | Nuñez PBMC | Hierarchical cross-entropy improves coarse-level accuracy on the Nuñez five-type hierarchy. |
+### Limitations of the current evidence
 
-Full-cohort Roider cross-panel mapping and novelty-detection benchmarks are in progress and will
-be reported upon completion.
+- **Label circularity (B1, B3).** The CytoVI-kNN baseline uses the same encoder that produced
+  the Leiden reference labels, so both B1 and B3 overstate CytoANVI's advantage relative to a
+  truly independent annotator.
+- **B3 p2 is concordance, not accuracy.** No independent manually-gated panel-2 ground-truth
+  labels exist, so the 0.671 number measures agreement between two methods that share an encoder,
+  not correctness against biology.
+- **B5 novelty is a genuine negative result.** CytoANVI's test-time-augmentation uncertainty does
+  not detect held-out cell types better than a trivial kNN-distance baseline in CytoVI latent, and
+  the held-out "novel" types are proxy Leiden clusters rather than manually gated populations.
+- **B8's gain is on a nearly flat tree.** The Nuñez hierarchy has a single internal node, so the
+  +0.086 improvement should not be read as evidence for deep, multi-level cell hierarchies.
+
+B2 on the full Roider cohort, B9 mapping-QC (blocked by an upstream `mapqc` bug), and the
+continual-update tasks (B4/B6, which currently use pseudo-batch splits) are not yet reportable
+as publication evidence.
 
 ## Quick start (label transfer)
 

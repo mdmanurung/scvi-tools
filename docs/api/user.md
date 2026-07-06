@@ -87,6 +87,7 @@ import scvi
 
    CytoANVI
    CytoANVAE
+   get_uncertainty_threshold
    hierarchy
    mapping_qc
 ```

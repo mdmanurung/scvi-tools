@@ -876,5 +876,14 @@ class SupervisedModuleClass:
         user_logits = cls_params.get("logits", False)
 
         if not user_logits:
-            self.classifier.logits = False
-            self.classifier.classifier.append(torch.nn.Softmax(dim=-1))
+            # The pre-1.1 logits fix targets the legacy ``Classifier`` wrapper, which
+            # exposes ``.logits`` and an inner ``.classifier`` Sequential. Modern models
+            # use a bare Sequential and already return probabilities correctly, so there
+            # is nothing to patch. This guard also covers cytoanvi-fork models: the fork
+            # sets ``scvi.__version__`` from the ``cytoanvi`` package (0.1.0), so the
+            # ``>=1.1`` gate above does not fire even though the model is structurally
+            # modern — without this guard the append below raises AttributeError.
+            classifier = self.classifier
+            if hasattr(classifier, "logits") and hasattr(classifier, "classifier"):
+                classifier.logits = False
+                classifier.classifier.append(torch.nn.Softmax(dim=-1))

@@ -1,6 +1,6 @@
 """Optional mapQC helpers for CytoANVI query-to-reference mapping QC.
 
-Requires ``pip install scvi-tools[cytoanvi-mapping-qc]`` (mapqc). Import from
+Requires ``pip install cytoanvi[cytoanvi-mapping-qc]`` (mapqc). Import from
 ``cytoanvi.mapping_qc``.
 """
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from cytoanvi._model import CytoANVI
 
 _MAPQC_INSTALL_MSG = (
-    "mapqc is required for mapping QC. Install with: pip install scvi-tools[cytoanvi-mapping-qc]"
+    "mapqc is required for mapping QC. Install with: pip install cytoanvi[cytoanvi-mapping-qc]"
 )
 
 DEFAULT_EMB_KEY = "X_CytoANVI"

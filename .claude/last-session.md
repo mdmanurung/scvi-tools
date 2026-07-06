@@ -68,6 +68,6 @@ At session start jobs were at 11h34m. Seed 0 at epoch 539/1000 for one holdout t
    - Update `publication_summary.json` via `aggregate_results.py --manifest`
    - Also update publication_manifest.json: mark B5 diagnostic artifacts as `complete`
 
-2. **NOTE: The diagnostic jobs overwrite the existing `roider_full_b5_sweep_s{0,1,2}.json`** (same output path as the original B5 run). The files will contain the new `cytoanvi_knn_mean_auroc` key after the jobs finish.
+2. **CRITICAL NOTE: The diagnostic jobs overwrite `roider_full_b5_sweep_s{0,1,2}.json`** (same output path). They run ALL ~47 Leiden clusters (not the original 11 most-populous used in `phase3b_b5redesign_roider_s*.slurm` via `--b5-max-holdout-types 11`). Original 11-type seed files are preserved as `roider_full_b5_sweep_s{0,1,2}_11type_orig.json`. Publication result is `roider_full_b5_sweep_multiseed.json` (11-type, status=complete in manifest) — DO NOT overwrite it. Aggregate the diagnostic to a DIFFERENT file: `roider_full_b5_sweep_diag_multiseed.json`.
 
 3. **B9**: Low priority until mapqc releases a fix for the IndexError in `_get_per_cell_filtering_info`.

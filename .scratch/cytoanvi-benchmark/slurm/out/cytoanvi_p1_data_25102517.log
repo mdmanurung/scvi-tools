@@ -1,0 +1,53 @@
+=== data validation Sat Jun 27 19:31:35 CEST 2026 ===
+{
+  "data_dir": "benchmarks/cytoanvi/data",
+  "vignette": {
+    "roider_p1.h5ad": {
+      "path": "benchmarks/cytoanvi/data/roider_p1.h5ad",
+      "size_bytes": 2537291,
+      "ok": true
+    },
+    "roider_p2.h5ad": {
+      "path": "benchmarks/cytoanvi/data/roider_p2.h5ad",
+      "size_bytes": 1978907,
+      "ok": true
+    },
+    "Nunez_PBMCs_batch1.fcs": {
+      "path": "benchmarks/cytoanvi/data/Nunez_PBMCs_batch1.fcs",
+      "size_bytes": 17606432,
+      "ok": true
+    },
+    "Nunez_PBMCs_batch2.fcs": {
+      "path": "benchmarks/cytoanvi/data/Nunez_PBMCs_batch2.fcs",
+      "size_bytes": 17606430,
+      "ok": true
+    }
+  },
+  "all_ok": true
+}
+--- full-cohort listing ---
+{
+  "roider_full": {
+    "issue": "cytovi-benchmark/02",
+    "source": "https://doi.org/10.6084/m9.figshare.24915633",
+    "local_archive": "data/24915633.zip",
+    "extract": "python -m benchmarks.common.ingest --extract-roider",
+    "deliver": "data/roider_full/merged.h5ad",
+    "note": "Raw .fcs per patient; gate + arcsinh(500) + 10k T cells/patient"
+  },
+  "nunez_full": {
+    "issue": "cytovi-benchmark/01",
+    "source": "Figshare 55982654 + 55982657 (all cells after QC, not vignette subsample)",
+    "local_files": "data/Nunez_PBMCs_batch{1,2}.fcs",
+    "deliver": "benchmarks/cytovi/data/nunez/",
+    "note": "arcsinh(2000) + labels; exclude ambiguous cells for integration"
+  },
+  "kreutmair": {
+    "issue": "cytovi-benchmark A-D4",
+    "source": "https://doi.org/10.17632/ffkvft27ds.2",
+    "local_archive": "data/ffkvft27ds-2.zip",
+    "extract": "python -m benchmarks.common.ingest --extract-kreutmair",
+    "deliver": "data/kreutmair/"
+  }
+}
+=== DONE ===

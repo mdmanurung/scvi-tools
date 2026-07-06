@@ -1,0 +1,214 @@
+{
+  "meta": {
+    "dataset": "roider_vignette",
+    "data_files": [
+      "data/Roider_et_al_BNHL_panel1.h5ad",
+      "data/Roider_et_al_BNHL_panel2.h5ad"
+    ],
+    "labels_key": "cell_type",
+    "batch_key": "batch",
+    "sample_key": "PatientID",
+    "max_epochs": 100,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "completed": "2026-06-17",
+    "note": "Vignette subsample smoke run \u2014 not publication-grade (see PRD). Full cohort re-run pending cytovi-benchmark/02."
+  },
+  "b1_multiseed": {
+    "cytoanvi_macro_f1": {
+      "mean": 0.9249553246497781,
+      "sd": 0.008915195091204824,
+      "n": 3,
+      "values": [
+        0.9331756698290137,
+        0.926211728936057,
+        0.9154785751842639
+      ]
+    },
+    "cytovi_knn_macro_f1": {
+      "mean": 0.8095715939298631,
+      "sd": 0.02481923412971758,
+      "n": 3,
+      "values": [
+        0.7811918261410612,
+        0.8203066307978392,
+        0.8272163248506891
+      ]
+    },
+    "delta": {
+      "mean": 0.11538373071991503,
+      "sd": 0.032901272340432004,
+      "n": 3,
+      "values": [
+        0.15198384368795248,
+        0.1059050981382178,
+        0.08826225033357482
+      ]
+    },
+    "pass_target_plus_0.03": true
+  },
+  "b2_multiseed": {
+    "cytoanvi_bio_conservation": {
+      "mean": 0.7339743137359619,
+      "sd": 0.009705923394220427,
+      "n": 3,
+      "values": [
+        0.7286588668823242,
+        0.7280871868133545,
+        0.745176887512207
+      ]
+    },
+    "cytovi_bio_conservation": {
+      "mean": 0.6351404031117758,
+      "sd": 0.008283772733364487,
+      "n": 3,
+      "values": [
+        0.6274316787719727,
+        0.6438991069793701,
+        0.6340904235839844
+      ]
+    },
+    "cytoanvi_batch_correction": {
+      "mean": 0.7695809674164416,
+      "sd": 0.01935289277495709,
+      "n": 3,
+      "values": [
+        0.7528884466365796,
+        0.7907940172765315,
+        0.7650604383362136
+      ]
+    },
+    "cytovi_batch_correction": {
+      "mean": 0.8093559909595491,
+      "sd": 0.016869890410412147,
+      "n": 3,
+      "values": [
+        0.7909593233219265,
+        0.8241009604552778,
+        0.813007689101443
+      ]
+    },
+    "bio_delta_mean": {
+      "mean": 0.09883391062418616,
+      "sd": 0.013607960889296828,
+      "n": 3,
+      "values": [
+        0.10122718811035147,
+        0.08418807983398435,
+        0.11108646392822263
+      ]
+    },
+    "batch_delta_mean": {
+      "mean": -0.039775023543107545,
+      "sd": 0.007467445275415189,
+      "n": 3,
+      "values": [
+        -0.03807087668534692,
+        -0.03330694317874627,
+        -0.04794725076522943
+      ]
+    },
+    "pass_prd_bio_within_0.02": false,
+    "pass_prd_batch_ge_baseline": false
+  },
+  "b3_seed0": {
+    "p1_holdout_macro_f1": 0.9125641636132796,
+    "p2_concordance": 0.8625326108769817,
+    "pass_concordance_ge_0.7": true
+  },
+  "b5_sweep": {
+    "n_holdouts": 13,
+    "best": {
+      "holdout_type": "Tfh",
+      "auroc": 0.8746925731188849,
+      "n_novel": 277
+    },
+    "pass_auroc_gt_0.7": [
+      {
+        "holdout_type": "Tfh",
+        "auroc": 0.8746925731188849,
+        "n_novel": 277
+      },
+      {
+        "holdout_type": "Treg CD69+",
+        "auroc": 0.7787292877895662,
+        "n_novel": 584
+      },
+      {
+        "holdout_type": "Ttox EM3",
+        "auroc": 0.7421710888787623,
+        "n_novel": 571
+      }
+    ],
+    "all": [
+      {
+        "holdout_type": "Tfh",
+        "auroc": 0.8746925731188849,
+        "n_novel": 277
+      },
+      {
+        "holdout_type": "Treg CD69+",
+        "auroc": 0.7787292877895662,
+        "n_novel": 584
+      },
+      {
+        "holdout_type": "Ttox EM3",
+        "auroc": 0.7421710888787623,
+        "n_novel": 571
+      },
+      {
+        "holdout_type": "Tpr",
+        "auroc": 0.6216393238101179,
+        "n_novel": 391
+      },
+      {
+        "holdout_type": "Th CM2",
+        "auroc": 0.6209108242087488,
+        "n_novel": 633
+      },
+      {
+        "holdout_type": "Naive CD4 T",
+        "auroc": 0.5911681551331304,
+        "n_novel": 393
+      },
+      {
+        "holdout_type": "Tdn",
+        "auroc": 0.44057260286768485,
+        "n_novel": 225
+      },
+      {
+        "holdout_type": "Treg CD69-",
+        "auroc": 0.4309511937460385,
+        "n_novel": 250
+      },
+      {
+        "holdout_type": "Tdp",
+        "auroc": 0.383845882826656,
+        "n_novel": 16
+      },
+      {
+        "holdout_type": "Th CM1",
+        "auroc": 0.3786538658586352,
+        "n_novel": 809
+      },
+      {
+        "holdout_type": "Ttox EM2",
+        "auroc": 0.34832842507712974,
+        "n_novel": 351
+      },
+      {
+        "holdout_type": "Naive CD8 T",
+        "auroc": 0.2793447635033871,
+        "n_novel": 217
+      },
+      {
+        "holdout_type": "Ttox EM1",
+        "auroc": 0.16200321664878753,
+        "n_novel": 266
+      }
+    ]
+  }
+}

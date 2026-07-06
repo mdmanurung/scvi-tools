@@ -1,0 +1,9 @@
+name: bioinformatics
+version: "1.0"
+description: Conventions for single-cell and cytometry analysis pipelines
+core: false
+domain: bioinformatics
+installed: 2026-06-29
+files:
+  - analysis-conventions.md
+  - qc-checklist.md

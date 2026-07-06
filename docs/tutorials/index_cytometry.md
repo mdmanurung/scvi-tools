@@ -3,20 +3,32 @@
 ```{toctree}
 :maxdepth: 1
 
-notebooks/cytometry/CytoVI_batch_correction_tutorial
-notebooks/cytometry/CytoVI_advanced_tutorial
+notebooks/cytometry/CytoANVI_tutorial
+notebooks/cytometry/CytoANVI_treeArches_tutorial
 ```
 
 ```{customcard}
-:path: notebooks/cytometry/CytoVI_batch_correction_tutorial
-:tags: Integration, Analysis, Cytometry
+:path: notebooks/cytometry/CytoANVI_tutorial
+:tags: Integration, Analysis, Cytometry, Label-transfer
 
-Correct batch effects in cytometry data experiments with cytoVI
+Semi-supervised label transfer and panel-aware query mapping with CytoANVI
 ```
 
 ```{customcard}
-:path: notebooks/cytometry/CytoVI_advanced_tutorial
-:tags: Integration, Analysis, Cytometry, Modality-imputation
+:path: notebooks/cytometry/CytoANVI_treeArches_tutorial
+:tags: Integration, Analysis, Cytometry, Hierarchy, Template
 
-Perform multi-panel integration and downstream advanced analysis with CytoVI
+Template for learning and updating cell-type hierarchies on CytoANVI latents with scHPL
+```
+
+## Runnable scripts
+
+```{note}
+**CytoANVI end-to-end reference → query example (runnable Python script)**
+
+`docs/tutorials/notebooks/cytometry/cytoanvi_example_reference_query.py` — a self-contained script
+demonstrating same-panel and panel-divergent CytoANVI reference→query mapping with label transfer
+on synthetic data. Run with:
+
+    PYTHONPATH=src:. python docs/tutorials/notebooks/cytometry/cytoanvi_example_reference_query.py
 ```

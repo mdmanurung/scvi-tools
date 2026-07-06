@@ -25,6 +25,7 @@ def transform_arcsinh(
     scaling_dict: dict[str, float] | None = None,
     transform_scatter: bool = False,
     inplace: bool = True,
+    technology: Literal["cytof", "flow", "spectral_flow"] | None = None,
 ) -> AnnData | None:
     """
     Apply the arcsinh transformation to the raw layer of an AnnData object.
@@ -45,12 +46,26 @@ def transform_arcsinh(
         If True, scatter features are omitted from the transformation.
     inplace
         If True, apply the transformation in place; if False, return a new AnnData.
+    technology
+        Assay technology: ``'cytof'``, ``'flow'``, or ``'spectral_flow'``. When provided and
+        ``technology != 'cytof'`` but ``global_scaling_factor == 5`` (the CyTOF standard), a
+        ``UserWarning`` is emitted because a cofactor of 5 is rarely appropriate for flow or
+        spectral-flow data (typical values: 150–2000 depending on antibody titration).
 
     Returns
     -------
     If ``inplace`` is False, returns the transformed ``AnnData`` object; otherwise, nothing.
     """
     # check arguments
+    if technology is not None and technology != "cytof" and global_scaling_factor == 5:
+        warnings.warn(
+            f"technology='{technology}' but global_scaling_factor=5, which is the CyTOF standard. "
+            "Flow and spectral-flow data typically use cofactors of 150–2000. "
+            "Pass the correct cofactor for your assay or suppress this warning by setting "
+            "technology='cytof'.",
+            UserWarning,
+            stacklevel=settings.warnings_stacklevel,
+        )
     validate_layer_key(adata, raw_layer_key)
     if scaling_dict is not None:
         validate_marker(adata, scaling_dict.keys())

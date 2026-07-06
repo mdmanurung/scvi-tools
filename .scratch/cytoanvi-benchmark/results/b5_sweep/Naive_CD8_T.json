@@ -1,0 +1,11 @@
+{
+  "dataset": "roider",
+  "seed": 0,
+  "b5": {
+    "task": "b5_novelty",
+    "seed": 0,
+    "holdout_type": "Naive CD8 T",
+    "auroc": 0.2793447635033871,
+    "n_novel": 217
+  }
+}

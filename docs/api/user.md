@@ -73,6 +73,29 @@ import scvi
    external.DIAGVI
 ```
 
+## CytoANVI
+
+```{eval-rst}
+.. currentmodule:: cytoanvi
+
+```
+
+```{eval-rst}
+.. autosummary::
+   :toctree: reference/
+   :nosignatures:
+
+   CytoANVI
+   CytoANVAE
+   hierarchy
+   mapping_qc
+```
+
+```{eval-rst}
+.. currentmodule:: scvi
+
+```
+
 ## Data loading
 
 `scvi-tools` relies entirely on the [AnnData] format. For convenience, we have included data loaders from the [AnnData] API. [Scanpy] also has [utilities] to load data that are outputted by 10x's Cell Ranger software.

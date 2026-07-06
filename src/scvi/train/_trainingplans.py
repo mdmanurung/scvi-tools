@@ -577,6 +577,12 @@ class AdversarialTrainingPlan(TrainingPlan):
         Scaling factor on the adversarial components of the loss.
         By default, adversarial loss is scaled from 1 to 0 following the opposite of
         kl warmup.
+    gradient_clip_norm
+        If not ``None``, clip the L2 norm of all model parameter gradients to this
+        value before every optimizer step.  Because this plan uses manual
+        optimisation, Lightning's ``Trainer(gradient_clip_val=...)`` is
+        incompatible; pass this argument via ``plan_kwargs`` instead.
+        ``None`` (default) disables clipping and preserves existing behaviour.
     compile
         Whether to compile the model for faster training
     **loss_kwargs
@@ -604,6 +610,7 @@ class AdversarialTrainingPlan(TrainingPlan):
         lr_min: float = 0,
         adversarial_classifier: bool | Classifier = False,
         scale_adversarial_loss: float | Literal["auto"] = "auto",
+        gradient_clip_norm: float | None = None,
         compile: bool = False,
         compile_kwargs: dict | None = None,
         **loss_kwargs,
@@ -646,6 +653,7 @@ class AdversarialTrainingPlan(TrainingPlan):
         else:
             self.adversarial_classifier = adversarial_classifier
         self.scale_adversarial_loss = scale_adversarial_loss
+        self.gradient_clip_norm = gradient_clip_norm
         self.automatic_optimization = False
 
     def loss_adversarial_classifier(self, z, batch_index, predict_true_class=True):
@@ -703,6 +711,11 @@ class AdversarialTrainingPlan(TrainingPlan):
         self.compute_and_log_metrics(scvi_loss, self.train_metrics, "train")
         opt1.zero_grad()
         self.manual_backward(loss)
+        if self.gradient_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(
+                filter(lambda p: p.requires_grad, self.module.parameters()),
+                self.gradient_clip_norm,
+            )
         opt1.step()
 
         # train adversarial classifier
@@ -809,6 +822,12 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
         Threshold for measuring the new optimum.
     lr_scheduler_metric
         Which metric to track for learning rate reduction.
+    gradient_clip_norm
+        If not ``None``, clip the L2 norm of all model parameter gradients to
+        this value before every optimizer step.  Pass via ``plan_kwargs``; this
+        is the ``plan_kwargs`` alias for
+        ``Trainer(gradient_clip_val=..., gradient_clip_algorithm="norm")``.
+        ``None`` (default) disables clipping and preserves existing behaviour.
     **loss_kwargs
         Keyword args to pass to the loss method of the `module`.
         `kl_weight` should not be passed here and is handled automatically.
@@ -831,6 +850,7 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
         lr_scheduler_metric: Literal[
             "elbo_validation", "reconstruction_loss_validation", "kl_local_validation"
         ] = "elbo_validation",
+        gradient_clip_norm: float | None = None,
         compile: bool = False,
         compile_kwargs: dict | None = None,
         **loss_kwargs,
@@ -852,6 +872,18 @@ class SemiSupervisedTrainingPlan(TrainingPlan):
         )
         self.loss_kwargs.update({"classification_ratio": classification_ratio})
         self.n_classes = n_classes
+        self.gradient_clip_norm = gradient_clip_norm
+
+    def configure_gradient_clipping(self, optimizer, gradient_clip_val=None, gradient_clip_algorithm=None):
+        """Apply gradient norm clipping if ``gradient_clip_norm`` was set via plan_kwargs."""
+        if self.gradient_clip_norm is not None:
+            self.clip_gradients(
+                optimizer,
+                gradient_clip_val=self.gradient_clip_norm,
+                gradient_clip_algorithm="norm",
+            )
+        else:
+            super().configure_gradient_clipping(optimizer, gradient_clip_val, gradient_clip_algorithm)
 
     def log_with_mode(self, key: str, value: Any, mode: str, **kwargs):
         """Log with mode."""

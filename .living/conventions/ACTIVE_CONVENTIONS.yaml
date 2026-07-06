@@ -1,0 +1,7 @@
+active_conventions:
+  - name: bioinformatics
+    version: "1.0"
+    installed: 2026-06-29
+    files:
+      - .living/conventions/bioinformatics/analysis-conventions.md
+      - .living/conventions/bioinformatics/qc-checklist.md

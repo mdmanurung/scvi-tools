@@ -1,0 +1,55 @@
+{
+  "seed": 1,
+  "max_epochs": 100,
+  "b2": {
+    "task": "b2_integration",
+    "seed": 1,
+    "max_epochs": 100,
+    "subsample_per_batch": 10000,
+    "cytoanvi": {
+      "n_cells": 4983,
+      "embedding_key": "X_benchmark",
+      "metrics": {
+        "Isolated labels": 0.6273974180221558,
+        "KMeans NMI": 0.7641147206066079,
+        "KMeans ARI": 0.6260499287469259,
+        "Silhouette label": 0.625025749206543,
+        "cLISI": 0.9978479743003845,
+        "BRAS": 0.8277590870857239,
+        "iLISI": 0.702824592590332,
+        "KBET": 0.6667585499231122,
+        "Graph connectivity": 0.9528604086944935,
+        "PCR comparison": 0.8037675076936404,
+        "Batch correction": 0.7907940172765315,
+        "Bio conservation": 0.7280871868133545,
+        "Total": 0.7531699189986253
+      },
+      "batch_correction": 0.7907940172765315,
+      "bio_conservation": 0.7280871868133545,
+      "total": 0.7531699189986253
+    },
+    "cytovi": {
+      "n_cells": 4983,
+      "embedding_key": "X_benchmark",
+      "metrics": {
+        "Isolated labels": 0.5624356269836426,
+        "KMeans NMI": 0.6433177147432676,
+        "KMeans ARI": 0.4767034096281128,
+        "Silhouette label": 0.5589780211448669,
+        "cLISI": 0.9780606627464294,
+        "BRAS": 0.840511679649353,
+        "iLISI": 0.7450276613235474,
+        "KBET": 0.6918910631568379,
+        "Graph connectivity": 0.9199343228290464,
+        "PCR comparison": 0.9231400753176041,
+        "Batch correction": 0.8241009604552778,
+        "Bio conservation": 0.6438991069793701,
+        "Total": 0.7159798483697333
+      },
+      "batch_correction": 0.8241009604552778,
+      "bio_conservation": 0.6438991069793701,
+      "total": 0.7159798483697333
+    }
+  },
+  "dataset": "roider"
+}

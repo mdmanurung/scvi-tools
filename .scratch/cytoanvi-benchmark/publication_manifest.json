@@ -1,0 +1,266 @@
+{
+  "artifacts": [
+    {
+      "phase": "P2",
+      "task": "b1",
+      "path": "results/nunez_b1_s0.json",
+      "dataset": "nunez",
+      "seeds": [
+        0
+      ],
+      "job_id": "25102544",
+      "status": "superseded",
+      "required": false,
+      "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun. New artifact: results/e1000/nunez_inductive_b1_multiseed.json."
+    },
+    {
+      "phase": "P2",
+      "task": "b1",
+      "path": "results/nunez_b1_s1.json",
+      "dataset": "nunez",
+      "seeds": [
+        1
+      ],
+      "job_id": "25102544",
+      "status": "superseded",
+      "required": false,
+      "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun."
+    },
+    {
+      "phase": "P2",
+      "task": "b1",
+      "path": "results/nunez_b1_s2.json",
+      "dataset": "nunez",
+      "seeds": [
+        2
+      ],
+      "job_id": "25102544",
+      "status": "superseded",
+      "required": false,
+      "note": "Leaky transductive annotation (joint-Leiden); superseded by inductive kNN rerun."
+    },
+    {
+      "phase": "P2",
+      "task": "b1",
+      "path": "results/e1000/nunez_inductive_b1_multiseed.json",
+      "dataset": "nunez",
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "job_id": "PID-3186154",
+      "status": "complete",
+      "required": true,
+      "note": "Inductive kNN annotation (L-022 fix). v3 PID 3186154 completed 2026-07-01 05:58. CytoANVI 0.9751\u00b10.0003, \u0394+0.017 vs kNN 0.9581\u00b10.0007."
+    },
+    {
+      "phase": "P2",
+      "task": "b2",
+      "path": "results/nunez_b2_s0.json",
+      "dataset": "nunez",
+      "seeds": [
+        0
+      ],
+      "job_id": "25102544",
+      "status": "complete",
+      "required": true
+    },
+    {
+      "phase": "P2",
+      "task": "b2",
+      "path": "results/nunez_b2_s1.json",
+      "dataset": "nunez",
+      "seeds": [
+        1
+      ],
+      "job_id": "25102544",
+      "status": "complete",
+      "required": true
+    },
+    {
+      "phase": "P2",
+      "task": "b2",
+      "path": "results/nunez_b2_s2.json",
+      "dataset": "nunez",
+      "seeds": [
+        2
+      ],
+      "job_id": "25104249",
+      "status": "complete",
+      "required": true
+    },
+    {
+      "phase": "P3",
+      "task": "b3",
+      "path": "results/roider_full_b3_s0.json",
+      "dataset": "roider-full",
+      "seeds": [
+        0
+      ],
+      "job_id": "25145151",
+      "status": "complete",
+      "required": true,
+      "note": "B3 RERUN submitted 2026-07-04 (seed 0, job 25145151), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
+      "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
+    },
+    {
+      "phase": "P3",
+      "task": "b3",
+      "path": "results/roider_full_b3_s1.json",
+      "dataset": "roider-full",
+      "seeds": [
+        1
+      ],
+      "job_id": "25145152",
+      "status": "complete",
+      "required": true,
+      "note": "B3 RERUN submitted 2026-07-04 (seed 1, job 25145152), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
+      "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
+    },
+    {
+      "phase": "P3",
+      "task": "b3",
+      "path": "results/roider_full_b3_s2.json",
+      "dataset": "roider-full",
+      "seeds": [
+        2
+      ],
+      "job_id": "25145153",
+      "status": "complete",
+      "required": true,
+      "note": "B3 RERUN submitted 2026-07-04 (seed 2, job 25145153), batch_size=16384, as 3 PARALLEL single-seed jobs (25145151/52/53) \u2014 supersedes the timed-out serial job 25140597 (L-037). Each job runs one seed on the 1.24M-cell merged cohort.",
+      "caveat": "Rerun in progress. B3 metric is INTER-METHOD CONCORDANCE (CytoANVI vs CytoVI-kNN, shared encoder), NOT ground-truth accuracy \u2014 no independent panel-2 labels exist."
+    },
+    {
+      "phase": "P3",
+      "task": "b5",
+      "path": "results/roider_full_b5_sweep_multiseed.json",
+      "dataset": "roider-full",
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "job_id": "25145052,25145053,25145054",
+      "status": "complete",
+      "required": true,
+      "note": "B5 REDESIGN complete 2026-07-04 (jobs 25145052/53/54, merge 25145055): 3-seed, 11 most-populous Leiden holdouts, CytoVI OOD baseline, batch 16384. RESULT: CytoANVI mean_auroc 0.484\u00b10.019 (below chance) vs CytoVI kNN-distance OOD baseline 0.775\u00b10.002 \u2014 CytoANVI's TTA-uncertainty novelty detection is decisively BEATEN by a trivial CytoVI baseline on all 11 types (0/11).",
+      "caveat": "NEGATIVE RESULT (robust, 3 seeds): B5 does NOT support CytoANVI for novelty detection. Held-out set = 11 largest Leiden clusters (proxy, not manual gating). PRIMARY mean_auroc; best_auroc is max-over-types (not a summary). Follow-up: kNN-distance OOD in CytoANVI's OWN latent to separate 'bad TTA method' vs 'bad latent'."
+    },
+    {
+      "phase": "P5",
+      "task": "b8",
+      "path": "results/nunez_b8_s0.json",
+      "dataset": "nunez",
+      "seeds": [
+        0
+      ],
+      "job_id": "25108052",
+      "status": "complete",
+      "required": true,
+      "note": "Re-run after second review fixes: leaf_held bias (#3) and HCE routing through train_cytoanvi (#8). Verified complete 2026-06-30 02:03.",
+      "caveat": "Nu\u00f1ez hierarchy has only ONE internal node (Dendritic cells \u2192 Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree \u2014 NOT evidence that HCE training improves latent features in general."
+    },
+    {
+      "phase": "P5",
+      "task": "b8",
+      "path": "results/nunez_b8_s1.json",
+      "dataset": "nunez",
+      "seeds": [
+        1
+      ],
+      "job_id": "25108052",
+      "status": "complete",
+      "required": true,
+      "note": "Re-run after second review fixes. Verified complete 2026-06-30 10:17.",
+      "caveat": "Nu\u00f1ez hierarchy has only ONE internal node (Dendritic cells \u2192 Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree \u2014 NOT evidence that HCE training improves latent features in general."
+    },
+    {
+      "phase": "P5",
+      "task": "b8",
+      "path": "results/nunez_b8_s2.json",
+      "dataset": "nunez",
+      "seeds": [
+        2
+      ],
+      "job_id": "25128164",
+      "status": "complete",
+      "required": true,
+      "note": "Seed-2 recovery via recover_b8_seed2.slurm (job 25128164). Verified complete 2026-06-30 18:44. 3-seed aggregate: nunez_b8_multiseed.json; \u0394_hierarchical_vs_flat = +0.0862\u00b10.0027 \u2705 pub-gate.",
+      "caveat": "Nu\u00f1ez hierarchy has only ONE internal node (Dendritic cells \u2192 Plasmacytoid dendritic cells); all other 9 cell types are leaves. The +0.086 gain reflects hierarchical decoding on a shallow tree \u2014 NOT evidence that HCE training improves latent features in general."
+    },
+    {
+      "phase": "P4",
+      "task": "b4",
+      "path": "results/roider_full_b4_s0.json",
+      "dataset": "roider-full",
+      "seeds": [
+        0
+      ],
+      "job_id": null,
+      "status": "deferred",
+      "required": false,
+      "caveat": "PLUMBING ONLY \u2014 uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. F1 drift = 0.0 does NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
+    },
+    {
+      "phase": "P4",
+      "task": "b6",
+      "path": "results/roider_full_b6_sweep_s0.json",
+      "dataset": "roider-full",
+      "seeds": [
+        0
+      ],
+      "job_id": null,
+      "status": "deferred",
+      "required": false,
+      "caveat": "PLUMBING ONLY \u2014 uses a pseudo-batch split of a single cohort, NOT real longitudinal case/control cytometry data. \u03bb sweep results do NOT constitute evidence of catastrophic-forgetting mitigation. Results are not reportable as evidence for the continual-update claim."
+    },
+    {
+      "phase": "P3",
+      "task": "b1",
+      "path": "results/roider_full_b1_s0.json",
+      "dataset": "roider-full",
+      "seeds": [0],
+      "job_id": "25149326",
+      "status": "complete",
+      "required": true,
+      "note": "B1 Roider full-cohort complete 2026-07-06 (seed 0, job 25149326). cytoanvi=0.9314, cytovi_knn=0.8906, delta=+0.0409."
+    },
+    {
+      "phase": "P3",
+      "task": "b1",
+      "path": "results/roider_full_b1_s1.json",
+      "dataset": "roider-full",
+      "seeds": [1],
+      "job_id": "25149327",
+      "status": "complete",
+      "required": true,
+      "note": "B1 Roider full-cohort complete 2026-07-06 (seed 1, job 25149327). cytoanvi=0.9295, cytovi_knn=0.8913, delta=+0.0383."
+    },
+    {
+      "phase": "P3",
+      "task": "b1",
+      "path": "results/roider_full_b1_s2.json",
+      "dataset": "roider-full",
+      "seeds": [2],
+      "job_id": "25149328",
+      "status": "complete",
+      "required": true,
+      "note": "B1 Roider full-cohort complete 2026-07-06 (seed 2, job 25149328). cytoanvi=0.9340, cytovi_knn=0.8967, delta=+0.0373."
+    },
+    {
+      "phase": "P6",
+      "task": "b9",
+      "path": "results/nunez_b9_s0.json",
+      "dataset": "nunez",
+      "seeds": [
+        0
+      ],
+      "job_id": "25149329",
+      "status": "failed",
+      "required": false,
+      "caveat": "FAILED 2026-07-06 (job 25149329, ExitCode 1:0). mapqc 0.1.1 is installed but crashes with IndexError in _get_per_cell_filtering_info: per_cell_per_nhood_filter.mode().iloc[0] raises 'single positional indexer is out-of-bounds' — empty mode result for a neighborhood. This is a mapqc library bug triggered by the Nuñez dataset. B9 is blocked until mapqc is fixed or dataset is patched. NOT reportable."
+    }
+  ]
+}

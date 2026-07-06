@@ -251,12 +251,14 @@ class Encoder(nn.Module):
         var_eps: float = 1e-4,
         var_activation: Callable | None = None,
         return_dist: bool = False,
+        clamp_mu: float | None = None,
         **kwargs,
     ):
         super().__init__()
 
         self.distribution = distribution
         self.var_eps = var_eps
+        self.clamp_mu = clamp_mu
         self.encoder = FCLayers(
             n_in=n_input,
             n_out=n_hidden,
@@ -300,6 +302,8 @@ class Encoder(nn.Module):
         # Parameters for latent distribution
         q = self.encoder(x, *cat_list)
         q_m = self.mean_encoder(q)
+        if self.clamp_mu is not None:
+            q_m = q_m.clamp(-self.clamp_mu, self.clamp_mu)
         q_v = self.var_activation(self.var_encoder(q)) + self.var_eps
         dist = Normal(q_m, q_v.sqrt())
         latent = self.z_transformation(dist.rsample())

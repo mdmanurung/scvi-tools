@@ -1,0 +1,178 @@
+........................................................................ [ 98%]
+.                                                                        [100%]
+=============================== warnings summary ===============================
+tests/benchmarks/test_b7_paired_rna_cytof.py:15
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/benchmarks/test_b7_paired_rna_cytof.py:15: PytestUnknownMarkWarning: Unknown pytest.mark.slow - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.slow
+
+tests/benchmarks/test_cytoanvi_smoke.py:15
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/benchmarks/test_cytoanvi_smoke.py:15: PytestUnknownMarkWarning: Unknown pytest.mark.slow - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.slow
+
+tests/external/cytoanvi/test_cytoanvi.py: 154 warnings
+tests/external/cytoanvi/test_hce.py: 12 warnings
+tests/external/cytoanvi/test_mapping_qc_mock.py: 15 warnings
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/archive/hg-funcgenom-research/mdmanurung/co ...
+
+tests/external/cytoanvi/test_cytoanvi.py: 65 warnings
+tests/external/cytoanvi/test_hce.py: 5 warnings
+tests/external/cytoanvi/test_mapping_qc_mock.py: 7 warnings
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+
+tests/external/cytoanvi/test_cytoanvi.py: 65 warnings
+tests/external/cytoanvi/test_hce.py: 5 warnings
+tests/external/cytoanvi/test_mapping_qc_mock.py: 7 warnings
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=3` in the `DataLoader` to improve performance.
+
+tests/external/cytoanvi/test_cytoanvi.py: 64 warnings
+tests/external/cytoanvi/test_hce.py: 5 warnings
+tests/external/cytoanvi/test_mapping_qc_mock.py: 5 warnings
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/loops/fit_loop.py:317: The number of training batches (4) is smaller than the logging interval Trainer(log_every_n_steps=10). Set a lower value for log_every_n_steps if you want to see logs for the training epoch.
+
+tests/external/cytoanvi/test_cytoanvi.py: 10 warnings
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'val_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=3` in the `DataLoader` to improve performance.
+
+tests/external/cytoanvi/test_cytoanvi.py: 20 warnings
+tests/external/cytoanvi/test_mapping_qc_mock.py: 1 warning
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/loops/fit_loop.py:534: Found 49 module(s) in eval mode at the start of training. This may lead to unexpected behavior during training. If this is intentional, you can ignore this warning.
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_from_cytovi_reproduces_latent
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/train/_trainrunner.py:160: UserWarning: Training history cannot be updated. Logger can be accessed from `model.trainer.logger`
+    self._update_history()
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_from_cytovi_model_multipanel_prepare_query_preserves_nan_layer
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:288: UserWarning: Batch key batch already exists in adata. Overwriting it.
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_from_cytovi_model_multipanel_prepare_query_preserves_nan_layer
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:288: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+  Backbone markers: gene_0, gene_1, gene_10, gene_11, gene_12, gene_13, gene_14, gene_15, gene_16, gene_17, gene_18, gene_19, gene_2, gene_3, gene_4, gene_5, gene_6, gene_7, gene_8, gene_9
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_from_cytovi_model_multipanel_prepare_query_preserves_nan_layer
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_encoder_mask_saved_path_prep
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/model/base/_archesmixin.py:322: UserWarning: Query data contains less than 80% of reference var names. This may result in poor performance.
+    return _pad_and_sort_query_anndata(adata, var_names, inplace)
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_query_missing_labels_column_becomes_unlabeled
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/data/_manager.py:224: UserWarning: Missing labels key labels. Filling in with unlabeled category label_0.
+    field_registry[_constants._STATE_REGISTRY_KEY] = field.transfer_field(
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_missing_markers
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:402: UserWarning: Batch key batch already exists in adata. Overwriting it.
+    merged = cytovi_pp.merge_batches([adata1, adata2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_missing_markers
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:402: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+  Backbone markers: gene_0, gene_1, gene_10, gene_11, gene_12, gene_13, gene_14, gene_15, gene_16, gene_17, gene_18, gene_19, gene_2, gene_3, gene_4, gene_5, gene_6, gene_7, gene_8, gene_9
+    merged = cytovi_pp.merge_batches([adata1, adata2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_continual_update_penalty_math
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:784: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+  Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+    assert float(ContinualUpdate(old, imp, ctrl, "product").penalty(m)) == 14.0
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_continual_on_multipanel
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:857: UserWarning: Batch key batch already exists in adata. Overwriting it.
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_continual_on_multipanel
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:857: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+  Backbone markers: gene_0, gene_1, gene_10, gene_11, gene_12, gene_13, gene_14, gene_15, gene_16, gene_17, gene_18, gene_19, gene_2, gene_3, gene_4, gene_5, gene_6, gene_7, gene_8, gene_9
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_continual_on_multipanel
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_task_b9_plumbing_only
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_task_b9_plumbing_only
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/loops/fit_loop.py:317: The number of training batches (2) is smaller than the logging interval Trainer(log_every_n_steps=10). Set a lower value for log_every_n_steps if you want to see logs for the training epoch.
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_inherited_cytovi_smoke
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/src/scvi/external/cytovi/_model.py:819: UserWarning: The following samples have fewer cells than the 10th percentile (250 cells):
+  - group_b: 249 cells
+  
+  All samples will be subsampled to the minimum number of cells observed (249) to ensure balanced representation. To change this behavior, set `balance_sample` to False for DE computation.
+    subset_idx = get_balanced_sample_indices(adata, self.sample_key)
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_encoder_mask_saved_path_prep
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:966: UserWarning: Batch key batch already exists in adata. Overwriting it.
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_encoder_mask_saved_path_prep
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:966: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+  Backbone markers: gene_0, gene_1, gene_10, gene_11, gene_12, gene_13, gene_14, gene_15, gene_16, gene_17, gene_18, gene_19, gene_2, gene_3, gene_4, gene_5, gene_6, gene_7, gene_8, gene_9
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_uncertainty_multipanel
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:1031: UserWarning: Batch key batch already exists in adata. Overwriting it.
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_cytoanvi.py::test_cytoanvi_uncertainty_multipanel
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/tests/external/cytoanvi/test_cytoanvi.py:1031: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+  Backbone markers: gene_0, gene_1, gene_10, gene_11, gene_12, gene_13, gene_14, gene_15, gene_16, gene_17, gene_18, gene_19, gene_2, gene_3, gene_4, gene_5, gene_6, gene_7, gene_8, gene_9
+    merged = cytovi_pp.merge_batches([a1, a2])
+
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_build_mapqc_anndata_shapes
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_build_mapqc_anndata_raises_on_few_ref_samples
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_run_mapqc_on_cytoanvi_mock
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_score_query_mapping_delegates
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_run_mapqc_raises_without_extra
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/setup.py:175: GPU available but not used. You can set it by doing `Trainer(accelerator='gpu')`.
+
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_task_b9_plumbing_only
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_task_b9_mapqc_requires_extra_before_training
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/data.py:388: UserWarning: Not all proteins are detected across all batches. Will generate nan_layer for imputation of missing proteins. 
+  Backbone markers: gene_0, gene_1, gene_10, gene_11, gene_12, gene_13, gene_14, gene_15, gene_16, gene_17, gene_18, gene_19, gene_2, gene_3, gene_4, gene_5, gene_6, gene_7, gene_8, gene_9
+    merged = cytovi.merge_batches([p1, p2], batch_key="panel_batch")
+
+tests/external/cytoanvi/test_mapping_qc_mock.py::test_task_b9_plumbing_only
+  /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/tasks.py:614: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '['case' 'control' 'control' 'control' 'case' 'case' 'case' 'case' 'case'
+   'case' 'case' 'control' 'case' 'control' 'case' 'control' 'case' 'case'
+   'control' 'control' 'control' 'control' 'case' 'case' 'case' 'control'
+   'case' 'case' 'case' 'case' 'case' 'control' 'control' 'case' 'case'
+   'control' 'control' 'case' 'case' 'control' 'case' 'control' 'case'
+   'control' 'control' 'case' 'control' 'case' 'control' 'case' 'case'
+   'control' 'case' 'control' 'control' 'control' 'control' 'case' 'control'
+   'control' 'control' 'control' 'control' 'case' 'control' 'case' 'control'
+   'case' 'control' 'control' 'case' 'case' 'control' 'case' 'control'
+   'control' 'case' 'case' 'case' 'control' 'case' 'control' 'case' 'case'
+   'control' 'case' 'case' 'case' 'control' 'case' 'case' 'case' 'control'
+   'case' 'case' 'case' 'control' 'case' 'case' 'case' 'control' 'control'
+   'case' 'case' 'control' 'case' 'control' 'case' 'control' 'case' 'case'
+   'control' 'case' 'control' 'case' 'case' 'case' 'control' 'case'
+   'control' 'control' 'control' 'case' 'case' 'control' 'control' 'case'
+   'control' 'control' 'control' 'case' 'case' 'case' 'case' 'control'
+   'control' 'case' 'case' 'case' 'control' 'case' 'case' 'case' 'control'
+   'control' 'case' 'control' 'case' 'control' 'case' 'control' 'control'
+   'control' 'case' 'control' 'case' 'case' 'control' 'case' 'control'
+   'control' 'control' 'control' 'case' 'case' 'control' 'control' 'case'
+   'case' 'case' 'control' 'case' 'control' 'control' 'case' 'case' 'case'
+   'case' 'case' 'case' 'case' 'control' 'control' 'case' 'case' 'control'
+   'control' 'case' 'case' 'case' 'control' 'case' 'case' 'control' 'case'
+   'case' 'control' 'case' 'case' 'case' 'control' 'control' 'case'
+   'control' 'case' 'case' 'case' 'control' 'control' 'case' 'control'
+   'control' 'control' 'case' 'control' 'control' 'case' 'control' 'case'
+   'case' 'case' 'control' 'control' 'control' 'case' 'case' 'control'
+   'control' 'case' 'control' 'case' 'control' 'case' 'case' 'control'
+   'case' 'control' 'case' 'control' 'case' 'control' 'case' 'case'
+   'control' 'case' 'case' 'case' 'case' 'control' 'case' 'control'
+   'control' 'case' 'case' 'control' 'control']' has dtype incompatible with float64, please explicitly cast to a compatible dtype first.
+    adata.obs.iloc[query_idx, adata.obs.columns.get_loc(MAPQC_STATUS_KEY)] = rng.choice(
+
+tests/benchmarks/test_common_scib.py::test_run_scib_benchmark_returns_aggregates
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/scib_metrics/benchmark/_core.py:193: FutureWarning: Argument `use_highly_variable` is deprecated, consider using the mask argument. Use_highly_variable=True can be called through mask_var="highly_variable". Use_highly_variable=False can be called through mask_var=None
+    sc.tl.pca(self._adata, svd_solver=self._solver, use_highly_variable=False)
+
+tests/benchmarks/test_common_scib.py::test_run_scib_benchmark_returns_aggregates
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/pynndescent/pynndescent_.py:939: UserWarning: Failed to correctly find n_neighbors for some samples. Results may be less than ideal. Try re-running with different parameters.
+    warn(
+
+tests/benchmarks/test_common_scib.py::test_run_scib_benchmark_returns_aggregates
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/scib_metrics/metrics/_graph_connectivity.py:32: FutureWarning: pandas.value_counts is deprecated and will be removed in a future version. Use pd.Series(obj).value_counts() instead.
+    tab = pd.value_counts(comps)
+
+tests/benchmarks/test_common_scib.py::test_run_scib_benchmark_returns_aggregates
+  /exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/scib_metrics/metrics/_pcr_comparison.py:49: UserWarning: PCR comparison score is negative, meaning variance contribution increased after integration. Setting to 0.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+73 passed, 473 warnings in 75.95s (0:01:15)

@@ -1,0 +1,18 @@
+=== B4 Roider ewc_importance=0 ===
+usage: run.py [-h]
+              --dataset {synthetic,roider,roider-full,nunez,paired-rna-cytof}
+              [--task {b1,b2,b3,b4,b5,b6,b7,b8,b9,all}] [--data-dir DATA_DIR]
+              [--labels-key LABELS_KEY] [--batch-key BATCH_KEY]
+              [--sample-key SAMPLE_KEY] [--unlabeled UNLABELED] [--seed SEED]
+              [--seeds SEEDS] [--max-epochs MAX_EPOCHS]
+              [--subsample-per-batch SUBSAMPLE_PER_BATCH]
+              [--holdout-type HOLDOUT_TYPE] [--holdout-sweep]
+              [--ewc-lambdas EWC_LAMBDAS] [--require-annotated-nunez]
+              [--hierarchy-edges HIERARCHY_EDGES]
+              [--mapqc-n-nhoods MAPQC_N_NHOODS] [--mapqc-k-min MAPQC_K_MIN]
+              [--mapqc-k-max MAPQC_K_MAX] [--mapqc-run]
+              [--leiden-resolution LEIDEN_RESOLUTION] [--max-cells MAX_CELLS]
+              [--roider-max-patients ROIDER_MAX_PATIENTS]
+              [--n-samples-per-label N_SAMPLES_PER_LABEL]
+              [--reduce-lr-on-plateau] [--inspect] [--out OUT]
+run.py: error: unrecognized arguments: --ewc-importance 0

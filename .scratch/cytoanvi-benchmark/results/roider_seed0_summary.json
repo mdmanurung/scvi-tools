@@ -1,0 +1,41 @@
+{
+  "dataset": "roider",
+  "seed": 0,
+  "max_epochs": 100,
+  "labels_key": "cell_type",
+  "batch_key": "batch",
+  "sample_key": "PatientID",
+  "metrics_engine": "scib-metrics",
+  "note": "Interim run at epochs=100. PR target: max_epochs=1000 on full 63-patient cohort. Current data: vignette subsample (~5k cells/panel).",
+  "b1": {
+    "cytoanvi_macro_f1": 0.901,
+    "cytovi_knn_macro_f1": 0.784,
+    "delta_macro_f1": 0.117,
+    "pass_target_plus_0.03": true
+  },
+  "b2": {
+    "cytoanvi": {
+      "batch_correction": 0.753,
+      "bio_conservation": 0.729,
+      "total": 0.738
+    },
+    "cytovi": {
+      "batch_correction": 0.791,
+      "bio_conservation": 0.627,
+      "total": 0.693
+    },
+    "note": "CytoANVI better bio (+0.10) but lower batch mixing (-0.04); beats CytoVI on total score"
+  },
+  "b3": {
+    "p1_holdout_macro_f1": 0.918,
+    "p2_concordance_vs_knn": 0.888,
+    "pass_concordance_ge_0.7": true
+  },
+  "b5": {
+    "status": "not_run",
+    "note": "next: --holdout-sweep at max_epochs=1000"
+  },
+  "track_a": {
+    "a3_smoke": "pipeline runs; full A3 needs Nuñez FCS download"
+  }
+}

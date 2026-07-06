@@ -8,6 +8,7 @@ autozi
 cellassign
 contrastivevi
 cytovi
+cytoanvi
 decipher
 destvi
 diagvi

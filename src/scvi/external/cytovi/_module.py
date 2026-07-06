@@ -149,6 +149,7 @@ class CytoVAE(BaseModuleClass):
             use_layer_norm=use_layer_norm_encoder,
             var_activation=var_activation,
             return_dist=True,
+            clamp_mu=1e4,
             **_extra_encoder_kwargs,
         )
 

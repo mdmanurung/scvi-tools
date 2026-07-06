@@ -3,22 +3,23 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [project]
-name = "scvi-tools"
-version = "1.4.3"
-description = "Deep probabilistic analysis of single-cell omics data."
+name = "cytoanvi"
+version = "0.1.0"
+description = "Annotation-aware variational inference for antibody-based single-cell cytometry (a scvi-tools fork)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
+# Upstream authorship: The scvi-tools development team (https://github.com/scverse/scvi-tools)
 authors = [
-    {name = "The scvi-tools development team"},
+    {name = "Mikhael Manurung", email = "mikhael.manurung@gmail.com"},
 ]
 maintainers = [
-    {name = "The scvi-tools development team", email = "ori.kronfeld@weizmann.ac.il"},
+    {name = "Mikhael Manurung", email = "mikhael.manurung@gmail.com"},
 ]
 
-urls.Documentation = "https://scvi-tools.org"
-urls.Source = "https://github.com/scverse/scvi-tools"
-urls.Home-page = "https://scvi-tools.org"
+urls.Documentation = "https://github.com/mdmanurung/scvi-tools"
+urls.Source = "https://github.com/mdmanurung/scvi-tools"
+urls.Home-page = "https://github.com/mdmanurung/scvi-tools"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
@@ -55,10 +56,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tests = ["pytest", "pytest-pretty", "coverage", "scvi-tools[optional]"]
+tests = ["pytest", "pytest-pretty", "coverage", "cytoanvi[optional]"]
 editing = ["jupyter", "pre-commit"]
-dev = ["scvi-tools[editing,tests]"]
-test = ["scvi-tools[tests]"]
+dev = ["cytoanvi[editing,tests]"]
+test = ["cytoanvi[tests]"]
 cuda = ["torchvision", "torchaudio", "jax[cuda]"]
 cuda13 = ["torchvision", "torchaudio", "jax[cuda13]"]
 tpu = ["torch_xla[tpu]"]
@@ -78,7 +79,7 @@ docs = [
     "myst-nb",
     "sphinx-autodoc-typehints",
 ]
-docsbuild = ["scvi-tools[docs,autotune,hub,jax,diagvi]","mlx"]
+docsbuild = ["cytoanvi[docs,autotune,hub,jax,diagvi]","mlx"]
 
 # scvi.autotune
 autotune = ["hyperopt>=0.2", "ray[tune]", "scib-metrics", "muon"]
@@ -98,6 +99,14 @@ jax = ["jax<0.10.0", "jaxlib", "optax", "numpyro", "flax"] #TODO: unpin once it 
 dataloaders = ["lamindb>=1.12.1", "cellxgene-census", "tiledbsoma", "tiledbsoma_ml", "torchdata"]
 # for diagvi
 diagvi = ["torch_geometric", "geomloss"]
+# for CytoANVI treeArches / scHPL hierarchy learning
+cytoanvi-hierarchy = ["scHPL"]
+# for CytoANVI query-to-reference mapping QC (mapQC)
+cytoanvi-mapping-qc = ["mapqc"]
+# for experimental CytoANVI benchmark AnnBatch loading
+cytoanvi-annbatch = ["annbatch[zarrs]>=0.2.0"]
+# for optional CytoANVI benchmark classical cytometry baselines
+cytoanvi-baselines = ["flowsom>=0.2.0"]
 # for mlflow
 mlflow = ["mlflow","psutil","GPUtil","nvidia-ml-py"]
 # for rapids
@@ -105,7 +114,7 @@ rapids = [ "cugraph>=24", "cuml>=24", "cupy-cuda12x", "rapids-singlecell[rapids]
 rapids-cuda13 = [ "cugraph>=24", "cuml>=24", "cupy-cuda13x", "rapids-singlecell[rapids]" ]
 
 optional = [
-    "scvi-tools[autotune,mlflow,hub,jax,file_sharing,regseq,parallel,interpretability,diagvi]",
+    "cytoanvi[autotune,mlflow,hub,jax,file_sharing,regseq,parallel,interpretability,diagvi]",
     "igraph","leidenalg","pynndescent",
 ]
 tutorials = [
@@ -117,18 +126,37 @@ tutorials = [
     "matplotlib",
     "plotnine",
     "scrublet",
-    "scvi-tools[optional]",
+    "cytoanvi[optional]",
     "squidpy>=1.6.0",
     "umap-learn>=0.5.0",
 ]
 
-all = ["scvi-tools[dev,docs,tutorials]"]
+all = ["cytoanvi[dev,docs,tutorials]"]
 
 [tool.hatch.build.targets.wheel]
-packages = ['src/scvi']
+packages = ['src/scvi', 'src/cytoanvi']
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.scratch",
+  "/.living",
+  "/todo",
+  "/notes",
+  "/analysis",
+  "/benchmarks",
+  "/vignettes",
+  "/skillpacks",
+  "/tests",
+  "/docs",
+  "/data",
+  "/_test",
+  "/.claude",
+  "/.github",
+  "*.pdf",
+]
 
 [tool.coverage.run]
-source = ["scvi"]
+source = ["scvi", "cytoanvi"]
 omit = [
     "**/test_*.py",
 ]
@@ -146,13 +174,14 @@ markers = [
     "dataloader: mark tests that are used to check data loaders",
     "jax: mark test as jax related",
     "mlflow: mark test for mlflow",
+    "slow: mark slow tests",
 ]
 
 [tool.ruff]
 src = ["src"]
 line-length = 99
 indent-width = 4
-target-version = "py313"
+target-version = "py312"
 
 # Exclude a variety of commonly ignored directories.
 exclude = [

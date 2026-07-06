@@ -91,6 +91,9 @@ def task_b7_multimodal_integration(
     sample_key: str = "sample_id",
     seed: int = 0,
     max_epochs: int = 50,
+    batch_size: int | None = None,
+    annbatch_config=None,
+    cytoanvi_training_config=None,
     nn_count: int = 10,
     npcs: int | None = 5,
     subsample_per_batch: int = 500,
@@ -126,6 +129,9 @@ def task_b7_multimodal_integration(
         sample_key=sample_key,
         layer=SCALED_LAYER,
         max_epochs=max_epochs,
+        batch_size=batch_size,
+        annbatch_config=annbatch_config,
+        **dict(cytoanvi_training_config or {}),
     )
     latent_obsm(anvi_adata, model, obsm_key=LATENT_OBSM)
     preds = model.predict()

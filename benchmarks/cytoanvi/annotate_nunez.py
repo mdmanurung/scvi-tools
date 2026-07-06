@@ -238,7 +238,8 @@ def main():
         action="store_true",
         help=(
             "Use inductive kNN annotation (Leiden on reference batch only, kNN to query batch). "
-            "Avoids transductive leakage of joint Leiden. Use --load-latent to skip CytoVI retraining."
+            "Avoids transductive leakage of joint Leiden. Use --load-latent to skip CytoVI "
+            "retraining."
         ),
     )
     ap.add_argument(

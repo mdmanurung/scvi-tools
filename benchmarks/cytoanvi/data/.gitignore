@@ -1,2 +1,5 @@
 *
 !.gitignore
+!README.md
+!data_manifest.tsv
+!.gitignore

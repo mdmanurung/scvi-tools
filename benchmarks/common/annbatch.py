@@ -56,7 +56,7 @@ def _require_annbatch():
             raise
         raise ImportError(
             "AnnBatch backend requested, but annbatch is not installed. "
-            "Install the optional extra `scvi-tools[cytoanvi-annbatch]`."
+            "Install the optional extra `cytoanvi[cytoanvi-annbatch]`."
         ) from err
     return DatasetCollection, Loader
 

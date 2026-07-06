@@ -1,6 +1,6 @@
 """Optional scHPL / treeArches helpers for CytoANVI latent hierarchies.
 
-Requires ``pip install scvi-tools[cytoanvi-hierarchy]`` (scHPL). Import from
+Requires ``pip install cytoanvi[cytoanvi-hierarchy]`` (scHPL). Import from
 ``cytoanvi.hierarchy``.
 """
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 _SCHPL_INSTALL_MSG = (
     "scHPL is required for hierarchy workflows. "
-    "Install with: pip install scvi-tools[cytoanvi-hierarchy]"
+    "Install with: pip install cytoanvi[cytoanvi-hierarchy]"
 )
 
 

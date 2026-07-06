@@ -37,17 +37,17 @@ Not final journal/PyPI release (GitHub-only, branch feat/cytoanvi); preprint in 
     `scvi.external.CytoANVI` / `scvi.external.cytoanvi` path is removed.
 - Add optional hierarchical cross-entropy (HCE) for CytoANVI via explicit reachability matrix
     (`set_hierarchy`, `predict_hierarchical`; flat CE remains default). Add optional
-    `cytoanvi-hierarchy` extra (`pip install scvi-tools[cytoanvi-hierarchy]`) with scHPL
+    `cytoanvi-hierarchy` extra (`pip install cytoanvi[cytoanvi-hierarchy]`) with scHPL
     treeArches helpers in `cytoanvi.hierarchy` (`learn_hierarchy`,
     `update_hierarchy`, `predict_schpl`, `set_hierarchy_from_schpl`,
     `run_tree_arches_pipeline`, `latent_to_anndata`).
 - Add optional mapQC query-mapping QC for CytoANVI
-    (`pip install scvi-tools[cytoanvi-mapping-qc]`)
+    (`pip install cytoanvi[cytoanvi-mapping-qc]`)
     with helpers in `cytoanvi.mapping_qc` and :meth:`~cytoanvi.CytoANVI.score_query_mapping`.
     Benchmark task B9 compares control mapQC rates after query surgery.
 - Add benchmark-only CytoANVI extras for AnnBatch loading
-    (`pip install scvi-tools[cytoanvi-annbatch]`) and classical cytometry baselines
-    (`pip install scvi-tools[cytoanvi-baselines]`). AnnBatch, FlowSOM, RAPIDS, and benchmark
+    (`pip install cytoanvi[cytoanvi-annbatch]`) and classical cytometry baselines
+    (`pip install cytoanvi[cytoanvi-baselines]`). AnnBatch, FlowSOM, RAPIDS, and benchmark
     runners are intentionally outside the CytoANVI model API.
 
 #### Fixed

@@ -123,9 +123,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
       :meth:`train`.
     - Optional hierarchical CE: :meth:`set_hierarchy` / :meth:`predict_hierarchical` (flat CE when
       no matrix is set). Optional scHPL treeArches helpers:
-      ``cytoanvi.hierarchy`` (requires ``scvi-tools[cytoanvi-hierarchy]``).
+      ``cytoanvi.hierarchy`` (requires ``cytoanvi[cytoanvi-hierarchy]``).
     - Optional query-mapping QC: :meth:`score_query_mapping` wraps
-      ``cytoanvi.mapping_qc`` (requires ``scvi-tools[cytoanvi-mapping-qc]``).
+      ``cytoanvi.mapping_qc`` (requires ``cytoanvi[cytoanvi-mapping-qc]``).
     """
 
     _module_cls = CytoANVAE
@@ -1200,7 +1200,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
     ) -> AnnData:
         """Run mapQC on CytoANVI latents after query-to-reference mapping.
 
-        Requires ``pip install scvi-tools[cytoanvi-mapping-qc]``. Reference cells should be
+        Requires ``pip install cytoanvi[cytoanvi-mapping-qc]``. Reference cells should be
         controls only; the query must include matched control cells.
 
         Parameters

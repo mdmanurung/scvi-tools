@@ -3,6 +3,17 @@
 Real-data benchmarking for CytoANVI against CytoVI's own workflow, on the two datasets the CytoVI
 vignettes use. Plan: `notes/2026-06-10-cytoanvi-benchmark-plan.md`.
 
+## Full-cohort results (Roider, max_epochs=1000, 3 seeds, FINAL)
+
+| Task | Metric | CytoANVI | Baseline | Notes |
+|------|--------|----------|----------|-------|
+| B1 | Roider macro-F1 | **0.9317±0.0022** | CytoVI+kNN 0.8928±0.0034 | Δ+0.0388 ✅ passes ≥+0.03 gate |
+| B1 | Nuñez macro-F1 | **0.9751±0.0003** | CytoVI+kNN 0.9749 | parity |
+| B3 | p1 holdout macro-F1 | **0.828±0.015** | — | defensible supervised headline |
+| B3 | p2 inter-method agreement | 0.671±0.008 | CytoVI-kNN (concordance, not accuracy) | gate (≥0.80) NOT met; no GT labels |
+| B5 | novelty mean AUROC | 0.484±0.019 (**NEGATIVE**) | CytoVI kNN-OOD 0.775±0.002 | TTA uncertainty below chance |
+| B8 | HCE vs flat-CE holdout F1 | **+0.6–1.8 pp** | flat CE | hierarchy helps on coarse labels |
+
 ## Layout
 - `data.py` — Figshare download + loaders for D1 (Roider `.h5ad`) and D2 (Nuñez `.fcs`), plus a
   synthetic loader for the smoke test.
@@ -109,7 +120,7 @@ The command fails until every required manifest artifact is present and marked `
 ### Dependency notes
 - **`scib-metrics`** required for B2 (and Track A A2). Install in the benchmark env.
 - **D2 (Nuñez `.fcs`)** — `readfcs`/`flowio` (pulled in by cyCombinePy or cytovi).
-- **B1 optional baselines** — `scvi-tools[cytoanvi-baselines]` enables FlowSOM; `scvi-tools[rapids]` enables the RAPIDS SingleCell graph baseline.
+- **B1 optional baselines** — `cytoanvi[cytoanvi-baselines]` enables FlowSOM; `cytoanvi[rapids]` enables the RAPIDS SingleCell graph baseline.
   Use `--b1-baselines fast`, `none`, `rapids-graph`, or a comma-separated set to avoid slow optional baselines in smoke runs.
 - **Track A cyCombine baseline:** [cyCombinePy](https://github.com/mdmanurung/cyCombinePy) — batch correction only, not imputation.
 - Metrics use **scib-metrics** aggregates (`batch_correction`, `bio_conservation`, `total`).

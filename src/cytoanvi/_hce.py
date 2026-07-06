@@ -28,6 +28,16 @@ def hierarchical_cross_entropy_loss(
     weight
         Optional per-class weights passed to :func:`~torch.nn.functional.nll_loss`.
     """
+    # Compute in fp32 for numerical stability. Under bf16 autocast the subtree-mass log below
+    # is dominated by ``eps``: ``finfo(bfloat16).eps ≈ 7.8e-3`` (vs ``1.2e-7`` for fp32), so
+    # ``log(hier_probs + eps)`` is badly distorted for low-probability targets — which silently
+    # degrades HCE training (and, for leaf-only targets where HCE should equal flat CE exactly,
+    # introduces a spurious ~0.09 loss gap). Losses are conventionally computed in fp32 under
+    # mixed precision anyway.
+    logits = logits.float()
+    reachability_matrix = reachability_matrix.float()
+    if weight is not None:
+        weight = weight.float()
     probs = torch.softmax(logits, dim=-1)
     # Propagate probability mass from leaves to ancestors: hier_probs[b, i] = sum of
     # probs[b, j] for all j reachable from i (i.e. all descendants of i, including i itself).

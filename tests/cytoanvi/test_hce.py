@@ -224,3 +224,58 @@ def test_set_hierarchy_twice_save_load(adata, tmp_path):
         model2.module.reachability_matrix_.cpu().numpy(),
         reach_before,
     )
+
+
+def test_hce_equals_flat_ce_for_leaf_only_targets():
+    """For leaf-only targets, HCE reduces EXACTLY to flat cross-entropy.
+
+    A leaf reaches only itself, so (softmax @ R.T)[leaf] = softmax[leaf] and the loss/gradients
+    match F.cross_entropy. This pins the fact that a hierarchy with only leaf-labelled cells does
+    nothing — HCE must be exercised with internal-node targets to differ.
+    """
+    import torch.nn.functional as F
+
+    names = ["a1", "a2", "b1", "A", "B"]  # A->[a1,a2], B->[b1]
+    R = torch.tensor(build_reachability_matrix(names, {"A": ["a1", "a2"], "B": ["b1"]}))
+    torch.manual_seed(0)
+    logits = torch.randn(16, 5)
+    leaf_targets = torch.randint(0, 3, (16,))  # indices 0,1,2 are leaves
+
+    flat = F.cross_entropy(logits, leaf_targets)
+    h = hierarchical_cross_entropy_loss(logits, leaf_targets, R)
+    assert torch.allclose(flat, h, atol=1e-5)
+
+    # gradients also match
+    l1 = logits.clone().requires_grad_(True)
+    F.cross_entropy(l1, leaf_targets).backward()
+    l2 = logits.clone().requires_grad_(True)
+    hierarchical_cross_entropy_loss(l2, leaf_targets, R).backward()
+    assert torch.allclose(l1.grad, l2.grad, atol=1e-5)
+
+    # internal-node targets DO differ (mechanism engages)
+    internal_targets = torch.randint(3, 5, (16,))
+    assert not torch.allclose(
+        F.cross_entropy(logits, internal_targets),
+        hierarchical_cross_entropy_loss(logits, internal_targets, R),
+        atol=1e-3,
+    )
+
+
+def test_hce_numerically_stable_under_bf16():
+    """HCE must not be distorted by bf16's large eps (finfo(bf16).eps ~ 7.8e-3).
+
+    The loss computes log(subtree_mass + eps); using the bf16 eps would add a spurious ~0.09
+    offset even for leaf targets (where HCE should equal flat CE). The loss upcasts to fp32.
+    """
+    import torch.nn.functional as F
+
+    names = ["a1", "a2", "b1", "A", "B"]
+    R = torch.tensor(build_reachability_matrix(names, {"A": ["a1", "a2"], "B": ["b1"]}))
+    torch.manual_seed(0)
+    logits = torch.randn(16, 5)
+    leaf_targets = torch.randint(0, 3, (16,))
+
+    ref = F.cross_entropy(logits, leaf_targets)  # fp32 flat CE
+    h_bf16 = hierarchical_cross_entropy_loss(logits.bfloat16(), leaf_targets, R.bfloat16())
+    # bf16 softmax imprecision only — must be far below the old ~0.09 eps distortion
+    assert abs(float(h_bf16) - float(ref)) < 5e-3

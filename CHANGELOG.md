@@ -9,10 +9,12 @@ to [Semantic Versioning]. The full commit history is available in the [commit lo
 
 This release candidate exposes the top-level `cytoanvi` package and associated benchmark
 infrastructure. Full-cohort Roider B3 (3 seeds) and B5 (3 seeds) are complete as of 2026-07-05
-and `publication_summary.json` is produced. Key full-cohort results: B1 CytoANVI 0.9751±0.0003
-vs kNN 0.9581±0.0007 (Δ+0.017); B2 bio 0.770, batch 0.798; B3 p1 macro-F1 0.828±0.015 (p2
-inter-method agreement 0.671±0.008 — concordance, NOT accuracy); B5 mean_auroc 0.484±0.019
-(NEGATIVE — below chance vs CytoVI kNN-OOD 0.775±0.002); B8 Δ_hierarchical_vs_flat +0.086±0.003.
+and `publication_summary.json` is produced. Key full-cohort results: B1 Nuñez CytoANVI 0.9751±0.0003
+vs kNN 0.9581±0.0007 (Δ+0.017, near-ceiling); B1 Roider CytoANVI 0.9317±0.0022 vs kNN
+0.8928±0.0034 (Δ+0.0388, ✅ gate ≥+0.03); B2 bio 0.770, batch 0.798; B3 p1 macro-F1
+0.828±0.015 (p2 inter-method agreement 0.671±0.008 — concordance, NOT accuracy); B5
+mean_auroc 0.484±0.019 (NEGATIVE — below chance vs CytoVI kNN-OOD 0.775±0.002); B8
+Δ_hierarchical_vs_flat +0.086±0.003.
 Not final journal/PyPI release (GitHub-only, branch feat/cytoanvi); preprint in preparation.
 
 #### Added

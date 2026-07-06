@@ -223,9 +223,9 @@
       "dataset": "roider-full",
       "seeds": [0],
       "job_id": "25149326",
-      "status": "in_progress",
+      "status": "complete",
       "required": true,
-      "note": "B1 Roider full-cohort submitted 2026-07-06 (seed 0, job 25149326), batch_size=16384, 3 parallel single-seed jobs (25149326/27/28)."
+      "note": "B1 Roider full-cohort complete 2026-07-06 (seed 0, job 25149326). cytoanvi=0.9314, cytovi_knn=0.8906, delta=+0.0409."
     },
     {
       "phase": "P3",
@@ -234,9 +234,9 @@
       "dataset": "roider-full",
       "seeds": [1],
       "job_id": "25149327",
-      "status": "in_progress",
+      "status": "complete",
       "required": true,
-      "note": "B1 Roider full-cohort submitted 2026-07-06 (seed 1, job 25149327), batch_size=16384."
+      "note": "B1 Roider full-cohort complete 2026-07-06 (seed 1, job 25149327). cytoanvi=0.9295, cytovi_knn=0.8913, delta=+0.0383."
     },
     {
       "phase": "P3",
@@ -245,9 +245,9 @@
       "dataset": "roider-full",
       "seeds": [2],
       "job_id": "25149328",
-      "status": "in_progress",
+      "status": "complete",
       "required": true,
-      "note": "B1 Roider full-cohort submitted 2026-07-06 (seed 2, job 25149328), batch_size=16384."
+      "note": "B1 Roider full-cohort complete 2026-07-06 (seed 2, job 25149328). cytoanvi=0.9340, cytovi_knn=0.8967, delta=+0.0373."
     },
     {
       "phase": "P6",
@@ -258,9 +258,9 @@
         0
       ],
       "job_id": "25149329",
-      "status": "in_progress",
+      "status": "failed",
       "required": false,
-      "caveat": "RESUBMITTED 2026-07-06 (job 25149329); mapqc 0.1.1 now installed. Prior run (job 25104251) produced blocked JSON. Task logic not yet validated end-to-end. Not reportable until result verified."
+      "caveat": "FAILED 2026-07-06 (job 25149329, ExitCode 1:0). mapqc 0.1.1 is installed but crashes with IndexError in _get_per_cell_filtering_info: per_cell_per_nhood_filter.mode().iloc[0] raises 'single positional indexer is out-of-bounds' — empty mode result for a neighborhood. This is a mapqc library bug triggered by the Nuñez dataset. B9 is blocked until mapqc is fixed or dataset is patched. NOT reportable."
     }
   ]
 }

@@ -10,6 +10,24 @@ from sklearn.neighbors import KNeighborsClassifier
 from benchmarks.common.training import SCALED_LAYER, train_cytovi
 
 
+def _knn_predict_unlabeled(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    unlabeled_category: str,
+    n_neighbors: int = 20,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit KNN on labeled cells, predict unlabeled. Returns (pred_unlabeled, unlabeled_mask)."""
+    labelled = labels != unlabeled_category
+    knn = KNeighborsClassifier(n_neighbors=min(n_neighbors, int(labelled.sum())))
+    knn.fit(embeddings[labelled], labels[labelled])
+    unlabeled_mask = ~labelled
+    if unlabeled_mask.any():
+        pred_unlabeled = knn.predict(embeddings[unlabeled_mask])
+    else:
+        pred_unlabeled = np.array([], dtype=object)
+    return pred_unlabeled, unlabeled_mask
+
+
 def _get_dense(adata, layer: str) -> np.ndarray:
     X = adata.layers[layer] if layer in adata.layers else adata.X
     if sp.issparse(X):
@@ -55,16 +73,8 @@ def cytovi_latent_and_knn(
         devices=devices,
     )
     latent = model.get_latent_representation()
-
     labels = np.asarray(a.obs[labels_key].astype(str))
-    labelled = labels != unlabeled_category
-    knn = KNeighborsClassifier(n_neighbors=min(n_neighbors, int(labelled.sum())))
-    knn.fit(latent[labelled], labels[labelled])
-    unlabeled_mask = ~labelled
-    if unlabeled_mask.any():
-        pred_unlabeled = knn.predict(latent[unlabeled_mask])
-    else:
-        pred_unlabeled = np.array([], dtype=object)
+    pred_unlabeled, unlabeled_mask = _knn_predict_unlabeled(latent, labels, unlabeled_category, n_neighbors)
     return pred_unlabeled, latent, unlabeled_mask
 
 
@@ -158,14 +168,7 @@ def raw_marker_knn(
     """
     X = _get_dense(adata, layer)
     labels = np.asarray(adata.obs[labels_key].astype(str))
-    labelled = labels != unlabeled_category
-    knn = KNeighborsClassifier(n_neighbors=min(n_neighbors, int(labelled.sum())))
-    knn.fit(X[labelled], labels[labelled])
-    unlabeled_mask = ~labelled
-    if unlabeled_mask.any():
-        pred_unlabeled = knn.predict(X[unlabeled_mask])
-    else:
-        pred_unlabeled = np.array([], dtype=object)
+    pred_unlabeled, unlabeled_mask = _knn_predict_unlabeled(X, labels, unlabeled_category, n_neighbors)
     return pred_unlabeled, X, unlabeled_mask
 
 
@@ -196,14 +199,7 @@ def harmony_latent_and_knn(
     Z_harmony = ho.Z_corr.T if ho.Z_corr.shape[0] == n_comp else ho.Z_corr
 
     labels = np.asarray(adata.obs[labels_key].astype(str))
-    labelled = labels != unlabeled_category
-    knn = KNeighborsClassifier(n_neighbors=min(n_neighbors, int(labelled.sum())))
-    knn.fit(Z_harmony[labelled], labels[labelled])
-    unlabeled_mask = ~labelled
-    if unlabeled_mask.any():
-        pred_unlabeled = knn.predict(Z_harmony[unlabeled_mask])
-    else:
-        pred_unlabeled = np.array([], dtype=object)
+    pred_unlabeled, unlabeled_mask = _knn_predict_unlabeled(Z_harmony, labels, unlabeled_category, n_neighbors)
     return pred_unlabeled, Z_harmony, unlabeled_mask
 
 

@@ -1,0 +1,10 @@
+path	role	source	status	size	sha256	publication_note
+data/Nunez_PBMCs_batch1.fcs	raw_nunez_figshare	Figshare file 55982654	local	21M	877267c60dc65f9e5686730215e433dfea6876914d0ecd436273ac6e1c527e2e	Required to regenerate Nuñez annotations.
+data/Nunez_PBMCs_batch2.fcs	raw_nunez_figshare	Figshare file 55982657	local	21M	8455821b0341652d55a53f9a5da8c1723d303d6f738c09f41b046ad548e3dcbc	Required to regenerate Nuñez annotations.
+data/nunez_annotated.h5ad	derived_nunez_inductive_annotation	benchmarks.cytoanvi.annotate_nunez --inductive	local	272M	9ed7be31309f754675322abb10ab38b65241f9f4647dfda61739cc7de9894545	Runner-facing derived artifact; must be regenerated with --inductive or archived before final journal submission.
+data/nunez_annotated_inductive.h5ad	derived_nunez_inductive_annotation_copy	benchmarks.cytoanvi.annotate_nunez --inductive	local	272M	9ed7be31309f754675322abb10ab38b65241f9f4647dfda61739cc7de9894545	Same checksum as data/nunez_annotated.h5ad; retained as explicit provenance copy.
+data/Roider_et_al_BNHL_panel1.h5ad	roider_vignette_panel1	Figshare file 56891468	local	2.5M	3844046d8a1f91acd686a44539d8f4f3cad372614fed4ab6071cb01a069e367e	Smoke/vignette only unless explicitly manifest-listed.
+data/Roider_et_al_BNHL_panel2.h5ad	roider_vignette_panel2	Figshare file 56891471	local	2.2M	3365a0ab060b3f8eda15e5958b3214b0db2c76fce2afbc57c490e5cf4bef3fc0	Smoke/vignette only unless explicitly manifest-listed.
+data/roider_full/merged.h5ad	derived_roider_full	benchmarks.common.ingest --extract-roider	local	751M	3a0c5cbaed42e5667aab17d375044ff67f6a4c8154a5164cc44a9cd1ffbe341a	Required for full-cohort B3/B5 publication artifacts.
+data/roider_full/panel1_cell_type_leiden_r1.0.parquet	derived_roider_labels	benchmarks.common.roider_metadata	local	6.0M	596b0484bf3112a0de9cabd3d5816bc6df7cc829190495c99fe79c725a149465	Proxy labels; document as Leiden-derived, not manual gating.
+data/roider_full/patient_entity.json	derived_roider_metadata	benchmarks.common.roider_metadata	local	32K	57219b6d5577275dd8b7daf594f783dff8008cc9090107bd30b0c285ec2da94e	Required for entity-aware B4/B6 splits if those become publication claims.

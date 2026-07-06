@@ -178,7 +178,6 @@ def _leiden_labels(
 def _subsample_batches(adata, batch_key: str, max_cells: int, seed: int = 0):
     """Stratified subsample (paper uses 100k total; scib uses 10k per batch)."""
     import anndata as ad
-    import numpy as np
     import scipy.sparse as sp
 
     rng = np.random.default_rng(seed)

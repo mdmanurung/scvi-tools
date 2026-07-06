@@ -7,43 +7,27 @@ import numpy as np
 import pytest
 import torch
 
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    N_EPOCHS,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    make_adata,
+)
+
 from cytoanvi import CytoANVI
-from scvi.data import synthetic_iid
 from scvi.data._constants import _SETUP_ARGS_KEY
 from scvi.external import CYTOVI
 from scvi.external import cytovi as cytovi_pp
 
-SCALED_LAYER_KEY = "scaled"
 NAN_LAYER_KEY = "_nan_mask"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"  # use an existing label value as the unlabeled category
-N_EPOCHS = 2
-
-
-def _make_adata(n_genes=30, n_batches=2, n_labels=5):
-    adata = synthetic_iid(
-        batch_size=256,
-        n_genes=n_genes,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
-        ["group_a", "group_b"], size=adata.shape[0]
-    )
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
 
 
 @pytest.fixture
 def adata():
-    return _make_adata()
+    return make_adata()
 
 
 def test_cytoanvi_setup_indices(adata):
@@ -298,7 +282,7 @@ def test_cytoanvi_from_cytovi_model_query_save_roundtrip(adata, save_path):
     reloaded = CytoANVI.load(path)
     assert reloaded.n_labels == ref.n_labels
 
-    query = _make_adata()
+    query = make_adata()
     query.obs[LABELS_KEY] = UNLABELED
     q_from_model = CytoANVI.load_query_data(query.copy(), ref)
     q_from_model.train(max_epochs=1, plan_kwargs={"weight_decay": 0.0})
@@ -310,8 +294,8 @@ def test_cytoanvi_from_cytovi_model_query_save_roundtrip(adata, save_path):
 
 
 def test_cytoanvi_from_cytovi_model_multipanel_prepare_query_preserves_nan_layer(save_path):
-    a1 = _make_adata(n_genes=30, n_batches=1)
-    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1 = make_adata(n_genes=30, n_batches=1)
+    a2 = make_adata(n_genes=20, n_batches=1)
     a1.obs_names = "a1_" + a1.obs_names
     a2.obs_names = "a2_" + a2.obs_names
     merged = cytovi_pp.merge_batches([a1, a2])
@@ -334,7 +318,7 @@ def test_cytoanvi_from_cytovi_model_multipanel_prepare_query_preserves_nan_layer
     ref.save(path, overwrite=True, save_anndata=True)
 
     backbone = list(ref.adata.var_names[ref.encoder_marker_mask_])
-    query = _make_adata()[:, backbone].copy()
+    query = make_adata()[:, backbone].copy()
     query.obs[LABELS_KEY] = UNLABELED
     CytoANVI.prepare_query_anndata(query, path)
 
@@ -353,7 +337,7 @@ def test_cytoanvi_query_missing_labels_column_becomes_unlabeled(adata):
     )
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=1)
-    query = _make_adata()
+    query = make_adata()
     del query.obs[LABELS_KEY]
 
     q = CytoANVI.load_query_data(query, ref)
@@ -373,7 +357,7 @@ def test_cytoanvi_query_known_partial_labels_trains(adata):
     )
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=1)
-    query = _make_adata()
+    query = make_adata()
     query.obs[LABELS_KEY] = query.obs[LABELS_KEY].astype(str)
     query.obs.loc[query.obs.index[: query.n_obs // 2], LABELS_KEY] = UNLABELED
 
@@ -393,7 +377,7 @@ def test_cytoanvi_query_new_unseen_label_raises(adata):
     )
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=1)
-    query = _make_adata()
+    query = make_adata()
     query.obs[LABELS_KEY] = UNLABELED
     query.obs.iloc[0, query.obs.columns.get_loc(LABELS_KEY)] = "new_unseen_label"
 
@@ -413,7 +397,7 @@ def test_cytoanvi_surgery(adata):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
 
-    query = _make_adata()
+    query = make_adata()
     # query cells are all unlabeled for the label-transfer scenario
     query.obs[LABELS_KEY] = UNLABELED
     q = CytoANVI.load_query_data(query, ref)
@@ -424,8 +408,8 @@ def test_cytoanvi_surgery(adata):
 
 def test_cytoanvi_missing_markers():
     # build an overlapping-panel object with a nan_layer (multi-panel / missing markers)
-    adata1 = _make_adata(n_genes=30, n_batches=1)
-    adata2 = _make_adata(n_genes=20, n_batches=1)
+    adata1 = make_adata(n_genes=30, n_batches=1)
+    adata2 = make_adata(n_genes=20, n_batches=1)
     adata1.obs_names = "a1_" + adata1.obs_names
     adata2.obs_names = "a2_" + adata2.obs_names
     merged = cytovi_pp.merge_batches([adata1, adata2])
@@ -511,7 +495,7 @@ def test_cytoanvi_surgery_partial_labels(adata):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
 
-    query = _make_adata()
+    query = make_adata()
     # keep ~half of the (reference-valid) labels, blank the rest to the unlabeled category
     rng = np.random.default_rng(1)
     labs = query.obs[LABELS_KEY].astype(str).to_numpy()
@@ -646,7 +630,7 @@ def test_cytoanvi_class_weights_preserved_in_query_surgery(adata):
     )
     ref_weights = ref.module.class_weights.detach().cpu().clone()
 
-    query = _make_adata()
+    query = make_adata()
     query.obs[LABELS_KEY] = UNLABELED
     q = CytoANVI.load_query_data(query, ref)
 
@@ -819,8 +803,8 @@ def test_cytoanvi_continual_update(adata):
     ref.train(max_epochs=N_EPOCHS)
 
     replay = adata[:128].copy()  # buffer of reference cells
-    control = _make_adata()  # healthy controls sharing the panel
-    query = _make_adata()
+    control = make_adata()  # healthy controls sharing the panel
+    query = make_adata()
     query.obs[LABELS_KEY] = UNLABELED
 
     q = CytoANVI.load_query_data_with_replay(
@@ -841,14 +825,14 @@ def test_cytoanvi_continual_update(adata):
 
     # control_adata is required (paper EWC term is F_reference o F_query_ctrl)
     with pytest.raises(ValueError):
-        CytoANVI.load_query_data_with_replay(_make_adata(), ref, replay_adata=replay)
+        CytoANVI.load_query_data_with_replay(make_adata(), ref, replay_adata=replay)
 
     # additive combine is also available
     q2 = CytoANVI.load_query_data_with_replay(
-        _make_adata(),
+        make_adata(),
         ref,
         replay_adata=replay,
-        control_adata=_make_adata(),
+        control_adata=make_adata(),
         combine_type="additive",
     )
     q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 0.5})
@@ -870,14 +854,14 @@ def test_cytoanvi_continual_new_batch(adata):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
 
-    query = _make_adata()
+    query = make_adata()
     # relabel to brand-new batch categories not seen in the reference
     remap = {"batch_0": "batch_2", "batch_1": "batch_3"}
     query.obs[BATCH_KEY] = query.obs[BATCH_KEY].map(remap).astype(str)
     query.obs[LABELS_KEY] = UNLABELED
 
     q = CytoANVI.load_query_data_with_replay(
-        query, ref, replay_adata=adata[:128].copy(), control_adata=_make_adata()
+        query, ref, replay_adata=adata[:128].copy(), control_adata=make_adata()
     )
     assert q.summary_stats.n_batch > ref.summary_stats.n_batch
     q.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
@@ -899,7 +883,7 @@ def test_cytoanvi_continual_query_batch_controls(adata):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
 
-    query = _make_adata()
+    query = make_adata()
     query.obs[BATCH_KEY] = query.obs[BATCH_KEY].map({"batch_0": "batch_2", "batch_1": "batch_3"})
     query.obs[BATCH_KEY] = query.obs[BATCH_KEY].astype(str)
     query.obs[LABELS_KEY] = UNLABELED
@@ -919,7 +903,7 @@ def _make_backbone_reference():
     Markers 25-29 are masked in the first 10 cells, so they are not "present in all cells" and
     therefore fall outside the encoder backbone (which CytoVI derives from the nan mask).
     """
-    adata = _make_adata()
+    adata = make_adata()
     mask = np.ones_like(adata.layers[SCALED_LAYER_KEY])
     mask[:10, 25:] = 0
     adata.layers[SCALED_LAYER_KEY][:10, 25:] = 0
@@ -946,7 +930,7 @@ def test_cytoanvi_prepare_query_panel_aware():
     panel_specific = list(ref_vars[25:])
     assert ref_vars[ref.module.encoder_marker_mask].tolist() == backbone
 
-    query = _make_adata()
+    query = make_adata()
     query = query[:, backbone].copy()
     query.obs[LABELS_KEY] = UNLABELED
     assert NAN_LAYER_KEY not in query.layers
@@ -969,7 +953,7 @@ def test_cytoanvi_prepare_query_panel_aware():
 def test_cytoanvi_prepare_query_docs_snippet_uses_returned_anndata():
     ref = _make_backbone_reference()
     backbone = list(ref.adata.var_names[:25])
-    query_adata = _make_adata()[:, backbone].copy()
+    query_adata = make_adata()[:, backbone].copy()
     query_adata.obs[LABELS_KEY] = UNLABELED
 
     query = CytoANVI.prepare_query_anndata(query_adata, reference_model=ref, inplace=False)
@@ -985,7 +969,7 @@ def test_cytoanvi_prepare_query_preserves_sparse_expression():
 
     ref = _make_backbone_reference()
     backbone = list(ref.adata.var_names[:25])
-    query = _make_adata()[:, backbone].copy()
+    query = make_adata()[:, backbone].copy()
     query.obs[LABELS_KEY] = UNLABELED
     query.X = sparse.csr_matrix(query.X)
     query.layers[SCALED_LAYER_KEY] = sparse.csr_matrix(query.layers[SCALED_LAYER_KEY])
@@ -1000,7 +984,7 @@ def test_cytoanvi_prepare_query_preserves_sparse_expression():
 def test_cytoanvi_prepare_query_rejects_missing_backbone():
     ref = _make_backbone_reference()
     # drop a backbone marker (index 0) — the encoder needs it, so prep must reject this
-    query = _make_adata()
+    query = make_adata()
     query = query[:, list(ref.adata.var_names[1:])].copy()
     with pytest.raises(ValueError, match="backbone"):
         CytoANVI.prepare_query_anndata(query, ref)
@@ -1011,7 +995,7 @@ def test_cytoanvi_prepare_query_rejects_partial_backbone():
     # smaller backbone than the reference -> reject up front (not a cryptic resize crash later)
     ref = _make_backbone_reference()
     backbone = list(ref.adata.var_names[:25])
-    query = _make_adata()
+    query = make_adata()
     query = query[:, backbone].copy()
     query.obs[LABELS_KEY] = UNLABELED
     qmask = np.ones_like(query.layers[SCALED_LAYER_KEY])
@@ -1027,11 +1011,11 @@ def test_cytoanvi_prepare_query_rejects_path_reference(save_path):
     path = os.path.join(save_path, "ref_for_prep")
     ref.save(path, overwrite=True, save_anndata=True)
 
-    query = _make_adata()[:, list(ref.adata.var_names[:25])].copy()
+    query = make_adata()[:, list(ref.adata.var_names[:25])].copy()
     names = CytoANVI.prepare_query_anndata(query, path, return_reference_var_names=True)
     assert list(names) == list(ref.adata.var_names)
 
-    query2 = _make_adata()[:, list(ref.adata.var_names[:25])].copy()
+    query2 = make_adata()[:, list(ref.adata.var_names[:25])].copy()
     CytoANVI.prepare_query_anndata(query2, path)
     assert NAN_LAYER_KEY in query2.layers
 
@@ -1048,7 +1032,7 @@ def test_cytoanvi_prepare_query_requires_nan_layer(adata):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
 
-    query = _make_adata()
+    query = make_adata()
     query = query[:, list(ref.adata.var_names[:-5])].copy()
     with pytest.raises(ValueError, match="nan_layer"):
         CytoANVI.prepare_query_anndata(query, ref)
@@ -1100,7 +1084,7 @@ def test_cytoanvi_continual_save_load(adata, save_path):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
 
-    query = _make_adata()
+    query = make_adata()
     query.obs[LABELS_KEY] = UNLABELED
     control = query[:128].copy()
     q = CytoANVI.load_query_data_with_replay(
@@ -1145,8 +1129,8 @@ def test_cytoanvi_beta_likelihood(adata):
 def test_cytoanvi_continual_on_multipanel():
     # untested path: continual case-control update on a multi-panel (nan_layer) reference, so the
     # EWC penalty and backbone masking coexist.
-    a1 = _make_adata(n_genes=30, n_batches=1)
-    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1 = make_adata(n_genes=30, n_batches=1)
+    a2 = make_adata(n_genes=20, n_batches=1)
     a1.obs_names = "a1_" + a1.obs_names
     a2.obs_names = "a2_" + a2.obs_names
     merged = cytovi_pp.merge_batches([a1, a2])
@@ -1254,8 +1238,8 @@ def test_cytoanvi_select_replay_by_uncertainty(adata):
 
 
 def test_cytoanvi_encoder_mask_saved_path_prep(adata, save_path):
-    a1 = _make_adata(n_genes=30, n_batches=1)
-    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1 = make_adata(n_genes=30, n_batches=1)
+    a2 = make_adata(n_genes=20, n_batches=1)
     a1.obs_names = "a1_" + a1.obs_names
     a2.obs_names = "a2_" + a2.obs_names
     merged = cytovi_pp.merge_batches([a1, a2])
@@ -1273,7 +1257,7 @@ def test_cytoanvi_encoder_mask_saved_path_prep(adata, save_path):
     ref.save(path, overwrite=True, save_anndata=True)
 
     backbone = list(ref.adata.var_names[ref.encoder_marker_mask_])
-    query = _make_adata()[:, backbone].copy()
+    query = make_adata()[:, backbone].copy()
     query.obs[LABELS_KEY] = UNLABELED
     CytoANVI.prepare_query_anndata(query, path)
     assert list(query.var_names) == list(ref.adata.var_names)
@@ -1283,7 +1267,7 @@ def test_cytoanvi_prepare_query_path_no_longer_rejects(save_path):
     ref = _make_backbone_reference()
     path = os.path.join(save_path, "ref_for_prep_v2")
     ref.save(path, overwrite=True, save_anndata=True)
-    query = _make_adata()[:, list(ref.adata.var_names[:25])].copy()
+    query = make_adata()[:, list(ref.adata.var_names[:25])].copy()
     CytoANVI.prepare_query_anndata(query, path)
     assert NAN_LAYER_KEY in query.layers
 
@@ -1299,7 +1283,7 @@ def test_cytoanvi_continual_resume_replay(adata, save_path):
     ref = CytoANVI(adata, n_latent=10)
     ref.train(max_epochs=N_EPOCHS)
     replay = adata[:128].copy()
-    query = _make_adata()
+    query = make_adata()
     query.obs[LABELS_KEY] = UNLABELED
     q = CytoANVI.load_query_data_with_replay(
         query, ref, replay_adata=replay, control_adata=query[:64].copy()
@@ -1319,8 +1303,8 @@ def test_cytoanvi_continual_resume_replay(adata, save_path):
 
 
 def test_cytoanvi_uncertainty_multipanel():
-    a1 = _make_adata(n_genes=30, n_batches=1)
-    a2 = _make_adata(n_genes=20, n_batches=1)
+    a1 = make_adata(n_genes=30, n_batches=1)
+    a2 = make_adata(n_genes=20, n_batches=1)
     a1.obs_names = "a1_" + a1.obs_names
     a2.obs_names = "a2_" + a2.obs_names
     merged = cytovi_pp.merge_batches([a1, a2])
@@ -1342,10 +1326,7 @@ def test_cytoanvi_uncertainty_multipanel():
 def test_example_reference_query_runs():
     example_path = (
         Path(__file__).parents[2]
-        / "docs"
-        / "tutorials"
-        / "notebooks"
-        / "cytometry"
+        / "vignettes"
         / "cytoanvi_example_reference_query.py"
     )
     spec = spec_from_file_location("cytoanvi_example_reference_query", example_path)

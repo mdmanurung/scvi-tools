@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 SCALED_LAYER = "scaled"
 NAN_LAYER = "_nan_mask"
 
@@ -21,6 +23,53 @@ NAN_LAYER = "_nan_mask"
 _GRAD_CLIP = 1.0
 
 
+def resolve_nan_layer(adata, nan_layer: str | None = NAN_LAYER) -> str | None:
+    """Return the benchmark NaN-mask layer only when it is present."""
+    if nan_layer is None:
+        return None
+    return nan_layer if nan_layer in adata.layers else None
+
+
+def annbatch_train_kwargs(
+    model,
+    annbatch_config=None,
+    *,
+    batch_size: int | None = None,
+    n_samples_per_label: int | None = None,
+) -> dict:
+    """Return ``datamodule`` kwargs for opt-in CytoANVI AnnBatch training."""
+    if annbatch_config is None or not getattr(annbatch_config, "enabled", False):
+        return {}
+    if n_samples_per_label is not None:
+        warnings.warn(
+            "AnnBatch backend does not support n_samples_per_label; using the standard "
+            "scvi AnnDataLoader for this training call.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return {}
+
+    from benchmarks.common.annbatch import (
+        UnsupportedAnnBatchRegistry,
+        make_cytoanvi_annbatch_datamodule,
+    )
+
+    try:
+        datamodule = make_cytoanvi_annbatch_datamodule(
+            model,
+            annbatch_config,
+            batch_size=batch_size or 4096,
+        )
+    except UnsupportedAnnBatchRegistry as err:
+        warnings.warn(
+            f"{err} Falling back to the standard scvi AnnDataLoader.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return {}
+    return {"datamodule": datamodule}
+
+
 def train_cytovi(
     adata,
     *,
@@ -32,6 +81,8 @@ def train_cytovi(
     n_latent: int | None = None,
     max_epochs: int = 1000,
     batch_size: int | None = None,
+    accelerator: str = "auto",
+    devices: int | list[int] | str = "auto",
 ):
     """Train CYTOVI with paper defaults (MoG prior, Gaussian likelihood, latent heuristic).
 
@@ -45,19 +96,20 @@ def train_cytovi(
     from scvi.external import CYTOVI
 
     a = adata.copy()
-    setup_kw = dict(
-        layer=layer,
-        batch_key=batch_key,
-        sample_key=sample_key,
-        nan_layer=nan_layer,
-    )
+    setup_kw = {
+        "layer": layer,
+        "batch_key": batch_key,
+        "sample_key": sample_key,
+        "nan_layer": nan_layer,
+    }
     if labels_key is not None:
         setup_kw["labels_key"] = labels_key
     CYTOVI.setup_anndata(a, **setup_kw)
     model = CYTOVI(a, n_latent=n_latent)
     # AdversarialTrainingPlan uses manual optimization; clip via plan_kwargs.
     train_kw: dict = {
-        "accelerator": "auto",
+        "accelerator": accelerator,
+        "devices": devices,
         "plan_kwargs": {"gradient_clip_norm": _GRAD_CLIP},
     }
     if batch_size is not None:
@@ -81,7 +133,16 @@ def train_cytoanvi(
     n_samples_per_label: int | None = None,
     reduce_lr_on_plateau: bool = False,
     batch_size: int | None = None,
+    accelerator: str = "auto",
+    devices: int | list[int] | str = "auto",
     hierarchy_edges: dict | None = None,
+    annbatch_config=None,
+    y_prior="uniform",
+    class_weighting="none",
+    class_weight_clip: float = 10.0,
+    classification_ratio: float | None = None,
+    learning_rate: float | None = None,
+    gradient_clip_val: float | None = None,
 ):
     """Train CytoANVI with paper-aligned CYTOVI backbone defaults.
 
@@ -111,20 +172,39 @@ def train_cytoanvi(
         sample_key=sample_key,
         nan_layer=nan_layer,
     )
-    model = CytoANVI(a, n_latent=n_latent)
+    model = CytoANVI(
+        a,
+        n_latent=n_latent,
+        y_prior=y_prior,
+        class_weighting=class_weighting,
+        class_weight_clip=class_weight_clip,
+    )
     if hierarchy_edges is not None:
         model.set_hierarchy(hierarchy_edges)
     plan_kw = {}
     if reduce_lr_on_plateau:
         plan_kw["reduce_lr_on_plateau"] = True
+    if classification_ratio is not None:
+        plan_kw["classification_ratio"] = classification_ratio
+    if learning_rate is not None:
+        plan_kw["lr"] = learning_rate
     train_kw: dict = {
-        "accelerator": "auto",
-        "gradient_clip_val": _GRAD_CLIP,
+        "accelerator": accelerator,
+        "devices": devices,
+        "gradient_clip_val": _GRAD_CLIP if gradient_clip_val is None else gradient_clip_val,
         "n_samples_per_label": n_samples_per_label,
         "plan_kwargs": plan_kw or None,
     }
     if batch_size is not None:
         train_kw["batch_size"] = batch_size
+    train_kw.update(
+        annbatch_train_kwargs(
+            model,
+            annbatch_config,
+            batch_size=batch_size,
+            n_samples_per_label=n_samples_per_label,
+        )
+    )
     model.train(max_epochs=max_epochs, **train_kw)
     model.module.eval()
     return model, a

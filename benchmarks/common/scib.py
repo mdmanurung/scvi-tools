@@ -7,6 +7,21 @@ import numpy as np
 LATENT_OBSM = "X_benchmark"
 
 
+def _finite_dense_matrix(x, *, max_dense_elements: int = 50_000_000):
+    """Return a dense matrix with NaN/Inf replaced for libraries that reject missing values."""
+    if hasattr(x, "toarray"):
+        n_elements = int(np.prod(x.shape))
+        if n_elements > max_dense_elements:
+            raise MemoryError(
+                "Refusing to densify sparse matrix with "
+                f"{n_elements} elements for scIB preprocessing."
+            )
+        x = x.toarray()
+    else:
+        x = np.asarray(x)
+    return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+
 def _subsample_stratified(
     adata,
     batch_key: str,
@@ -31,11 +46,10 @@ def pca_embedding(adata, n_comps: int = 50, layer: str | None = None, obsm_key: 
 
     a = adata.copy()
     if layer is not None:
-        x = np.asarray(a.layers[layer])
+        x = a.layers[layer]
     else:
-        x = np.asarray(a.X)
-    x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-    a.X = x
+        x = a.X
+    a.X = _finite_dense_matrix(x)
     n_comps = min(n_comps, a.n_vars - 1, a.n_obs - 1)
     n_comps = max(2, n_comps)
     sc.pp.pca(a, n_comps=n_comps, zero_center=True)
@@ -55,7 +69,8 @@ def run_scib_benchmark(
 ):
     """Run scib-metrics ``Benchmarker`` on an embedding in ``obsm``.
 
-    Returns per-metric scores plus ``batch_correction``, ``bio_conservation``, and ``total`` aggregates.
+    Returns per-metric scores plus ``batch_correction``, ``bio_conservation``, and
+    ``total`` aggregates.
     """
     from scib_metrics.benchmark import BatchCorrection, Benchmarker, BioConservation
 
@@ -65,6 +80,11 @@ def run_scib_benchmark(
 
     if embedding_obsm_key not in a.obsm:
         raise KeyError(f"obsm['{embedding_obsm_key}'] missing — compute an embedding first")
+
+    # Benchmarker.prepare() computes PCA on X even when scoring a supplied embedding.
+    # Panel-aware cytometry objects may carry NaNs in X for missing markers, so sanitize X at
+    # this boundary while leaving the embedding under evaluation unchanged.
+    a.X = _finite_dense_matrix(a.X)
 
     # scib expects string-like labels
     a.obs[batch_key] = a.obs[batch_key].astype(str)

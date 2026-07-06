@@ -2,12 +2,11 @@
 
 import numpy as np
 import pytest
+from conftest import MockTreeNode, ScalarNameTreeNode
 
 from cytoanvi import CytoANVI, hierarchy
 from scvi.data import synthetic_iid
 from scvi.external import cytovi as cytovi_pp
-
-from conftest import MockTreeNode, ScalarNameTreeNode  # noqa: F401
 
 SCALED_LAYER_KEY = "scaled"
 BATCH_KEY = "batch"
@@ -50,7 +49,9 @@ def _make_adata(n_genes=30, n_batches=2, n_labels=3):
         n_labels=n_labels,
         rna_dist="normal",
     )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(["group_a", "group_b"], size=adata.shape[0])
+    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
+        ["group_a", "group_b"], size=adata.shape[0]
+    )
     adata.layers["raw"] = adata.X.copy()
     cytovi_pp.transform_arcsinh(adata)
     cytovi_pp.scale(adata)

@@ -6,10 +6,19 @@ It does not impute missing markers — A3 imputation baselines are CytoVI + KNN 
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
-from benchmarks.common.preprocessing import BENCHMARK_LAYER, PreprocScheme, apply_preproc_scheme, set_expression_from_layer
+from benchmarks.common.preprocessing import (
+    BENCHMARK_LAYER,
+    apply_preproc_scheme,
+    set_expression_from_layer,
+)
 from benchmarks.common.scib import LATENT_OBSM, pca_embedding
+
+if TYPE_CHECKING:
+    from benchmarks.common.preprocessing import PreprocScheme
 
 CYCOMBINE_LAYER = "cycombine_corrected"
 
@@ -52,7 +61,7 @@ def run_cycombinepy(
     n_pcs: int = 50,
     seed: int = 473,
 ):
-    """cyCombinePy batch correction (Python port of cyCombine); PCA embedding for scib.
+    """CyCombinePy batch correction (Python port of cyCombine); PCA embedding for scib.
 
     Requires ``pip install cycombinepy`` (see benchmarks/cytovi/README.md).
     """
@@ -75,6 +84,7 @@ def run_cycombinepy(
 
 
 def cycombinepy_available() -> bool:
+    """Return whether cyCombinePy can be imported in the current environment."""
     try:
         import cycombinepy  # noqa: F401
 

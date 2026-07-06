@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import zipfile
 from collections import Counter
@@ -33,7 +32,11 @@ def _extract_zip(zip_path: Path, dest: Path, *, members_filter=None) -> int:
     n = 0
     with zipfile.ZipFile(zip_path) as zf:
         for info in zf.infolist():
-            if info.is_dir() or "__MACOSX" in info.filename or info.filename.endswith("/.DS_Store"):
+            if (
+                info.is_dir()
+                or "__MACOSX" in info.filename
+                or info.filename.endswith("/.DS_Store")
+            ):
                 continue
             if members_filter and not members_filter(info.filename):
                 continue
@@ -72,7 +75,11 @@ def extract_kreutmair(data_dir: Path | None = None) -> Path:
 
 
 def _walk_fcs(root: Path) -> list[Path]:
-    return [p for p in root.rglob("*.fcs") if "__MACOSX" not in str(p) and "Compensation" not in p.name]
+    return [
+        p
+        for p in root.rglob("*.fcs")
+        if "__MACOSX" not in str(p) and "Compensation" not in p.name
+    ]
 
 
 def inventory_roider(root: Path) -> dict:
@@ -98,6 +105,7 @@ def inventory_roider(root: Path) -> dict:
 
 
 def inventory_kreutmair(root: Path) -> dict:
+    """Summarize Kreutmair FCS files and metadata under ``root``."""
     panel_counts: Counter[str] = Counter()
     samples: set[str] = set()
     for path in _walk_fcs(root):
@@ -116,6 +124,7 @@ def inventory_kreutmair(root: Path) -> dict:
 
 
 def write_inventory(data_dir: Path | None = None) -> dict:
+    """Write available full-cohort inventory JSON files under ``data_dir``."""
     data_dir = data_dir or _repo_data()
     report: dict = {"data_dir": str(data_dir)}
     roider_root = data_dir / "roider_raw"
@@ -134,6 +143,7 @@ def write_inventory(data_dir: Path | None = None) -> dict:
 
 
 def main():
+    """Run the full-cohort archive extraction/inventory CLI."""
     ap = argparse.ArgumentParser(description="Extract and inventory full-cohort archives in data/")
     ap.add_argument("--data-dir", type=Path, default=None)
     ap.add_argument("--extract-roider", action="store_true")

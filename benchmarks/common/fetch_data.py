@@ -8,15 +8,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 import urllib.request
 from pathlib import Path
 
 # Vignette / tutorial assets (smoke tests)
 VIGNETTE = {
-    "roider_p1.h5ad": ("56891468", 500_000),
-    "roider_p2.h5ad": ("56891471", 400_000),
+    "Roider_et_al_BNHL_panel1.h5ad": ("56891468", 500_000),
+    "Roider_et_al_BNHL_panel2.h5ad": ("56891471", 400_000),
     "Nunez_PBMCs_batch1.fcs": ("55982654", 1_000_000),
     "Nunez_PBMCs_batch2.fcs": ("55982657", 1_000_000),
 }
@@ -83,6 +82,7 @@ def validate_vignette(data_dir: Path) -> dict:
 
 
 def fetch_vignette(data_dir: Path, retries: int = 8, wait: float = 15.0) -> dict:
+    """Fetch vignette assets from Figshare and return validation status."""
     results = {}
     for name, (fig_id, min_bytes) in VIGNETTE.items():
         dest = data_dir / name
@@ -93,6 +93,7 @@ def fetch_vignette(data_dir: Path, retries: int = 8, wait: float = 15.0) -> dict
 
 
 def main():
+    """Run the benchmark data fetch/validation CLI."""
     ap = argparse.ArgumentParser(description="Fetch or validate CytoVI/CytoANVI vignette data")
     ap.add_argument(
         "--data-dir",
@@ -104,7 +105,11 @@ def main():
     ap.add_argument("--validate-only", action="store_true", help="Check files on disk only")
     ap.add_argument("--retries", type=int, default=8)
     ap.add_argument("--wait", type=float, default=15.0, help="Seconds between Figshare retries")
-    ap.add_argument("--list-full-cohort", action="store_true", help="Print full-cohort ingest notes")
+    ap.add_argument(
+        "--list-full-cohort",
+        action="store_true",
+        help="Print full-cohort ingest notes",
+    )
     args = ap.parse_args()
 
     if args.list_full_cohort:
@@ -118,7 +123,11 @@ def main():
     else:
         results = validate_vignette(data_dir)
 
-    report = {"data_dir": str(data_dir), "vignette": results, "all_ok": all(v["ok"] for v in results.values())}
+    report = {
+        "data_dir": str(data_dir),
+        "vignette": results,
+        "all_ok": all(v["ok"] for v in results.values()),
+    }
     print(json.dumps(report, indent=2))
     if not report["all_ok"]:
         print(

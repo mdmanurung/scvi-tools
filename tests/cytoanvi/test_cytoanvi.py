@@ -32,7 +32,9 @@ def _make_adata(n_genes=30, n_batches=2, n_labels=5):
         n_labels=n_labels,
         rna_dist="normal",
     )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(["group_a", "group_b"], size=adata.shape[0])
+    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
+        ["group_a", "group_b"], size=adata.shape[0]
+    )
     adata.layers["raw"] = adata.X.copy()
     cytovi_pp.transform_arcsinh(adata)
     cytovi_pp.scale(adata)
@@ -60,6 +62,32 @@ def test_cytoanvi_setup_indices(adata):
     # n_labels excludes the unlabeled category
     assert model.n_labels == adata.obs[LABELS_KEY].nunique() - 1
     assert model.module.classifier.classifier[-1].out_features == model.n_labels
+
+
+def test_cytoanvi_loss_scale_clamps_tiny_variance():
+    from cytoanvi._module import _stable_normal_scale
+
+    variance = torch.tensor([1.0, 0.0, 1e-12], dtype=torch.float32)
+
+    scale = _stable_normal_scale(variance, "pz1_v")
+
+    assert torch.all(torch.isfinite(scale))
+    torch.testing.assert_close(scale, torch.tensor([1.0, 1e-3, 1e-3]))
+
+
+@pytest.mark.parametrize(
+    ("variance", "message"),
+    [
+        (torch.tensor([1.0, float("nan")]), "pz1_v.*non-finite.*1"),
+        (torch.tensor([1.0, float("inf")]), "pz1_v.*non-finite.*1"),
+        (torch.tensor([1.0, -0.25]), "pz1_v.*negative.*1"),
+    ],
+)
+def test_cytoanvi_loss_scale_rejects_invalid_variance(variance, message):
+    from cytoanvi._module import _stable_normal_scale
+
+    with pytest.raises(ValueError, match=message):
+        _stable_normal_scale(variance, "pz1_v")
 
 
 def test_cytoanvi_train_predict_latent(adata):
@@ -447,6 +475,28 @@ def test_cytoanvi_save_load(adata, save_path):
     assert model2.n_labels == model.n_labels
 
 
+def test_cytoanvi_save_load_cpu_inference(adata, save_path):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=1)
+
+    model_path = os.path.join(save_path, "test_cytoanvi_cpu_load")
+    model.save(model_path, save_anndata=True, overwrite=True)
+    loaded = CytoANVI.load(model_path, accelerator="cpu", device="cpu")
+
+    preds = loaded.predict()
+    latent = loaded.get_latent_representation()
+    assert preds.shape == (adata.n_obs,)
+    assert latent.shape == (adata.n_obs, loaded.module.n_latent)
+
+
 def test_cytoanvi_surgery_partial_labels(adata):
     # P0: query carrying *reference* labels (plus the unlabeled category) must keep the classifier
     # head fixed at the reference n_labels and train/predict without dimension mismatch.
@@ -497,6 +547,112 @@ def test_cytoanvi_y_prior_empirical(adata):
         CytoANVI(adata, n_latent=10, y_prior="not-a-mode")
 
 
+def test_cytoanvi_class_weighting_default_none(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+
+    model = CytoANVI(adata, n_latent=10)
+
+    assert model.class_weighting_ == "none"
+    assert model.class_weight_clip_ is None
+    assert model.class_weights_ is None
+    assert model.module.class_weights is None
+
+
+def test_cytoanvi_sqrt_inverse_frequency_class_weights(adata):
+    labels = np.asarray(adata.obs[LABELS_KEY].astype(str), dtype=object)
+    labels[:] = UNLABELED
+    labels[:30] = "label_1"
+    labels[30:40] = "label_2"
+    labels[40:45] = "label_3"
+    labels[45:47] = "label_4"
+    adata.obs[LABELS_KEY] = labels
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+
+    model = CytoANVI(
+        adata,
+        n_latent=10,
+        class_weighting="sqrt_inverse_frequency",
+        class_weight_clip=10.0,
+    )
+
+    weights = model.module.class_weights.detach().cpu().numpy()
+    assert model.class_weighting_ == "sqrt_inverse_frequency"
+    assert model.class_weight_clip_ == 10.0
+    assert weights.shape == (model.n_labels,)
+    np.testing.assert_allclose(weights.mean(), 1.0, atol=1e-6)
+    weights_by_label = dict(zip(model._observed_label_names(), weights, strict=True))
+    assert (
+        weights_by_label["label_1"]
+        < weights_by_label["label_2"]
+        < weights_by_label["label_3"]
+        < weights_by_label["label_4"]
+    )
+
+
+def test_cytoanvi_class_weights_save_load(adata, tmp_path):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(
+        adata,
+        n_latent=10,
+        class_weighting="sqrt_inverse_frequency",
+        class_weight_clip=10.0,
+    )
+    weights = model.module.class_weights.detach().cpu().clone()
+    model.train(max_epochs=1)
+    model_path = os.path.join(tmp_path, "test_cytoanvi_class_weights")
+    model.save(model_path, overwrite=True)
+
+    loaded = CytoANVI.load(model_path, adata=adata)
+
+    np.testing.assert_allclose(loaded.class_weights_, weights.numpy())
+    torch.testing.assert_close(loaded.module.class_weights.detach().cpu(), weights)
+
+
+def test_cytoanvi_class_weights_preserved_in_query_surgery(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    ref = CytoANVI(
+        adata,
+        n_latent=10,
+        class_weighting="sqrt_inverse_frequency",
+        class_weight_clip=10.0,
+    )
+    ref_weights = ref.module.class_weights.detach().cpu().clone()
+
+    query = _make_adata()
+    query.obs[LABELS_KEY] = UNLABELED
+    q = CytoANVI.load_query_data(query, ref)
+
+    torch.testing.assert_close(q.module.class_weights.detach().cpu(), ref_weights)
+
+
 def test_cytoanvi_y_prior_tensor_validation(adata):
     CytoANVI.setup_anndata(
         adata,
@@ -515,6 +671,71 @@ def test_cytoanvi_y_prior_tensor_validation(adata):
         CytoANVI(adata, n_latent=10, y_prior=torch.tensor([[1.0, -0.1, 0.1, 0.0]]))
     with pytest.raises(ValueError, match="sum"):
         CytoANVI(adata, n_latent=10, y_prior=torch.zeros(1, 4))
+
+
+def test_cytoanvi_y_prior_rejects_non_finite_tensor(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        CytoANVI(adata, n_latent=10, y_prior=torch.tensor([[0.25, 0.25, float("nan"), 0.25]]))
+
+
+@pytest.mark.parametrize("class_weight_clip", [0.0, -1.0, float("inf"), float("nan")])
+def test_cytoanvi_class_weight_clip_validation(adata, class_weight_clip):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+
+    with pytest.raises(ValueError, match="class_weight_clip"):
+        CytoANVI(
+            adata,
+            n_latent=10,
+            class_weighting="inverse_frequency",
+            class_weight_clip=class_weight_clip,
+        )
+
+
+def test_cytoanvi_class_weight_tensor_validation(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+
+    model = CytoANVI(adata, n_latent=10, class_weighting=torch.ones(4))
+    torch.testing.assert_close(model.module.class_weights.cpu(), torch.ones(4))
+
+    with pytest.raises(ValueError, match="shape"):
+        CytoANVI(adata, n_latent=10, class_weighting=torch.ones(1, 4))
+    with pytest.raises(ValueError, match="finite"):
+        CytoANVI(
+            adata,
+            n_latent=10,
+            class_weighting=torch.tensor([1.0, 1.0, float("inf"), 1.0]),
+        )
+    with pytest.raises(ValueError, match="strictly positive"):
+        CytoANVI(
+            adata,
+            n_latent=10,
+            class_weighting=torch.tensor([1.0, 0.0, 1.0, 1.0]),
+        )
+    with pytest.raises(ValueError, match="class_weighting"):
+        CytoANVI(adata, n_latent=10, class_weighting="balanced")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
@@ -757,6 +978,23 @@ def test_cytoanvi_prepare_query_docs_snippet_uses_returned_anndata():
     assert list(query.var_names) == list(ref.adata.var_names)
     assert NAN_LAYER_KEY in query.layers
     assert NAN_LAYER_KEY not in query_adata.layers
+
+
+def test_cytoanvi_prepare_query_preserves_sparse_expression():
+    from scipy import sparse
+
+    ref = _make_backbone_reference()
+    backbone = list(ref.adata.var_names[:25])
+    query = _make_adata()[:, backbone].copy()
+    query.obs[LABELS_KEY] = UNLABELED
+    query.X = sparse.csr_matrix(query.X)
+    query.layers[SCALED_LAYER_KEY] = sparse.csr_matrix(query.layers[SCALED_LAYER_KEY])
+
+    CytoANVI.prepare_query_anndata(query, ref)
+
+    assert sparse.issparse(query.X)
+    assert sparse.issparse(query.layers[SCALED_LAYER_KEY])
+    assert NAN_LAYER_KEY in query.layers
 
 
 def test_cytoanvi_prepare_query_rejects_missing_backbone():

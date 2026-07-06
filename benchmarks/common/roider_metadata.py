@@ -162,6 +162,7 @@ def annotate_roider_obs(
 
 
 def main():
+    """Run Roider metadata cache refresh commands."""
     import argparse
 
     ap = argparse.ArgumentParser(description="Roider full-cohort metadata utilities")
@@ -189,7 +190,10 @@ def main():
             resolution=args.leiden_resolution,
             refresh=True,
         )
-        print(f"wrote {_leiden_cache_path(args.labels_key, args.leiden_resolution)} ({n} clusters)")
+        print(
+            f"wrote {_leiden_cache_path(args.labels_key, args.leiden_resolution)} "
+            f"({n} clusters)"
+        )
     elif not (args.refresh_entity or args.refresh_leiden):
         ap.print_help()
 

@@ -30,7 +30,9 @@ def _make_adata(n_genes=30, n_batches=2, n_labels=5):
         n_labels=n_labels,
         rna_dist="normal",
     )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(["group_a", "group_b"], size=adata.shape[0])
+    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
+        ["group_a", "group_b"], size=adata.shape[0]
+    )
     adata.layers["raw"] = adata.X.copy()
     cytovi_pp.transform_arcsinh(adata)
     cytovi_pp.scale(adata)
@@ -84,6 +86,23 @@ def test_hierarchical_cross_entropy_loss_finite():
     loss = hierarchical_cross_entropy_loss(logits, targets, reachability)
     assert torch.isfinite(loss)
     assert loss.ndim == 0
+
+
+def test_hierarchical_cross_entropy_accepts_class_weights():
+    label_names = ["A", "B", "C", "D", "E"]
+    reachability = torch.tensor(
+        build_reachability_matrix(label_names, _toy_dag_edges()), dtype=torch.float32
+    )
+    logits = torch.randn(16, 5)
+    targets = torch.randint(0, 5, (16,))
+
+    unweighted = hierarchical_cross_entropy_loss(logits, targets, reachability)
+    weighted = hierarchical_cross_entropy_loss(
+        logits, targets, reachability, weight=torch.tensor([1.0, 2.0, 1.0, 1.0, 3.0])
+    )
+
+    assert torch.isfinite(weighted)
+    assert not torch.allclose(unweighted, weighted)
 
 
 def test_reachability_matmul_gives_subtree_mass():

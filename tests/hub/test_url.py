@@ -5,7 +5,7 @@ import pytest
 import scvi
 from scvi.hub._url import validate_colab_notebook, validate_url
 
-info = metadata("scvi-tools")
+info = metadata("cytoanvi")
 
 
 @pytest.mark.internet

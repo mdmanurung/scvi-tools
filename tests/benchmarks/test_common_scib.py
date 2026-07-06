@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 from anndata import AnnData
 
-from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
+from benchmarks.common.scib import LATENT_OBSM, _finite_dense_matrix, run_scib_benchmark
+from benchmarks.common.training import NAN_LAYER, resolve_nan_layer
 from benchmarks.cytoanvi.data import holdout_safe_name
 
 
@@ -35,6 +36,40 @@ def test_run_scib_benchmark_returns_aggregates():
         assert np.isfinite(result[key])
 
 
+def test_run_scib_benchmark_accepts_nan_x_with_finite_embedding():
+    adata = _tiny_adata()
+    adata.X[0, 0] = np.nan
+
+    result = run_scib_benchmark(
+        adata,
+        batch_key="batch",
+        label_key="labels",
+        subsample_per_batch=200,
+        seed=0,
+    )
+
+    assert np.isfinite(result["total"])
+
+
+def test_finite_dense_matrix_guards_large_sparse_densification():
+    from scipy import sparse
+
+    x = sparse.csr_matrix((20, 20), dtype=np.float32)
+
+    with pytest.raises(MemoryError, match="Refusing to densify sparse matrix"):
+        _finite_dense_matrix(x, max_dense_elements=100)
+
+
+def test_resolve_nan_layer_only_when_present():
+    adata = _tiny_adata()
+
+    assert resolve_nan_layer(adata) is None
+
+    adata.layers[NAN_LAYER] = np.ones(adata.shape, dtype=np.float32)
+    assert resolve_nan_layer(adata) == NAN_LAYER
+    assert resolve_nan_layer(adata, None) is None
+
+
 @pytest.mark.parametrize(
     ("holdout", "expected"),
     [
@@ -50,9 +85,9 @@ def test_holdout_safe_name(holdout, expected):
 def test_validate_vignette_roider_ok():
     from benchmarks.common.fetch_data import validate_vignette
 
-    data_dir = Path("benchmarks/cytoanvi/data")
-    if not (data_dir / "roider_p1.h5ad").exists():
+    data_dir = Path("data")
+    if not (data_dir / "Roider_et_al_BNHL_panel1.h5ad").exists():
         pytest.skip("vignette roider data not present")
     report = validate_vignette(data_dir)
-    assert report["roider_p1.h5ad"]["ok"]
-    assert report["roider_p2.h5ad"]["ok"]
+    assert report["Roider_et_al_BNHL_panel1.h5ad"]["ok"]
+    assert report["Roider_et_al_BNHL_panel2.h5ad"]["ok"]

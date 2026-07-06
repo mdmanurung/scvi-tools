@@ -18,50 +18,22 @@ Design notes
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    make_adata,
+)
+
 from cytoanvi import CytoANVI
-from scvi.data import synthetic_iid
-from scvi.external import cytovi as cytovi_pp
 from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
 
-# ---------------------------------------------------------------------------
-# Constants (mirror test_cytoanvi.py conventions)
-# ---------------------------------------------------------------------------
-SCALED_LAYER_KEY = "scaled"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"
-
 _NAN_LAYER_KEY = CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK  # "nan_layer"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_adata(n_genes: int = 20, n_batches: int = 2, n_labels: int = 5):
-    """Minimal synthetic cytometry AnnData (mirrors test_cytoanvi._make_adata)."""
-    adata = synthetic_iid(
-        batch_size=64,
-        n_genes=n_genes,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(
-        ["group_a", "group_b"], size=adata.shape[0]
-    )
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
 
 
 def _setup_model(adata):
@@ -98,7 +70,7 @@ def _forward(module, tensors):
 
 def test_elbo_returns_finite_loss():
     """loss(), reconstruction_loss, and kl_local are all finite scalars/tensors."""
-    adata = _make_adata()
+    adata = make_adata(n_genes=20, batch_size=64)
     model = _setup_model(adata)
     tensors = _one_batch(model)
 
@@ -145,7 +117,7 @@ def test_nan_mask_excludes_missing_markers():
     ``torch.manual_seed`` is reset identically before both calls to neutralise the
     stochastic z2 sample inside loss().
     """
-    adata = _make_adata()
+    adata = make_adata(n_genes=20, batch_size=64)
     model = _setup_model(adata)
     tensors = _one_batch(model)
 
@@ -214,7 +186,7 @@ def test_classification_ratio_controls_ce_contribution():
     when the RNG is seeded identically before each call so that the
     classification_loss() internal encoder draw is reproducible.
     """
-    adata = _make_adata()
+    adata = make_adata(n_genes=20, batch_size=64)
     model = _setup_model(adata)
     tensors = _one_batch(model)
 
@@ -272,7 +244,7 @@ def test_cytoanvae_n_labels_zero_raises():
 @pytest.mark.slow
 def test_training_elbo_descends():
     """Train CytoANVI for 20 epochs and assert elbo_train falls from epoch 1 to last epoch."""
-    adata = _make_adata(n_genes=20, n_batches=2, n_labels=5)
+    adata = make_adata(n_genes=20, n_batches=2, n_labels=5, batch_size=64)
     model = _setup_model(adata)
     model.train(max_epochs=20, accelerator="cpu")
 

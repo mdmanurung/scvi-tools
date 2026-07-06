@@ -2,48 +2,18 @@
 
 import numpy as np
 import pytest
+from conftest import (
+    BATCH_KEY,
+    LABELS_KEY,
+    N_EPOCHS,
+    SAMPLE_KEY,
+    SCALED_LAYER_KEY,
+    UNLABELED,
+    make_adata,
+    setup_and_train,
+)
 
-from cytoanvi import CytoANVI, mapping_qc
-from scvi.data import synthetic_iid
-from scvi.external import cytovi as cytovi_pp
-
-SCALED_LAYER_KEY = "scaled"
-BATCH_KEY = "batch"
-LABELS_KEY = "labels"
-SAMPLE_KEY = "sample_key"
-UNLABELED = "label_0"
-N_EPOCHS = 2
-
-
-def _make_adata(n_batches=2, n_labels=5):
-    adata = synthetic_iid(
-        batch_size=256,
-        n_genes=30,
-        n_proteins=0,
-        n_regions=0,
-        n_batches=n_batches,
-        n_labels=n_labels,
-        rna_dist="normal",
-    )
-    adata.obs[SAMPLE_KEY] = np.random.default_rng(42).choice(["group_a", "group_b"], size=adata.shape[0])
-    adata.layers["raw"] = adata.X.copy()
-    cytovi_pp.transform_arcsinh(adata)
-    cytovi_pp.scale(adata)
-    return adata
-
-
-def _setup_and_train(adata):
-    CytoANVI.setup_anndata(
-        adata,
-        layer=SCALED_LAYER_KEY,
-        batch_key=BATCH_KEY,
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        sample_key=SAMPLE_KEY,
-    )
-    model = CytoANVI(adata, n_latent=10)
-    model.train(max_epochs=N_EPOCHS, accelerator="cpu")
-    return model
+from cytoanvi import mapping_qc
 
 
 def _assign_mapqc_samples(adata):
@@ -65,9 +35,9 @@ def _assign_mapqc_samples(adata):
 
 
 def test_build_mapqc_anndata_shapes():
-    adata = _make_adata()
+    adata = make_adata()
     work, is_ref = _assign_mapqc_samples(adata)
-    model = _setup_and_train(work.copy())
+    model = setup_and_train(work.copy())
 
     joint = mapping_qc.build_mapqc_anndata(
         model,
@@ -85,15 +55,15 @@ def test_build_mapqc_anndata_shapes():
 
 
 def test_build_mapqc_anndata_raises_on_few_ref_samples():
-    adata = _make_adata()
-    model = _setup_and_train(adata)
+    adata = make_adata()
+    model = setup_and_train(adata)
     adata.obs["mapqc_sample"] = "only_one"
     with pytest.raises(ValueError, match="at least 3 reference samples"):
         mapping_qc.build_mapqc_anndata(model, adata, adata, sample_key="mapqc_sample")
 
 
 def test_query_control_mapqc_rate_validates_ref_query_column():
-    adata = _make_adata()
+    adata = make_adata()
     adata.obs["mapqc_score"] = 1.0
     adata.obs["mapqc_filtering"] = "pass"
     adata.obs["status"] = "control"
@@ -107,11 +77,11 @@ def test_query_control_mapqc_rate_validates_ref_query_column():
 
 
 def test_run_mapqc_on_cytoanvi_mock(monkeypatch):
-    adata = _make_adata()
+    adata = make_adata()
     work, is_ref = _assign_mapqc_samples(adata)
     ref = work[is_ref].copy()
     query = work[~is_ref].copy()
-    model = _setup_and_train(work.copy())
+    model = setup_and_train(work.copy())
 
     def fake_run_mapqc(joint, **kwargs):
         query_mask = joint.obs[mapping_qc.DEFAULT_REF_Q_KEY] == mapping_qc.QUERY_CAT
@@ -145,11 +115,11 @@ def test_run_mapqc_on_cytoanvi_mock(monkeypatch):
 
 
 def test_score_query_mapping_delegates(monkeypatch):
-    adata = _make_adata()
+    adata = make_adata()
     work, is_ref = _assign_mapqc_samples(adata)
     ref = work[is_ref].copy()
     query = work[~is_ref].copy()
-    model = _setup_and_train(work.copy())
+    model = setup_and_train(work.copy())
     sentinel = object()
 
     def fake_run(*args, **kwargs):
@@ -213,11 +183,11 @@ def test_task_b9_mapqc_returns_blocked_artifact_before_training(monkeypatch):
 
 
 def test_run_mapqc_raises_without_extra(monkeypatch):
-    adata = _make_adata()
+    adata = make_adata()
     work, is_ref = _assign_mapqc_samples(adata)
     ref = work[is_ref].copy()
     query = work[~is_ref].copy()
-    model = _setup_and_train(work.copy())
+    model = setup_and_train(work.copy())
     joint = mapping_qc.build_mapqc_anndata(model, ref, query, sample_key="mapqc_sample")
 
     def _missing_mapqc():

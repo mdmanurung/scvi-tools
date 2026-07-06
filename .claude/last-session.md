@@ -1,73 +1,69 @@
-# Last Session Summary — 2026-07-06 (session 16, B1 Roider complete)
+# Last Session Summary — 2026-07-06 (session 18, CI fixes + full working-tree reconciliation)
 
 ## 1. What was accomplished
 
-**B1 Roider full-cohort COMPLETE**
+**Root-caused and fixed a CI-collection regression I had introduced.** Commit `4dafbd98`
+(prior session) ran `git add tests/cytoanvi/test_cytoanvi.py`, which staged a working-tree
+refactor that imports shared helpers from `conftest` — without committing the working-tree
+`conftest.py` that defines them. Result: the whole cytoanvi suite failed to *collect* on CI
+(`ImportError: cannot import name 'BATCH_KEY'`). Fixed by committing the 78-line additive
+conftest helpers (`1c6da372`).
 
-Jobs 25149326/27/28 finished and produced results:
-| Seed | CytoANVI | CytoVI-kNN | Δ |
-|------|----------|------------|---|
-| 0 | 0.9314 | 0.8906 | +0.0409 |
-| 1 | 0.9295 | 0.8913 | +0.0383 |
-| 2 | 0.9340 | 0.8967 | +0.0373 |
-| **agg** | **0.9317±0.0022** | **0.8928±0.0034** | **+0.0388±0.0018 ✅** |
-XGBoost 0.9516. Gate (Δ≥+0.03) PASSES. Aggregated → `roider_full_b1_multiseed.json`.
+**Discovered the big gap:** ~190 files of finished work existed only in the working tree,
+never committed/merged. `main` (PR #1 merged at `958836df`) is missing it. The readiness
+review had partly reflected the working tree, overstating main's completeness. See memory
+`working-tree-vs-main-gap`.
 
-**B9 mapQC BLOCKED AGAIN (job 25149329, FAILED)**
+**Full reconciliation (user-approved).** Committed the uncommitted code/test/docs to
+`feat/cytoanvi` in reviewed batches, verified locally:
+- `1c6da372` conftest helpers (CI fix)
+- `2f48afa1` publication hygiene (release.yml de-scverse + PyPI/Docker jobs disabled; honest
+  benchmark table in user guide; B1 Roider README row; CLAUDE.md status; `scvi-tools[cytoanvi-*]`
+  → `cytoanvi[...]` install strings)
+- `464c2d4a` benchmark code (B5 latent-OOD diagnostic: `knn_distance_novelty`, `cytoanvi_knn_baseline`)
+- `539fa128` test suite (conftest-refactored tests, `test_public_api.py`, 3 new benchmark tests)
+- `6ae5d124` docs (ADR-0004, manifests, reproducibility, notes, analysis)
 
-mapqc 0.1.1 is installed but crashes with `IndexError: single positional indexer is out-of-bounds` in `_get_per_cell_filtering_info` → `mode().iloc[0]` on empty result. Library bug triggered by Nuñez dataset. Not reportable.
+**Deliberately NOT committed:** reference PDFs (`cscanvi-paper.pdf`, `cytovi.pdf`),
+`_test/aurora_6h/` scratch experiment, `skillpacks/`, `.scratch/**` — all sdist-excluded scratch.
 
-**All plan tasks complete (T1/T2/T3)**
+**Local verification:** `tests/cytoanvi` 111 passed / 2 skipped; `tests/benchmarks` 45 passed
+(scib failures are a local missing `scib_metrics` dep, installed on CI); scennep 8 passed;
+`cytoanvi.__version__` = 0.1.0; stale-number grep clean.
 
-- T1 (CytoANVI-kNN latent OOD code): already in `tasks.py` — running in B5 diagnostic jobs
-- T2 (propagate honest numbers): CHANGELOG, ANALYSIS_MANIFEST, FINDINGS_REGISTRY, TODO_REGISTRY all updated; stale grep passes
-- T3 (version + push): `pyproject.toml` already at `0.1.0`; pushed to GitHub
+**PR #2** (feat/cytoanvi → main) opened for the CI fixes + hygiene + reconciliation.
 
-**Still waiting: B5 diagnostic (25149032/33/34)**
+## 2. CI status
 
-At session start jobs were at 11h34m. Seed 0 at epoch 539/1000 for one holdout type (~21min left for that run). Seed 2 at epoch 461/1000. All 3 still RUNNING.
+PR #2's earlier run confirmed the collection fix works: integration jobs ran the full ~10 min
+suite (vs 1m20s collection-fail before). The ONLY remaining failure is the pre-existing upstream
+`tests/external/solo/test_solo.py::test_solo_scvi_labels` (`AttributeError: 'Sequential' object
+has no attribute 'classifier'` at load-then-`predict`) — upstream SOLO/scANVI classifier
+serialization, unrelated to CytoANVI. Decision pending: xfail-with-reason (→ green CI) vs leave.
 
-## 2. Key numbers (publication-grade)
+## 3. Benchmark numbers (unchanged, publication-grade)
 
-| Task | Dataset | Metric | Value | Status |
-|------|---------|--------|-------|--------|
-| B1 | Roider full | CytoANVI macro-F1 | **0.9317±0.0022** | ✅ |
-| B1 | Roider full | CytoVI-kNN macro-F1 | 0.8928±0.0034 | baseline |
-| B1 | Roider full | Δ macro-F1 | **+0.0388±0.0018** | ✅ gate |
-| B1 | Nuñez full | CytoANVI macro-F1 | **0.9751±0.0003** | ✅ ceiling |
-| B3 | Roider full | p1 macro-F1 | **0.828±0.015** | ✅ |
-| B3 | Roider full | p2 concordance | 0.671±0.008 | ❌ gate (≥0.80) |
-| B5 | Roider full | TTA mean_auroc | 0.484±0.019 | ❌ NEGATIVE |
-| B5 | Roider full | CytoVI kNN-OOD | 0.775±0.002 | baseline |
-| B8 | Nuñez full | Δ_hier_vs_flat | +0.0862±0.0027 | ✅ |
+| Task | Dataset | Metric | Value |
+|------|---------|--------|-------|
+| B1 | Roider full | CytoANVI macro-F1 | 0.9317±0.0022 (Δ+0.0388 ✅) |
+| B1 | Nuñez full | macro-F1 | 0.9751±0.0003 |
+| B3 | Roider full | p1 macro-F1 / p2 concordance | 0.828±0.015 / 0.671±0.008 (❌ gate) |
+| B5 | Roider full | TTA mean_auroc | 0.484±0.019 (❌ NEGATIVE vs CytoVI kNN-OOD 0.775) |
+| B8 | Nuñez full | Δ_hier_vs_flat | +0.0862±0.0027 ✅ |
 
-## 3. Open items
+## 4. Open items
 
-| Item | Status | Job(s) |
-|------|--------|--------|
-| B5 diagnostic (CytoANVI-kNN in own latent) | RUNNING | 25149032/33/34 |
-| B9 mapQC | BLOCKED — mapqc library bug | — |
-| B3 p2 ground-truth labels | Blocked — data acquisition | — |
-| B5 better-than-chance novelty | Requires new formulation or external OOD | — |
-| B4/B6 real case/control | Blocked — real data | — |
+| Item | Status |
+|------|--------|
+| test_solo xfail decision | pending user call (green CI blocker) |
+| B5 diagnostic (jobs 25149032/33/34) | RUNNING ~30h budget left; aggregate to NEW `roider_full_b5_sweep_diag_multiseed.json` (do NOT overwrite existing) |
+| B9 mapQC | BLOCKED — mapqc 0.1.1 IndexError bug |
+| PR #2 merge to main | after CI decision |
+| B2 Roider-full | pending compute |
 
-## 4. Next session
+## 5. Key files / notes
 
-1. **B5 diagnostic re-aggregation** (after 25149032/33/34 complete):
-   ```bash
-   python .scratch/cytoanvi-benchmark/aggregate_b5_multiseed.py \
-     --out results/roider_full_b5_sweep_multiseed_diag.json \
-     results/roider_full_b5_sweep_s0.json \
-     results/roider_full_b5_sweep_s1.json \
-     results/roider_full_b5_sweep_s2.json
-   ```
-   - Check `cytoanvi_knn_mean_auroc_mean` in the output:
-     - ≈0.77: TTA is the weak link → latent is fine; recommend latent-kNN as the novelty scorer
-     - ≈0.48: CytoANVI latent is itself weaker OOD space → negative stands, strengthened
-   - Update F-013 in FINDINGS_REGISTRY.md with verdict
-   - Update `publication_summary.json` via `aggregate_results.py --manifest`
-   - Also update publication_manifest.json: mark B5 diagnostic artifacts as `complete`
-
-2. **CRITICAL NOTE: The diagnostic jobs overwrite `roider_full_b5_sweep_s{0,1,2}.json`** (same output path). They run ALL ~47 Leiden clusters (not the original 11 most-populous used in `phase3b_b5redesign_roider_s*.slurm` via `--b5-max-holdout-types 11`). Original 11-type seed files are preserved as `roider_full_b5_sweep_s{0,1,2}_11type_orig.json`. Publication result is `roider_full_b5_sweep_multiseed.json` (11-type, status=complete in manifest) — DO NOT overwrite it. Aggregate the diagnostic to a DIFFERENT file: `roider_full_b5_sweep_diag_multiseed.json`.
-
-3. **B9**: Low priority until mapqc releases a fix for the IndexError in `_get_per_cell_filtering_info`.
+- Local test env quirk: a stale site-packages `scvi` shadows `src/scvi`; run fork tests with
+  `PYTHONPATH=src` so `scvi.external.cytovi.scennep` resolves.
+- Never `git add <whole-file>` on this branch without `git diff origin/feat/cytoanvi -- <file>`
+  first — many tracked files carry pre-existing uncommitted diffs.

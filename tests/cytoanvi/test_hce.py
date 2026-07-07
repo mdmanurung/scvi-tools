@@ -279,3 +279,34 @@ def test_hce_numerically_stable_under_bf16():
     h_bf16 = hierarchical_cross_entropy_loss(logits.bfloat16(), leaf_targets, R.bfloat16())
     # bf16 softmax imprecision only — must be far below the old ~0.09 eps distortion
     assert abs(float(h_bf16) - float(ref)) < 5e-3
+
+
+def test_zero_cell_unlabeled_category_moved_to_last():
+    """A declared unlabeled category with ZERO cells must still be the final label code.
+
+    Regression for the scANVI LabelsWithUnlabeledObsField bug: it only moved the unlabeled
+    category to last when cells carried it, so a 0-cell declared unlabeled category (whose name
+    sorts before real labels) was left mid-list — silently making a real class the unlabeled slot
+    and breaking _observed_label_names / set_hierarchy.
+    """
+    import pandas as pd
+
+    adata = make_adata(n_labels=5)  # labels label_0..label_4 (sort after 'AAA_unlabeled')
+    lab = adata.obs[LABELS_KEY].astype(str)
+    real = sorted(lab.unique())
+    # 'AAA_unlabeled' sorts FIRST and carries no cells
+    adata.obs[LABELS_KEY] = pd.Categorical(lab, categories=["AAA_unlabeled", *real])
+
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category="AAA_unlabeled",
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    assert list(model._label_mapping)[-1] == "AAA_unlabeled"
+    observed = model._observed_label_names()
+    assert "AAA_unlabeled" not in observed
+    assert set(observed) == set(real)  # every real label is observed; none dropped

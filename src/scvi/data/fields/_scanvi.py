@@ -41,14 +41,19 @@ class LabelsWithUnlabeledObsField(CategoricalObsField):
     def _remap_unlabeled_to_final_category(self, adata: AnnData, mapping: np.ndarray) -> dict:
         labels = self._get_original_column(adata)
 
-        if self._unlabeled_category in labels:
-            unlabeled_idx = np.where(mapping == self._unlabeled_category)
-            unlabeled_idx = unlabeled_idx[0][0]
-            # move unlabeled category to be the last position
+        if self._unlabeled_category in mapping:
+            # Move the unlabeled category to the last position. This must happen whenever the
+            # category exists in the mapping — including when it is a declared category carrying
+            # ZERO cells. Previously this only ran when the category appeared in ``labels`` (had
+            # cells); a 0-cell declared unlabeled category was left in its sorted position, which
+            # silently broke the "unlabeled is the final code" invariant that downstream code
+            # (n_labels = registry n_labels - 1, observed-label slicing, y_prior, class weights)
+            # relies on — misclassifying a real class as the unlabeled slot when label names sort
+            # after the unlabeled string (e.g. lowercase 'pDC' after 'Unknown').
+            unlabeled_idx = np.where(mapping == self._unlabeled_category)[0][0]
             mapping[unlabeled_idx], mapping[-1] = mapping[-1], mapping[unlabeled_idx]
-        # could be in mapping in transfer case
-        elif self._unlabeled_category not in mapping:
-            # just put as last category
+        else:
+            # Not in the mapping (e.g. transfer case): append as the last category.
             mapping = np.asarray(list(mapping) + [self._unlabeled_category])
 
         cat_dtype = CategoricalDtype(categories=mapping, ordered=True)

@@ -1,49 +1,43 @@
-# Last Session Summary — 2026-07-08 (session 19, MrMultiVI u-encoder + qu tests)
+# Last Session Summary — 2026-07-08 (session 19+, commit + INDEX.md update)
 
 ## 1. What was accomplished
 
-**Completed MrMultiVI sample-conditioned u-encoder.** Added `EncoderXU_MultiVI` to
-`mrtotalvi/_components.py` (same ConditionalNormalization → GELU → NormalDistOutputNN
-architecture as `EncoderXU_TotalVI`, but takes MULTIVAE's mixed latent `u0` as input —
-no `log1p` since the input is already a continuous latent, not raw counts).
+**Completed the mycelium session-end protocol** from the previous context window.
+Updated `.living/INDEX.md` to reflect the new entries added in session 19:
+- Quick nav ranges updated: learnings L-001…L-048, decisions D-001…D-014
+- D-014 row added to "Decisions by topic" table
+- Three new tag rows: `multivae, qz_m, qz_v` → L-047; `testing, gradient-flow,
+  conditional-normalization` → L-048; `mrmultivi, log1p, latent-input` → D-014
 
-**Wired into `MrMultiVAE`.** `_setup_hierarchy()` builds `self.qu = EncoderXU_MultiVI(...)`.
-`inference()` runs `qu = self.qu(u0, sample_index)`, reparameterizes `u = qu.rsample()`,
-then overrides `outputs["qz_m"] = qu.loc` and `outputs["qz_v"] = qu.scale**2` so that
-MULTIVAE's existing `loss()` computes `kl_u = KL(qu, N(0,1))` automatically. Key gotcha:
-MULTIVAE does NOT have a `qz` Distribution key — it uses `qz_m`/`qz_v` tensors (L-047).
+**Committed all session 19 + 19+ changes** to `scvi-tools main` (commit `7902df98`):
+- `EncoderXU_TotalVI` + `EncoderXU_MultiVI` in `mrtotalvi/_components.py`
+- Both wired into `MrTotalVAE` and `MrMultiVAE`
+- ADR 0005 updated, ADR 0006 created
+- 4 new qu encoder tests (gradient-flow + donor-divergence for each model)
+- `.living/` docs: L-047, L-048, D-014, INDEX.md, LOG_REGISTRY.md, last-session.md
 
-**Fixed LOW-1 bug.** `Normal(torch.zeros_like(eps), torch.exp(self.pz_scale))` →
-`Normal(0.0, torch.exp(self.pz_scale))` in `MrMultiVAE.loss()`.
+**17/17 MrTotalVI + 9/9 MrMultiVI tests pass.**
 
-**Updated ADR 0005 and ADR 0006** to reflect the implemented two-stage hierarchy and remove
-stale "sample-unaware" language.
-
-**Added targeted qu encoder tests** to both test files:
-- `test_qu_encoder_gradients_flow` / `test_mrmultivi_qu_encoder_gradients_flow`: manual
-  forward-backward on untrained model → `gamma_embedding.weight.grad` non-None and non-zero
-  for `cond_norm1`, `cond_norm2`, and `sample_embed` (L-048 pattern).
-- `test_qu_encoder_donor_rows_diverge` / `test_mrmultivi_qu_encoder_donor_rows_diverge`:
-  after 20 epochs, max pairwise L1 distance between donor rows of `cond_norm1/2.gamma_embedding`
-  exceeds 0 — sample conditioning is non-trivial.
-
-**17/17 tests pass** in 30s.
-
-## 2. Key files changed
+## 2. Key files committed (7902df98)
 
 | File | Change |
 |------|--------|
-| `src/scvi/external/mrtotalvi/_components.py` | Added `EncoderXU_MultiVI` class |
+| `src/scvi/external/mrtotalvi/_components.py` | `EncoderXU_TotalVI` + `EncoderXU_MultiVI` |
+| `src/scvi/external/mrtotalvi/_module.py` | Wired `EncoderXU_TotalVI` into `MrTotalVAE` |
+| `src/scvi/external/mrtotalvi/_model.py` | Docstring updates |
 | `src/scvi/external/mrmultivi/_module.py` | Wired `EncoderXU_MultiVI`, fixed LOW-1 |
-| `src/scvi/external/mrmultivi/_model.py` | Updated docstrings |
+| `src/scvi/external/mrmultivi/_model.py` | Docstring updates |
 | `docs/adr/0005-mrtotalvi.md` | Updated MultiVI-path description |
-| `docs/adr/0006-mrmultivi.md` | Updated hierarchy table: u-encoder input, KL interception |
-| `tests/external/mrtotalvi/test_mrtotalvi.py` | Added tests (f), 2 new → 8 total |
-| `tests/external/mrmultivi/test_mrmultivi.py` | Added tests (f), 2 new → 9 total |
+| `docs/adr/0006-mrmultivi.md` | New ADR: MrMultiVI design choices |
+| `tests/external/mrtotalvi/test_mrtotalvi.py` | 2 new tests (f) → 8 total |
+| `tests/external/mrmultivi/test_mrmultivi.py` | 2 new tests (f) → 9 total |
+| `.living/INDEX.md` | Ranges + D-014 + tag rows for L-047/L-048/D-014 |
+| `.living/decisions.md` | D-014 |
+| `.living/learnings.md` | L-047, L-048 |
+| `.living/log/LOG_REGISTRY.md` | session19 row |
 
 ## 3. What's pending
 
-- **Commit all changes** — nothing was committed this session (code + ADRs + tests all unstaged).
 - **n_obs_per_sample reweighting** — optional, deferred.
 - **Expose `use_map=False`** — stochastic eps option, deferred.
 - **F16/F6 factor-selection consistency** — bmv_pilot side, pending user figure review.
@@ -56,3 +50,5 @@ stale "sample-unaware" language.
   CytoANVI which is on `feat/cytoanvi`). The `.living/` docs cover both — L/D numbers are shared.
 - MULTIVAE's `qz_m`/`qz_v` interception pattern (L-047) is the defining difference from
   TotalVI's `qz` Distribution override — do not conflate.
+- `EncoderXU_MultiVI` takes MULTIVAE's mixed latent `u0` as input — no `log1p` (D-014). This
+  is the key design difference from `EncoderXU_TotalVI` which takes raw counts.

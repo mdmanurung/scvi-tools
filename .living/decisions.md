@@ -117,3 +117,10 @@ Record non-obvious choices made during development. One entry per decision. Refe
 **Decision**: DEFER public/PyPI packaging. Keep the standalone dual-package wheel for research/internal/HPC use, installed alone in a clean environment. Document the "install from source, do not co-install with scvi-tools, not on PyPI" constraint in README + installation docs. Revisit the Replace-vs-Coexist-vs-upstream-PR decision before any PyPI upload.
 **Consequences**: `pip install cytoanvi` from PyPI is intentionally NOT offered; docs use `pip install .` from a checkout. The dual-package collision is acceptable under the clean-env constraint. Version 1.5.0rc1 (inherited from scvi-tools) is left as-is until a real release.
 **Status**: active
+
+### D-014 — [2026-07-08] MrMultiVI: EncoderXU_MultiVI takes MULTIVAE mixed latent u0 (no log1p)
+**Source**: MrMultiVI implementation session (this session)
+**Context**: EncoderXU_TotalVI takes raw RNA+protein counts concatenated and applies `log1p` before the first linear layer. MrMultiVI's equivalent encoder needs a different input because MULTIVAE's output is already a continuous latent `z` (the mixed multimodal embedding from `mix_modalities`), not raw counts.
+**Decision**: `EncoderXU_MultiVI.forward(u0, sample_covariate)` takes `u0 = MULTIVAE's inference["z"]` directly with NO `log1p` preprocessing. The same ConditionalNormalization → GELU → NormalDistOutputNN architecture is used, but the input semantics differ. Do not add log1p to this path — it would distort negative latent values (log1p of negative = NaN or bad gradients) and is meaningless for a latent representation.
+**Consequences**: `EncoderXU_TotalVI` and `EncoderXU_MultiVI` share architectural structure (both live in `mrtotalvi/_components.py`) but differ in input preprocessing. Future MultiVI-style models (ATAC-only, etc.) should follow the same pattern: no log1p when input is a latent, log1p when input is raw counts.
+**Status**: active

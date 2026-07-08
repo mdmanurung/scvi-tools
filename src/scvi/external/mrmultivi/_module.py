@@ -10,16 +10,22 @@ from scvi import REGISTRY_KEYS
 from scvi.module._multivae import MULTIVAE
 from scvi.module.base import LossOutput, auto_move_data
 
-from ..mrtotalvi._components import EncoderUZ
+from ..mrtotalvi._components import EncoderUZ, EncoderXU_MultiVI
 
 
 class MrMultiVAE(MULTIVAE):
     """MULTIVAE with an MrVI-style u→z hierarchical latent space.
 
-    Grafts MrVI's per-sample attention residual onto MULTIVAE.  After the
-    modality encoders produce a mixed ``u`` via ``mix_modalities``, a donor-
-    specific residual ``eps`` is computed by attending over a per-donor
-    embedding table via :class:`~scvi.external.mrtotalvi._components.EncoderUZ`:
+    Grafts MrVI's hierarchical design onto MULTIVAE.  A sample-conditioned
+    u-encoder (:class:`~scvi.external.mrtotalvi._components.EncoderXU_MultiVI`)
+    maps MULTIVAE's mixed latent through donor-conditioned normalization layers,
+    then a donor-specific residual ``eps`` is computed by attending over a
+    per-donor embedding table via
+    :class:`~scvi.external.mrtotalvi._components.EncoderUZ`:
+
+    .. math::
+        u \\sim q_u(u_0,\\, d)
+        \\quad\\text{(sample-conditioned, where } u_0 \\text{ is MULTIVAE's mixed latent)}
 
     .. math::
         z = z_{\\text{base}}(u) + \\varepsilon,\\quad
@@ -30,7 +36,8 @@ class MrMultiVAE(MULTIVAE):
 
     Two-level KL loss:
 
-    * ``kl_u = KL(q_u \\| N(0,1))`` — MULTIVAE's existing ``kl_divergence_z`` (unchanged).
+    * ``kl_u = KL(q_u \\| N(0,1))`` — from the sample-conditioned u-encoder
+      (replaces MULTIVAE's ``kl_divergence_z`` via ``qz_m``/``qz_v`` override).
     * ``kl_z = -\\log p(\\varepsilon)`` — new term added here.
 
     Parameters
@@ -112,6 +119,13 @@ class MrMultiVAE(MULTIVAE):
 
         self._n_sample = n_sample
 
+        # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, takes MULTIVAE mixed latent
+        self.qu = EncoderXU_MultiVI(
+            n_input=self.n_latent,
+            n_latent=self.n_latent,
+            n_sample=n_sample,
+        )
+
         # Isomorphic dims (n_latent_u=None) → z_base = u, decoder input unchanged
         self.qz = EncoderUZ(
             n_latent=self.n_latent,
@@ -162,28 +176,31 @@ class MrMultiVAE(MULTIVAE):
     ) -> dict[str, torch.Tensor]:
         """Compute inference quantities with the hierarchical u→z decomposition.
 
-        Calls MULTIVAE's ``inference`` to obtain the sample-unaware mixed
-        base ``u``, then applies :class:`~.EncoderUZ` to decompose it into a
-        sample-aware ``z``:
+        Calls MULTIVAE's ``inference`` to obtain the mixed base ``u0``, then
+        runs the sample-conditioned u-encoder and the attention residual block:
 
         .. code-block::
 
-            u = mix_modalities(rna_enc(x), atac_enc(x), ...)  # MULTIVAE, unchanged
-            z_base, eps = qz(u, sample)                        # attention over per-sample embed
-            z = z_base + eps                                   # → decoder input
+            u0  = mix_modalities(rna_enc(x), atac_enc(x), ...)  # MULTIVAE, unchanged
+            qu  = EncoderXU_MultiVI(u0, real_sample)             # sample-conditioned Normal
+            u   = qu.rsample()                                   # (batch, n_latent)
+            z_base, eps = qz(u, cf_sample)                       # attention over per-sample embed
+            z   = z_base + eps                                   # → decoder input
 
-        The returned dict replaces ``"z"`` with the hierarchical latent and
-        adds ``"u"``, ``"z_base"``, and ``"eps"`` for the loss and
-        counterfactual utilities.
+        ``qz_m`` and ``qz_v`` are replaced with ``qu.loc`` and ``qu.scale**2``
+        so that MULTIVAE's ``loss()`` computes ``kl_u = KL(qu, N(0,1))``
+        automatically.  Our ``loss()`` override then adds
+        ``kl_z = -log p(eps)``.
 
         Parameters
         ----------
         sample_index
             Integer donor index, shape ``(batch, 1)`` or ``(batch,)``.
-            Injected automatically by :meth:`_get_inference_input`.
+            Always the **real** donor (used by ``qu``).
         cf_sample
-            Counterfactual donor override.  If not ``None``, replaces
-            ``sample_index`` in the EncoderUZ forward pass.
+            Counterfactual donor override for ``eps`` only.  If not ``None``,
+            replaces ``sample_index`` in the :class:`~.EncoderUZ` forward pass.
+            ``qu`` always conditions on the real donor.
         """
         outputs = super().inference(
             x, y, batch_index, cont_covs, cat_covs, label, cell_idx, size_factor, n_samples
@@ -193,10 +210,18 @@ class MrMultiVAE(MULTIVAE):
             # Hierarchy not yet built (n_sample=0 placeholder).
             return outputs
 
-        # u: the mixed sample-unaware base; shape (batch, n_latent)
-        # MULTIVAE z is always (batch, n_latent) even when n_samples > 1
-        u = outputs["z"]
+        # u0: MULTIVAE's mixed base latent — input to the sample-conditioned encoder
+        u0 = outputs["z"]  # (batch, n_latent)
 
+        # Sample-conditioned u-encoder: qu(u0, real_sample) → Normal(mu_u, sigma_u)
+        qu = self.qu(u0, sample_index)
+        u = qu.rsample()  # (batch, n_latent)
+
+        # Replace qz_m / qz_v so MULTIVAE's loss computes KL(qu, N(0,1)) as kl_u
+        outputs["qz_m"] = qu.loc
+        outputs["qz_v"] = qu.scale ** 2
+
+        # eps residual: cf_sample enables counterfactual donor substitution
         sample_index_cf = sample_index if cf_sample is None else cf_sample
         if sample_index_cf is None:
             raise ValueError(
@@ -245,7 +270,7 @@ class MrMultiVAE(MULTIVAE):
             return loss_out
 
         eps = inference_outputs["eps"]
-        peps = Normal(torch.zeros_like(eps), torch.exp(self.pz_scale))
+        peps = Normal(0.0, torch.exp(self.pz_scale))
         # kl_z: (batch, n_latent) → (batch,); or (n_samples, batch) → (batch,)
         kl_z = -peps.log_prob(eps).sum(dim=-1)
         assert kl_z.ndim == 1, f"Expected 1D kl_z; got shape {kl_z.shape}"

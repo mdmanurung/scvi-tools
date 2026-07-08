@@ -11,11 +11,12 @@ latent `z`. Donor/sample identity is injected only as a nuisance covariate (batc
 as a modeled axis. This means TotalVI cannot ask "what would cell *i* look like in donor *d*?" — a
 capability MrVI provides for single-modality RNA.
 
-MrVI's approach: decompose the latent space into a sample-*unaware* `u` (the encoder output) and a
-sample-*aware* `z = z_base(u) + eps`, where `eps` is computed by attending over a per-sample
-embedding table via `EncoderUZ`. This additive hierarchy is the load-bearing design: because `u` and
-`z` live in the same Euclidean space, the decoder is unchanged, and counterfactual donor queries
-reduce to substituting a different donor index into the attention block.
+MrVI's approach: decompose the latent space into a sample-*conditioned* `u` (from a dedicated
+`EncoderXU` that applies per-sample normalization) and a sample-*aware* residual
+`z = z_base(u) + eps`, where `eps` is computed by attending over a per-sample embedding table via
+`EncoderUZ`. This additive hierarchy is the load-bearing design: because `u` and `z` live in the
+same Euclidean space, the decoder is unchanged, and counterfactual donor queries reduce to
+substituting a different donor index into the attention block.
 
 ## Decision
 
@@ -23,11 +24,12 @@ Graft MrVI's `u→z` hierarchy onto TotalVI as `MrTotalVI` (placed in `scvi.exte
 
 ### Key design choices
 
-**TotalVI's encoder output becomes `u` verbatim.**
-Unlike MrVI, which has a dedicated `EncoderXU` conditioned on sample, `MrTotalVI` uses TotalVI's
-existing `EncoderTOTALVI` without modification. All sample-specific signal is isolated in `eps`. This
-is a conscious choice (not a porting bug): the u-encoder is deliberately sample-unaware so the
-sample axis lives entirely in the residual.
+**Sample-conditioned u-encoder (`EncoderXU_TotalVI`) — matches MrVI's `EncoderXU`.**
+`MrTotalVI` ports MrVI's sample-conditioned encoder to accept concatenated RNA + protein counts.
+Architecture: `log1p([x_rna, x_prot]) → fc1 → ConditionalNormalization(sample) → act → fc2 →
+ConditionalNormalization(sample) → act → (+sample_embed) → NormalDistOutputNN → Normal(mu_u, σ_u)`.
+Sample identity is woven into `u` itself via per-donor `gamma`/`beta` embeddings — not just the
+`eps` residual. This means the two-level hierarchy carries sample information at both levels.
 
 **Isomorphic dims (`n_latent_u == n_latent`).**
 `EncoderUZ.fc is None` and `z_base == u`. This means the decoder input dimension is identical to
@@ -44,8 +46,9 @@ Emits one deterministic `eps` per (u, sample) pair. The correct KL term is then
 loss formulation.
 
 **Two-level KL loss.**
-- `kl_u = KL(q_u ‖ N(0,1))` — TotalVI's existing `kl_div_z` line, unchanged.
-- `kl_z = −log p(eps)` — new second-level term.
+- `kl_u = KL(qu ‖ N(0,1))` — from `EncoderXU_TotalVI`; replaces TotalVI's `kl_div_z` by overriding
+  `inference_outputs["qz"]` with `qu` so TotalVI's `loss()` computes it automatically.
+- `kl_z = −log p(eps)` — new second-level term for the donor residual.
 - Both fold into the existing `kl_local["kl_div_z"]` slot for compatibility with the training loop.
 
 **Three categorical axes kept distinct.**
@@ -75,10 +78,10 @@ which follows the same pattern.
 - **u prior = `N(0,1)` (MoG/label-conditioned deferred)** — MrVI supports a mixture-of-Gaussians
   prior conditioned on cell type labels; this is not ported in v1.
 
-### MultiVI path (future)
-`EncoderUZ` is factored into `mrtotalvi/_components.py` (not `_module.py`) so MultiVI can reuse
-it. The insertion point for MultiVI is after `mix_modalities` in `_multivae.py`, where the mixed
-`qz_m` becomes `u`.
+### MultiVI path (implemented)
+`EncoderUZ`, `ConditionalNormalization`, and `NormalDistOutputNN` are factored into
+`mrtotalvi/_components.py` so MultiVI can reuse them. `EncoderXU_MultiVI` (no `log1p`, single
+latent input) is grafted into `MrMultiVAE` at the same level — see ADR-0006.
 
 ## Consequences
 

@@ -12,10 +12,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Literal
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.distributions import Normal
 from torch.nn import init
 
 from scvi.module.base import auto_move_data
@@ -146,6 +148,300 @@ class MLP(nn.Module):
         """Forward pass."""
         h = self.resnet_blocks(inputs)
         return self.fc(h)
+
+
+class NormalDistOutputNN(nn.Module):
+    """Fully-connected neural net parameterizing a normal distribution.
+
+    Applies ``n_layers`` :class:`~ResnetBlock` blocks followed by separate
+    ``fc_mean`` and ``fc_scale`` (Softplus) heads.  Ported verbatim from
+    :class:`scvi.external.mrvi_torch._components.NormalDistOutputNN`.
+
+    Parameters
+    ----------
+    n_in
+        Number of input units.
+    n_out
+        Number of output units.
+    n_hidden
+        Number of hidden units.
+    n_layers
+        Number of resnet blocks.
+    scale_eps
+        Numerical stability constant added to the scale.
+    """
+
+    def __init__(
+        self,
+        n_in: int,
+        n_out: int,
+        n_hidden: int = 128,
+        n_layers: int = 1,
+        scale_eps: float = 1e-5,
+    ):
+        super().__init__()
+        self.scale_eps = scale_eps
+
+        self.resnet_blocks = nn.ModuleList()
+        for i in range(n_layers):
+            block_n_in = n_in if i == 0 else n_hidden
+            self.resnet_blocks.append(ResnetBlock(n_in=block_n_in, n_out=n_hidden))
+
+        self.fc_mean = Dense(in_features=n_hidden, out_features=n_out)
+        self.fc_scale = nn.Sequential(
+            Dense(in_features=n_hidden, out_features=n_out),
+            nn.Softplus(),
+        )
+
+    @auto_move_data
+    def forward(self, inputs: torch.Tensor) -> Normal:
+        """Forward pass — returns ``Normal(mean, scale + scale_eps)``."""
+        h = inputs
+        for block in self.resnet_blocks:
+            h = block(h)
+        mean = self.fc_mean(h)
+        scale = self.fc_scale(h)
+        return Normal(mean, scale + self.scale_eps)
+
+
+class ConditionalNormalization(nn.Module):
+    """Condition-specific normalization.
+
+    Applies layer (or batch) normalization followed by condition-specific
+    scaling (``gamma``) and shifting (``beta``) from learnable embedding tables.
+    Ported verbatim from
+    :class:`scvi.external.mrvi_torch._components.ConditionalNormalization`.
+
+    Parameters
+    ----------
+    n_features
+        Number of features.
+    n_conditions
+        Number of conditions (e.g. number of donors).
+    normalization_type
+        ``"layer"`` (default) or ``"batch"``.
+    """
+
+    def __init__(
+        self,
+        n_features: int,
+        n_conditions: int,
+        normalization_type: Literal["batch", "layer"] = "layer",
+    ):
+        super().__init__()
+        self.normalization_type = normalization_type
+
+        self.gamma_embedding = nn.Embedding(n_conditions, n_features)
+        self.beta_embedding = nn.Embedding(n_conditions, n_features)
+        nn.init.normal_(self.gamma_embedding.weight, mean=1.0, std=0.02)
+        nn.init.zeros_(self.beta_embedding.weight)
+
+        if normalization_type == "batch":
+            self.norm_layer = nn.BatchNorm1d(n_features, affine=False, track_running_stats=True)
+        elif normalization_type == "layer":
+            self.norm_layer = nn.LayerNorm(n_features, elementwise_affine=False, eps=1e-6)
+        else:
+            raise ValueError("`normalization_type` must be one of ['batch', 'layer'].")
+
+    @auto_move_data
+    def forward(
+        self,
+        x: torch.Tensor,
+        condition: torch.Tensor,
+        training: bool | None = None,
+    ) -> torch.Tensor:
+        """Forward pass."""
+        if self.normalization_type == "batch" and training is not None:
+            self.train() if training else self.eval()
+        x = self.norm_layer(x)
+        cond_int = condition.squeeze(-1).to(torch.int64)
+        gamma = self.gamma_embedding(cond_int)
+        beta = self.beta_embedding(cond_int)
+        return gamma * x + beta
+
+
+class EncoderXU_TotalVI(nn.Module):
+    """Sample-conditioned u-encoder for TotalVI (RNA + protein).
+
+    Mirrors MrVI's ``EncoderXU`` but accepts concatenated gene and protein
+    count matrices as input.  Each hidden layer is conditioned on donor
+    identity via :class:`~ConditionalNormalization`, so sample information
+    is woven into the base representation ``u`` itself — not just the ``eps``
+    residual.
+
+    Architecture (matching MrVI's EncoderXU):
+
+    .. code-block::
+
+        x = log1p(concat([x_rna, x_protein]))
+        x = fc1(x)
+        x = ConditionalNorm1(x, sample) → activation
+        x = fc2(x)
+        x = ConditionalNorm2(x, sample) → activation
+        u ~ NormalDistOutputNN(x + sample_embed[sample])
+
+    Parameters
+    ----------
+    n_input_genes
+        Number of input genes.
+    n_input_proteins
+        Number of input proteins.
+    n_latent
+        Dimensionality of the output latent space.
+    n_sample
+        Number of donors/samples.
+    n_hidden
+        Number of hidden units in each linear layer.
+    n_layers
+        Number of resnet blocks in :class:`~NormalDistOutputNN`.
+    activation
+        Activation function applied after each :class:`~ConditionalNormalization`.
+    """
+
+    def __init__(
+        self,
+        n_input_genes: int,
+        n_input_proteins: int,
+        n_latent: int,
+        n_sample: int,
+        n_hidden: int = 128,
+        n_layers: int = 1,
+        activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
+    ):
+        super().__init__()
+        self.activation = activation
+        n_input = n_input_genes + n_input_proteins
+
+        self.fc1 = nn.Linear(n_input, n_hidden)
+        self.cond_norm1 = ConditionalNormalization(n_hidden, n_sample)
+        self.fc2 = nn.Linear(n_hidden, n_hidden)
+        self.cond_norm2 = ConditionalNormalization(n_hidden, n_sample)
+
+        self.sample_embed = nn.Embedding(n_sample, n_hidden)
+        init.normal_(self.sample_embed.weight, std=0.1)
+
+        self.output_nn = NormalDistOutputNN(n_hidden, n_latent, n_hidden, n_layers)
+
+    @auto_move_data
+    def forward(
+        self,
+        x_rna: torch.Tensor,
+        x_protein: torch.Tensor,
+        sample_covariate: torch.Tensor,
+    ) -> Normal:
+        """Compute the sample-conditioned u distribution.
+
+        Parameters
+        ----------
+        x_rna
+            Raw gene count matrix, shape ``(batch, n_input_genes)``.
+        x_protein
+            Raw protein count matrix, shape ``(batch, n_input_proteins)``.
+        sample_covariate
+            Integer donor index, shape ``(batch,)`` or ``(batch, 1)``.
+
+        Returns
+        -------
+        :class:`~torch.distributions.Normal`
+            Distribution over ``u`` with parameters of shape
+            ``(batch, n_latent)``.
+        """
+        x = torch.log1p(torch.cat([x_rna, x_protein], dim=-1))
+        x = self.fc1(x)
+        x = self.cond_norm1(x, sample_covariate)
+        x = self.activation(x)
+        x = self.fc2(x)
+        x = self.cond_norm2(x, sample_covariate)
+        x = self.activation(x)
+        sample_effect = self.sample_embed(sample_covariate.squeeze(-1).to(torch.int64))
+        return self.output_nn(x + sample_effect)
+
+
+class EncoderXU_MultiVI(nn.Module):
+    """Sample-conditioned u-encoder for MultiVI (multimodal latent input).
+
+    Mirrors MrVI's ``EncoderXU`` but accepts the mixed multimodal latent from
+    MULTIVAE's ``mix_modalities`` step rather than raw count data.  Since the
+    input is already a continuous latent vector, no ``log1p`` is applied.
+    Each hidden layer is conditioned on donor identity via
+    :class:`~ConditionalNormalization`.
+
+    Architecture:
+
+    .. code-block::
+
+        x = fc1(u0)              # u0: MULTIVAE mixed latent
+        x = ConditionalNorm1(x, sample) → activation
+        x = fc2(x)
+        x = ConditionalNorm2(x, sample) → activation
+        u ~ NormalDistOutputNN(x + sample_embed[sample])
+
+    Parameters
+    ----------
+    n_input
+        Dimensionality of the MULTIVAE mixed latent (= n_latent).
+    n_latent
+        Dimensionality of the output latent space.
+    n_sample
+        Number of donors/samples.
+    n_hidden
+        Number of hidden units in each linear layer.
+    n_layers
+        Number of resnet blocks in :class:`~NormalDistOutputNN`.
+    activation
+        Activation function applied after each :class:`~ConditionalNormalization`.
+    """
+
+    def __init__(
+        self,
+        n_input: int,
+        n_latent: int,
+        n_sample: int,
+        n_hidden: int = 128,
+        n_layers: int = 1,
+        activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
+    ):
+        super().__init__()
+        self.activation = activation
+
+        self.fc1 = nn.Linear(n_input, n_hidden)
+        self.cond_norm1 = ConditionalNormalization(n_hidden, n_sample)
+        self.fc2 = nn.Linear(n_hidden, n_hidden)
+        self.cond_norm2 = ConditionalNormalization(n_hidden, n_sample)
+
+        self.sample_embed = nn.Embedding(n_sample, n_hidden)
+        init.normal_(self.sample_embed.weight, std=0.1)
+
+        self.output_nn = NormalDistOutputNN(n_hidden, n_latent, n_hidden, n_layers)
+
+    @auto_move_data
+    def forward(
+        self,
+        u0: torch.Tensor,
+        sample_covariate: torch.Tensor,
+    ) -> Normal:
+        """Compute the sample-conditioned u distribution.
+
+        Parameters
+        ----------
+        u0
+            MULTIVAE mixed latent, shape ``(batch, n_input)``.
+        sample_covariate
+            Integer donor index, shape ``(batch,)`` or ``(batch, 1)``.
+
+        Returns
+        -------
+        :class:`~torch.distributions.Normal`
+            Distribution over ``u`` with parameters of shape ``(batch, n_latent)``.
+        """
+        x = self.fc1(u0)
+        x = self.cond_norm1(x, sample_covariate)
+        x = self.activation(x)
+        x = self.fc2(x)
+        x = self.cond_norm2(x, sample_covariate)
+        x = self.activation(x)
+        sample_effect = self.sample_embed(sample_covariate.squeeze(-1).to(torch.int64))
+        return self.output_nn(x + sample_effect)
 
 
 class AttentionBlock(nn.Module):

@@ -11,20 +11,26 @@ from scvi.module._constants import MODULE_KEYS
 from scvi.module._totalvae import TOTALVAE
 from scvi.module.base import LossOutput, auto_move_data
 
-from ._components import EncoderUZ
+from ._components import EncoderUZ, EncoderXU_TotalVI
 
 
 class MrTotalVAE(TOTALVAE):
     """TotalVI VAE with an MrVI-style u→z hierarchical latent space.
 
-    Grafts MrVI's per-sample attention residual onto TotalVI.  The
-    stock TotalVI encoder output becomes the sample-*unaware* base ``u``;
-    a donor-specific residual ``eps`` is computed by attending over a
-    per-sample embedding table via :class:`~.EncoderUZ`, giving:
+    Grafts MrVI's hierarchical design onto TotalVI as faithfully as the
+    multimodal input allows.  A sample-conditioned u-encoder
+    (:class:`~.EncoderXU_TotalVI`) replaces TotalVI's stock encoder for the
+    base representation ``u``; a donor-specific residual ``eps`` is computed
+    by attending over a per-sample embedding table via :class:`~.EncoderUZ`,
+    giving:
+
+    .. math::
+        u \\sim q_u(x_{\\text{rna}},\\, x_{\\text{prot}},\\, d)
+        \\quad\\text{(sample-conditioned)}
 
     .. math::
         z = z_{\\text{base}}(u) + \\varepsilon,\\quad
-        \\varepsilon \\sim \\text{AttentionBlock}(u,\\; e_{\\text{sample}})
+        \\varepsilon \\sim \\text{AttentionBlock}(u,\\; e_d)
 
     Because ``n_latent_u`` is left at its default (isomorphic), ``z_base = u``
     and the decoder input dimension is identical to stock TotalVI — no decoder
@@ -32,8 +38,8 @@ class MrTotalVAE(TOTALVAE):
 
     Two-level KL loss:
 
-    * ``kl_u = KL(q_u \\| N(0,1))`` — TotalVI's existing term (unchanged).
-    * ``kl_z = -\\log p(\\varepsilon) = -\\log N(0, \\exp(\\text{pz\\_scale}))`` — new term.
+    * ``kl_u = KL(q_u \\| N(0,1))`` — from the sample-conditioned u-encoder.
+    * ``kl_z = -\\log p(\\varepsilon) = -\\log N(0, \\exp(\\text{pz\\_scale}))`` — eps residual.
 
     Parameters
     ----------
@@ -123,6 +129,14 @@ class MrTotalVAE(TOTALVAE):
 
         self._n_sample = n_sample
 
+        # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, multimodal input
+        self.qu = EncoderXU_TotalVI(
+            n_input_genes=self.n_input_genes,
+            n_input_proteins=self.n_input_proteins,
+            n_latent=self.n_latent,
+            n_sample=n_sample,
+        )
+
         # Isomorphic dims (n_latent_u=None) → z_base = u, decoder unchanged
         self.qz = EncoderUZ(
             n_latent=self.n_latent,
@@ -178,30 +192,34 @@ class MrTotalVAE(TOTALVAE):
     ) -> dict[str, torch.Tensor | dict]:
         """Compute inference quantities with the hierarchical u→z decomposition.
 
-        Calls TotalVI's ``_regular_inference`` to obtain the sample-unaware
-        base ``u`` (TotalVI's ``z``), then applies :class:`~.EncoderUZ` to
-        decompose it into a sample-aware ``z``:
+        Calls TotalVI's ``_regular_inference`` to obtain library size, protein
+        background priors, and dispersion parameters (all of which are parallel
+        to ``z`` and require no ``z`` dependency), then runs the sample-conditioned
+        u-encoder to replace TotalVI's ``qz`` and ``z``:
 
         .. code-block::
 
-            u = EncoderTOTALVI(x, y)          # TotalVI encoder, unchanged
-            z_base, eps = qz(u, sample)        # attention over per-sample embed
-            z = z_base + eps                   # → decoder input
+            qu = EncoderXU_TotalVI(x, y, real_sample)  # sample-conditioned Normal
+            u  = qu.rsample()                           # (batch, n_latent) or (mc, batch, n_latent)
+            z_base, eps = qz(u, cf_sample)              # attention over per-sample embed
+            z  = z_base + eps                           # → decoder input
 
-        The returned dict replaces ``Z_KEY`` with ``z`` and adds ``"u"``,
-        ``"z_base"``, and ``"eps"`` for the loss and counterfactual utilities.
+        ``QZ_KEY`` in the returned dict is replaced with ``qu`` so that
+        TotalVI's ``loss()`` computes ``kl_u = KL(qu, N(0,1))`` automatically.
+        Our ``loss()`` override then adds ``kl_z = -log p(eps)``.
 
         Parameters
         ----------
         sample_index
             Integer donor index, shape ``(batch, 1)`` or ``(batch,)``.
-            Injected automatically by :meth:`_get_inference_input`.
+            Used by ``qu``; always the **real** donor (never counterfactual).
         cf_sample
-            Counterfactual donor override.  If not ``None``, replaces
-            ``sample_index`` in the EncoderUZ forward pass.  Used by
-            :meth:`~MrTotalVI.compute_local_statistics`.
+            Counterfactual donor override for ``eps`` only.  If not ``None``,
+            replaces ``sample_index`` in the :class:`~.EncoderUZ` forward pass.
+            ``qu`` always uses ``sample_index`` (real donor).
         """
-        # TotalVI encoder → u (sample-unaware Gaussian sample)
+        # TotalVI encoder pass — we keep ql, library_gene, back_mean_prior, dispersions.
+        # Its qz and z are discarded and replaced below.
         out = super()._regular_inference(
             x, y,
             batch_index=batch_index,
@@ -216,9 +234,17 @@ class MrTotalVAE(TOTALVAE):
             # Hierarchy not yet built (n_sample=0 placeholder). Return TotalVI outputs.
             return out
 
-        # u: shape (batch, n_latent) or (n_samples, batch, n_latent)
-        u = out[MODULE_KEYS.Z_KEY]
+        # Sample-conditioned u-encoder: uses real sample_index (not cf_sample)
+        qu = self.qu(x, y, sample_index)  # Normal: params (batch, n_latent)
+        if n_samples > 1:
+            u = qu.rsample((n_samples,))  # (n_samples, batch, n_latent)
+        else:
+            u = qu.rsample()  # (batch, n_latent)
 
+        # Replace TotalVI's qz with qu so base loss computes KL(qu, N(0,1)) as kl_u
+        out[MODULE_KEYS.QZ_KEY] = qu
+
+        # eps residual: cf_sample enables counterfactual donor substitution
         sample_index_cf = sample_index if cf_sample is None else cf_sample
         z_base, eps = self.qz(u, sample_index_cf)
         z = z_base + eps

@@ -1,69 +1,58 @@
-# Last Session Summary — 2026-07-06 (session 18, CI fixes + full working-tree reconciliation)
+# Last Session Summary — 2026-07-08 (session 19, MrMultiVI u-encoder + qu tests)
 
 ## 1. What was accomplished
 
-**Root-caused and fixed a CI-collection regression I had introduced.** Commit `4dafbd98`
-(prior session) ran `git add tests/cytoanvi/test_cytoanvi.py`, which staged a working-tree
-refactor that imports shared helpers from `conftest` — without committing the working-tree
-`conftest.py` that defines them. Result: the whole cytoanvi suite failed to *collect* on CI
-(`ImportError: cannot import name 'BATCH_KEY'`). Fixed by committing the 78-line additive
-conftest helpers (`1c6da372`).
+**Completed MrMultiVI sample-conditioned u-encoder.** Added `EncoderXU_MultiVI` to
+`mrtotalvi/_components.py` (same ConditionalNormalization → GELU → NormalDistOutputNN
+architecture as `EncoderXU_TotalVI`, but takes MULTIVAE's mixed latent `u0` as input —
+no `log1p` since the input is already a continuous latent, not raw counts).
 
-**Discovered the big gap:** ~190 files of finished work existed only in the working tree,
-never committed/merged. `main` (PR #1 merged at `958836df`) is missing it. The readiness
-review had partly reflected the working tree, overstating main's completeness. See memory
-`working-tree-vs-main-gap`.
+**Wired into `MrMultiVAE`.** `_setup_hierarchy()` builds `self.qu = EncoderXU_MultiVI(...)`.
+`inference()` runs `qu = self.qu(u0, sample_index)`, reparameterizes `u = qu.rsample()`,
+then overrides `outputs["qz_m"] = qu.loc` and `outputs["qz_v"] = qu.scale**2` so that
+MULTIVAE's existing `loss()` computes `kl_u = KL(qu, N(0,1))` automatically. Key gotcha:
+MULTIVAE does NOT have a `qz` Distribution key — it uses `qz_m`/`qz_v` tensors (L-047).
 
-**Full reconciliation (user-approved).** Committed the uncommitted code/test/docs to
-`feat/cytoanvi` in reviewed batches, verified locally:
-- `1c6da372` conftest helpers (CI fix)
-- `2f48afa1` publication hygiene (release.yml de-scverse + PyPI/Docker jobs disabled; honest
-  benchmark table in user guide; B1 Roider README row; CLAUDE.md status; `scvi-tools[cytoanvi-*]`
-  → `cytoanvi[...]` install strings)
-- `464c2d4a` benchmark code (B5 latent-OOD diagnostic: `knn_distance_novelty`, `cytoanvi_knn_baseline`)
-- `539fa128` test suite (conftest-refactored tests, `test_public_api.py`, 3 new benchmark tests)
-- `6ae5d124` docs (ADR-0004, manifests, reproducibility, notes, analysis)
+**Fixed LOW-1 bug.** `Normal(torch.zeros_like(eps), torch.exp(self.pz_scale))` →
+`Normal(0.0, torch.exp(self.pz_scale))` in `MrMultiVAE.loss()`.
 
-**Deliberately NOT committed:** reference PDFs (`cscanvi-paper.pdf`, `cytovi.pdf`),
-`_test/aurora_6h/` scratch experiment, `skillpacks/`, `.scratch/**` — all sdist-excluded scratch.
+**Updated ADR 0005 and ADR 0006** to reflect the implemented two-stage hierarchy and remove
+stale "sample-unaware" language.
 
-**Local verification:** `tests/cytoanvi` 111 passed / 2 skipped; `tests/benchmarks` 45 passed
-(scib failures are a local missing `scib_metrics` dep, installed on CI); scennep 8 passed;
-`cytoanvi.__version__` = 0.1.0; stale-number grep clean.
+**Added targeted qu encoder tests** to both test files:
+- `test_qu_encoder_gradients_flow` / `test_mrmultivi_qu_encoder_gradients_flow`: manual
+  forward-backward on untrained model → `gamma_embedding.weight.grad` non-None and non-zero
+  for `cond_norm1`, `cond_norm2`, and `sample_embed` (L-048 pattern).
+- `test_qu_encoder_donor_rows_diverge` / `test_mrmultivi_qu_encoder_donor_rows_diverge`:
+  after 20 epochs, max pairwise L1 distance between donor rows of `cond_norm1/2.gamma_embedding`
+  exceeds 0 — sample conditioning is non-trivial.
 
-**PR #2** (feat/cytoanvi → main) opened for the CI fixes + hygiene + reconciliation.
+**17/17 tests pass** in 30s.
 
-## 2. CI status
+## 2. Key files changed
 
-PR #2's earlier run confirmed the collection fix works: integration jobs ran the full ~10 min
-suite (vs 1m20s collection-fail before). The ONLY remaining failure is the pre-existing upstream
-`tests/external/solo/test_solo.py::test_solo_scvi_labels` (`AttributeError: 'Sequential' object
-has no attribute 'classifier'` at load-then-`predict`) — upstream SOLO/scANVI classifier
-serialization, unrelated to CytoANVI. Decision pending: xfail-with-reason (→ green CI) vs leave.
-
-## 3. Benchmark numbers (unchanged, publication-grade)
-
-| Task | Dataset | Metric | Value |
-|------|---------|--------|-------|
-| B1 | Roider full | CytoANVI macro-F1 | 0.9317±0.0022 (Δ+0.0388 ✅) |
-| B1 | Nuñez full | macro-F1 | 0.9751±0.0003 |
-| B3 | Roider full | p1 macro-F1 / p2 concordance | 0.828±0.015 / 0.671±0.008 (❌ gate) |
-| B5 | Roider full | TTA mean_auroc | 0.484±0.019 (❌ NEGATIVE vs CytoVI kNN-OOD 0.775) |
-| B8 | Nuñez full | Δ_hier_vs_flat | +0.0862±0.0027 ✅ |
-
-## 4. Open items
-
-| Item | Status |
+| File | Change |
 |------|--------|
-| test_solo xfail decision | pending user call (green CI blocker) |
-| B5 diagnostic (jobs 25149032/33/34) | RUNNING ~30h budget left; aggregate to NEW `roider_full_b5_sweep_diag_multiseed.json` (do NOT overwrite existing) |
-| B9 mapQC | BLOCKED — mapqc 0.1.1 IndexError bug |
-| PR #2 merge to main | after CI decision |
-| B2 Roider-full | pending compute |
+| `src/scvi/external/mrtotalvi/_components.py` | Added `EncoderXU_MultiVI` class |
+| `src/scvi/external/mrmultivi/_module.py` | Wired `EncoderXU_MultiVI`, fixed LOW-1 |
+| `src/scvi/external/mrmultivi/_model.py` | Updated docstrings |
+| `docs/adr/0005-mrtotalvi.md` | Updated MultiVI-path description |
+| `docs/adr/0006-mrmultivi.md` | Updated hierarchy table: u-encoder input, KL interception |
+| `tests/external/mrtotalvi/test_mrtotalvi.py` | Added tests (f), 2 new → 8 total |
+| `tests/external/mrmultivi/test_mrmultivi.py` | Added tests (f), 2 new → 9 total |
 
-## 5. Key files / notes
+## 3. What's pending
 
-- Local test env quirk: a stale site-packages `scvi` shadows `src/scvi`; run fork tests with
-  `PYTHONPATH=src` so `scvi.external.cytovi.scennep` resolves.
-- Never `git add <whole-file>` on this branch without `git diff origin/feat/cytoanvi -- <file>`
-  first — many tracked files carry pre-existing uncommitted diffs.
+- **Commit all changes** — nothing was committed this session (code + ADRs + tests all unstaged).
+- **n_obs_per_sample reweighting** — optional, deferred.
+- **Expose `use_map=False`** — stochastic eps option, deferred.
+- **F16/F6 factor-selection consistency** — bmv_pilot side, pending user figure review.
+
+## 4. Critical context for next session
+
+- The scvi-tools dev install is via `PYTHONPATH=/exports/para-lipg-hpc/mdmanurung/scvi-tools/src`
+  (not a pip editable install in the active env); tests run with `cd scvi-tools && PYTHONPATH=.../src python -m pytest`.
+- `MrMultiVI` and `MrTotalVI` are on the `main` branch of the scvi-tools repo (unlike
+  CytoANVI which is on `feat/cytoanvi`). The `.living/` docs cover both — L/D numbers are shared.
+- MULTIVAE's `qz_m`/`qz_v` interception pattern (L-047) is the defining difference from
+  TotalVI's `qz` Distribution override — do not conflate.

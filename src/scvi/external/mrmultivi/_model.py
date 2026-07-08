@@ -36,10 +36,10 @@ class MrMultiVI(MULTIVI):
     and donor-level variability to be **jointly modelled** rather than treating
     donor identity as a nuisance covariate.
 
-    * MULTIVAE's mixed encoder output becomes the *sample-unaware* base ``u``.
-    * A donor-specific residual ``eps`` is computed via
-      :class:`~._module.MrMultiVAE` (attention over a per-donor embedding
-      table), giving ``z = z_base + eps``.
+    * MULTIVAE's mixed encoder output ``u0`` is fed into a sample-conditioned
+      u-encoder (:class:`~._module.MrMultiVAE`) which produces ``u ~ q_u(u0, d)``.
+    * A donor-specific residual ``eps`` is then computed via attention over a
+      per-donor embedding table, giving ``z = z_base + eps``.
     * The decoder is **unchanged**; ``z`` drops in with the same shape as
       MULTIVAE's ``z``.
 
@@ -361,7 +361,7 @@ class MrMultiVI(MULTIVI):
                 out = self.module.inference(**inf_inputs)
 
                 if not give_z:
-                    # Return u (sample-unaware base)
+                    # Return u (sample-conditioned base: qu.loc or qu.rsample())
                     rep = out["qz_m"] if give_mean else out["u"]
                 else:
                     # give_z=True: return z = z_base + eps using the real donor index.
@@ -422,7 +422,7 @@ class MrMultiVI(MULTIVI):
             inf_inputs = self.module._get_inference_input(tensors)
             base_out = self.module.inference(**inf_inputs)
 
-            # u: sample-unaware base (MULTIVAE uses qz_m, not qz.loc)
+            # u: sample-conditioned base posterior mean (qu.loc) or reparameterized sample
             u = base_out["qz_m"] if use_mean else base_out["u"]
 
             n_cells = u.shape[0]

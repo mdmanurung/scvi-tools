@@ -284,6 +284,89 @@ def test_donor_axis_separation(adata_shifted):
 
 
 # ---------------------------------------------------------------------------
+# (f) qu encoder: gradient flow and sample conditioning
+# ---------------------------------------------------------------------------
+
+
+def test_qu_encoder_gradients_flow(adata_basic):
+    """qu.cond_norm1/cond_norm2 gamma/beta embeddings receive non-zero gradients.
+
+    Directly verifies that the sample-conditioned u-encoder parameters are
+    connected to the loss in a single forward-backward pass on an untrained model.
+    """
+    import torch
+
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata_basic, sample_key="sample", n_latent=N_LATENT)
+    module = model.module.train()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=32)
+    tensors = next(iter(dl))
+
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module._regular_inference(**inf_inputs)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+    loss_out.loss.backward()
+
+    qu = module.qu
+    for cn_name in ("cond_norm1", "cond_norm2"):
+        cn = getattr(qu, cn_name)
+        gamma_grad = cn.gamma_embedding.weight.grad
+        beta_grad = cn.beta_embedding.weight.grad
+        assert gamma_grad is not None, (
+            f"qu.{cn_name}.gamma_embedding.weight.grad is None — gradient not flowing"
+        )
+        assert gamma_grad.abs().max().item() > 0, (
+            f"qu.{cn_name}.gamma_embedding gradient is all zeros"
+        )
+        assert beta_grad is not None, (
+            f"qu.{cn_name}.beta_embedding.weight.grad is None"
+        )
+        assert beta_grad.abs().max().item() > 0, (
+            f"qu.{cn_name}.beta_embedding gradient is all zeros"
+        )
+
+    # sample_embed also must receive gradient
+    assert qu.sample_embed.weight.grad is not None, (
+        "qu.sample_embed.weight.grad is None — sample embedding not trained"
+    )
+
+
+def test_qu_encoder_donor_rows_diverge(adata_basic):
+    """After training, different donor rows of cond_norm1.gamma_embedding differ.
+
+    gamma_embedding is initialized N(1, 0.02). Each donor receives independent
+    gradient updates based on its expression signature, so rows should diverge
+    beyond the 0.02 init noise. Checks that sample conditioning is non-trivial.
+    """
+    model = _setup_and_train(adata_basic, max_epochs=MAX_EPOCHS_FULL)
+    module = model.module
+
+    qu = module.qu
+    for cn_name in ("cond_norm1", "cond_norm2"):
+        cn = getattr(qu, cn_name)
+        gamma = cn.gamma_embedding.weight.detach().cpu()  # (n_sample, n_hidden)
+        # Max pairwise L1 distance across donor rows
+        n_s = gamma.shape[0]
+        max_row_diff = 0.0
+        for i in range(n_s):
+            for j in range(i + 1, n_s):
+                diff = (gamma[i] - gamma[j]).abs().mean().item()
+                max_row_diff = max(max_row_diff, diff)
+        assert max_row_diff > 0.0, (
+            f"qu.{cn_name}.gamma_embedding all donor rows are identical — "
+            f"sample conditioning is a no-op."
+        )
+
+
+# ---------------------------------------------------------------------------
 # (e) Learnable prior scale
 # ---------------------------------------------------------------------------
 

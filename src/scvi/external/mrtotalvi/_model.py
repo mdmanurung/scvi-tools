@@ -31,8 +31,9 @@ class MrTotalVI(TOTALVI):
     and donor-level variability to be **jointly modelled** rather than treating
     donor identity as a nuisance covariate.
 
-    * TotalVI's ``EncoderTOTALVI`` output becomes the *sample-unaware* base
-      ``u``.
+    * A sample-conditioned u-encoder (:class:`~._components.EncoderXU_TotalVI`)
+      produces the base ``u ~ q_u(x_rna, x_protein, donor)`` — mirroring MrVI's
+      ``EncoderXU`` with multimodal input.
     * A donor-specific residual ``eps`` is computed via
       :class:`~._components.EncoderUZ` (attention over a per-donor embedding
       table), giving ``z = z_base + eps``.
@@ -40,7 +41,8 @@ class MrTotalVI(TOTALVI):
       TotalVI's ``z``.
 
     Counterfactual queries ask "what would cell ``i`` look like in donor
-    ``d``?" by substituting donor ``d``'s embedding into the attention block.
+    ``d``?" by substituting donor ``d``'s embedding into the attention block
+    while holding ``u`` (from the real donor's encoder) fixed.
 
     Parameters
     ----------
@@ -301,7 +303,7 @@ class MrTotalVI(TOTALVI):
                     out = self.module.inference(**inf_inputs)
 
                 if not give_z:
-                    # Return u (sample-unaware base)
+                    # Return u (sample-conditioned base, posterior mean or sample)
                     rep = out["qz"].loc if give_mean else out["u"]
                 else:
                     # give_z=True: return z = z_base + eps using real sample_index.
@@ -381,11 +383,11 @@ class MrTotalVI(TOTALVI):
                     inf_inputs = self.module._get_inference_input(tensors)
                     base_out = self.module.inference(**inf_inputs)
 
-                    # u: sample-unaware base representation
+                    # u: sample-conditioned base (conditioned on real donor)
                     if use_mean:
-                        u = base_out["qz"].loc  # posterior mean: (batch, n_latent)
+                        u = base_out["qz"].loc  # posterior mean of qu: (batch, n_latent)
                     else:
-                        u = base_out["u"]       # reparameterised sample
+                        u = base_out["u"]       # reparameterised sample from qu
 
                     n_cells = u.shape[0]
                     dev = u.device

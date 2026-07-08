@@ -1,0 +1,523 @@
+"""MrMultiVI — MultiVI with per-donor hierarchical latent space."""
+
+from __future__ import annotations
+
+import logging
+import warnings
+from typing import TYPE_CHECKING
+
+import numpy as np
+import torch
+import xarray as xr
+from mudata import MuData
+from tqdm import tqdm
+
+from scvi import REGISTRY_KEYS, settings
+from scvi.data import AnnDataManager, fields
+from scvi.data._utils import _get_adata_minify_type, _validate_adata_dataloader_input
+from scvi.model._multivi import MULTIVI
+from scvi.utils import setup_anndata_dsp
+
+from ._module import MrMultiVAE
+
+if TYPE_CHECKING:
+    from typing import Iterator, Literal, Sequence
+
+    import numpy.typing as npt
+    from torch import Tensor
+
+logger = logging.getLogger(__name__)
+
+
+class MrMultiVI(MULTIVI):
+    """MultiVI with an MrVI-style hierarchical donor latent space.
+
+    Grafts MrVI's per-sample attention residual onto MultiVI, enabling cell-
+    and donor-level variability to be **jointly modelled** rather than treating
+    donor identity as a nuisance covariate.
+
+    * MULTIVAE's mixed encoder output becomes the *sample-unaware* base ``u``.
+    * A donor-specific residual ``eps`` is computed via
+      :class:`~._module.MrMultiVAE` (attention over a per-donor embedding
+      table), giving ``z = z_base + eps``.
+    * The decoder is **unchanged**; ``z`` drops in with the same shape as
+      MULTIVAE's ``z``.
+
+    Parameters
+    ----------
+    mdata
+        MuData registered via :meth:`~MrMultiVI.setup_mudata`.
+    sample_key
+        Key in global ``mdata.obs`` identifying the donor/sample for each cell.
+    n_latent_sample
+        Dimension of the per-donor embedding in the attention block.
+    z_u_prior_scale
+        Log-scale of the prior on the donor residual ``eps``.
+        ``0.0`` → ``p(eps) = N(0, 1)``.
+    learn_z_u_prior_scale
+        Whether ``pz_scale`` is a learnable parameter.
+    **model_kwargs
+        Additional keyword arguments forwarded to :class:`~._module.MrMultiVAE`
+        (and transitively to :class:`~scvi.module._multivae.MULTIVAE`).
+
+    See Also
+    --------
+    :class:`~._module.MrMultiVAE`
+    """
+
+    _module_cls = MrMultiVAE
+
+    def __init__(
+        self,
+        mdata: MuData,
+        sample_key: str,
+        n_latent_sample: int = 16,
+        z_u_prior_scale: float = 0.0,
+        learn_z_u_prior_scale: bool = False,
+        **model_kwargs,
+    ) -> None:
+        # Inject hierarchy kwargs so they reach MrMultiVAE via MULTIVI's **model_kwargs
+        model_kwargs["n_latent_sample"] = n_latent_sample
+        model_kwargs["z_u_prior_scale"] = z_u_prior_scale
+        model_kwargs["learn_z_u_prior_scale"] = learn_z_u_prior_scale
+
+        # MULTIVI.__init__ → creates MrMultiVAE(n_sample=0) internally
+        super().__init__(mdata, **model_kwargs)
+
+        # summary_stats.n_sample is populated from the SAMPLE_KEY registry field
+        n_sample = self.summary_stats.n_sample
+        self.module._setup_hierarchy(
+            n_sample=n_sample,
+            n_latent_sample=n_latent_sample,
+            z_u_prior_scale=z_u_prior_scale,
+            learn_z_u_prior_scale=learn_z_u_prior_scale,
+        )
+
+        self._sample_key = sample_key
+        self.sample_order = (
+            self.adata_manager.get_state_registry(REGISTRY_KEYS.SAMPLE_KEY).categorical_mapping
+        )
+
+        self._model_summary_string = (
+            f"MrMultiVI Model\n"
+            f"  n_latent_sample: {n_latent_sample}, n_sample: {n_sample}\n"
+            f"  z_u_prior_scale: {z_u_prior_scale}"
+        )
+        self.init_params_ = self._get_init_params(locals())
+
+    # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
+
+    def train(self, *args, accelerator: str = "auto", **kwargs) -> None:
+        """Train MrMultiVI with explicit GPU/CPU handling.
+
+        Identical to :meth:`~scvi.model.MULTIVI.train` but warns loudly when
+        no CUDA device is detected instead of silently falling back to CPU.
+        Pass ``accelerator='cpu'`` to suppress the warning and run on CPU.
+        """
+        if accelerator == "auto":
+            if torch.cuda.is_available():
+                accelerator = "gpu"
+            else:
+                warnings.warn(
+                    "No CUDA device found — MrMultiVI will train on CPU. "
+                    "Pass accelerator='cpu' to suppress this warning, or "
+                    "run on a GPU node.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        super().train(*args, accelerator=accelerator, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Data registration
+    # ------------------------------------------------------------------
+
+    @classmethod
+    @setup_anndata_dsp.dedent
+    def setup_mudata(
+        cls,
+        mdata: MuData,
+        sample_key: str,
+        rna_layer: str | None = None,
+        atac_layer: str | None = None,
+        protein_layer: str | None = None,
+        batch_key: str | None = None,
+        size_factor_key: str | None = None,
+        categorical_covariate_keys: list[str] | None = None,
+        continuous_covariate_keys: list[str] | None = None,
+        idx_layer: str | None = None,
+        modalities: dict[str, str] | None = None,
+        **kwargs,
+    ):
+        """%(summary_mdata)s.
+
+        Parameters
+        ----------
+        %(param_mdata)s
+        sample_key
+            Key in global ``mdata.obs`` identifying the donor/sample for each cell.
+            Each unique value becomes one row in the per-donor embedding table.
+        rna_layer
+            RNA layer key. If ``None``, uses ``.X`` of the specified modality.
+        atac_layer
+            ATAC layer key. If ``None``, uses ``.X`` of the specified modality.
+        protein_layer
+            Protein layer key. If ``None``, uses ``.X`` of the specified modality.
+        %(param_batch_key)s
+        %(param_cat_cov_keys)s
+        %(param_cont_cov_keys)s
+        %(param_modalities)s
+        """
+        setup_method_args = cls._get_setup_method_args(**locals())
+
+        if modalities is None:
+            raise ValueError("Modalities cannot be None.")
+        modalities = cls._create_modalities_attr_dict(modalities, setup_method_args)
+
+        # Canonical modality order: rna → atac → protein
+        desired_order = []
+        if modalities.rna_layer is not None:
+            desired_order.append(modalities.rna_layer)
+        if modalities.atac_layer is not None:
+            desired_order.append(modalities.atac_layer)
+        if modalities.protein_layer is not None:
+            desired_order.append(modalities.protein_layer)
+
+        current_order = list(mdata.mod.keys())
+        needs_reorder = current_order[: len(desired_order)] != desired_order
+        if needs_reorder:
+            reordered_keys = desired_order + [k for k in current_order if k not in desired_order]
+            backing_dict = mdata._mod
+            snapshot = {k: backing_dict[k] for k in reordered_keys}
+            backing_dict.clear()
+            backing_dict.update(snapshot)
+            mdata.update()
+
+        mdata.obs["_indices"] = np.arange(mdata.n_obs)
+
+        batch_field = fields.MuDataCategoricalObsField(
+            REGISTRY_KEYS.BATCH_KEY,
+            batch_key,
+            mod_key=modalities.batch_key,
+        )
+        mudata_fields = [
+            batch_field,
+            fields.MuDataCategoricalObsField(
+                REGISTRY_KEYS.LABELS_KEY,
+                None,
+                mod_key=None,
+            ),
+            fields.MuDataNumericalJointObsField(
+                REGISTRY_KEYS.SIZE_FACTOR_KEY,
+                size_factor_key,
+                mod_key=None,
+                required=False,
+            ),
+            fields.MuDataCategoricalJointObsField(
+                REGISTRY_KEYS.CAT_COVS_KEY,
+                categorical_covariate_keys,
+                mod_key=modalities.categorical_covariate_keys,
+            ),
+            fields.MuDataNumericalJointObsField(
+                REGISTRY_KEYS.CONT_COVS_KEY,
+                continuous_covariate_keys,
+                mod_key=modalities.continuous_covariate_keys,
+            ),
+            fields.MuDataNumericalObsField(
+                REGISTRY_KEYS.INDICES_KEY,
+                "_indices",
+                mod_key=modalities.idx_layer,
+                required=False,
+            ),
+            # MrMultiVI: donor/sample axis in global mdata.obs
+            fields.MuDataCategoricalObsField(
+                REGISTRY_KEYS.SAMPLE_KEY,
+                sample_key,
+                mod_key=None,
+            ),
+        ]
+        if modalities.rna_layer is not None:
+            mudata_fields.append(
+                fields.MuDataLayerField(
+                    REGISTRY_KEYS.X_KEY,
+                    rna_layer,
+                    mod_key=modalities.rna_layer,
+                    is_count_data=True,
+                    mod_required=True,
+                )
+            )
+        if modalities.atac_layer is not None:
+            mudata_fields.append(
+                fields.MuDataLayerField(
+                    REGISTRY_KEYS.ATAC_X_KEY,
+                    atac_layer,
+                    mod_key=modalities.atac_layer,
+                    is_count_data=True,
+                    mod_required=True,
+                )
+            )
+        if modalities.protein_layer is not None:
+            mudata_fields.append(
+                fields.MuDataProteinLayerField(
+                    REGISTRY_KEYS.PROTEIN_EXP_KEY,
+                    protein_layer,
+                    mod_key=modalities.protein_layer,
+                    use_batch_mask=True,
+                    batch_field=batch_field,
+                    is_count_data=True,
+                    mod_required=True,
+                )
+            )
+        mdata_minify_type = _get_adata_minify_type(mdata)
+        if mdata_minify_type is not None:
+            mudata_fields += cls._get_fields_for_mudata_minification(mdata_minify_type)
+
+        adata_manager = AnnDataManager(fields=mudata_fields, setup_method_args=setup_method_args)
+        adata_manager.register_fields(mdata, **kwargs)
+        cls.register_manager(adata_manager)
+
+    # ------------------------------------------------------------------
+    # Latent representation
+    # ------------------------------------------------------------------
+
+    def get_latent_representation(
+        self,
+        adata=None,
+        modality: Literal["joint", "expression", "accessibility"] = "joint",
+        indices: Sequence[int] | None = None,
+        give_mean: bool = True,
+        batch_size: int | None = None,
+        return_dist: bool = False,
+        dataloader: Iterator[dict[str, Tensor | None]] | None = None,
+        give_z: bool = True,
+    ) -> npt.NDArray:
+        """Return the latent representation for each cell.
+
+        Parameters
+        ----------
+        adata
+            MuData object. Defaults to the object used to initialise the model.
+        modality
+            ``"joint"`` (default), ``"expression"``, or ``"accessibility"``.
+            Non-joint modalities return per-modality latents (no hierarchy).
+        indices
+            Indices of cells in adata to use.
+        give_mean
+            If ``True``, uses the posterior mean of ``u`` as the query to
+            :class:`~._module.MrMultiVAE`.  When ``give_z=True`` and
+            ``give_mean=True``, returns ``z_mean = z_base(u_mean) + eps(u_mean, d)``.
+        batch_size
+            Minibatch size.
+        return_dist
+            If ``True``, returns ``(qz_m, qz_v)`` for the joint modality
+            (distribution over ``u``, not ``z``). Delegates to super.
+        dataloader
+            Custom dataloader; mutually exclusive with ``adata``.
+        give_z
+            If ``True`` (default), returns the sample-aware hierarchical
+            ``z = z_base + eps`` using each cell's actual donor index.
+            If ``False``, returns the sample-unaware base ``u``.
+
+        Returns
+        -------
+        Array of shape ``(n_obs, n_latent)``.
+
+        Notes
+        -----
+        For ``modality != "joint"`` or ``return_dist=True``, delegates to
+        :meth:`~scvi.model.MULTIVI.get_latent_representation` (no ``give_z``).
+
+        Do **not** delegate the ``give_z=True, give_mean=True`` joint path to
+        super — MULTIVI returns ``qz_m`` (mean of ``u``), silently discarding
+        the donor residual.  Both branches are implemented manually.
+        """
+        if modality != "joint" or return_dist:
+            return super().get_latent_representation(
+                adata=adata,
+                modality=modality,
+                indices=indices,
+                give_mean=give_mean,
+                batch_size=batch_size,
+                return_dist=return_dist,
+                dataloader=dataloader,
+            )
+
+        if not self.is_trained_:
+            raise RuntimeError("Please train the model first.")
+        _validate_adata_dataloader_input(self, adata, dataloader)
+        self._check_adata_modality_weights(adata)
+
+        if dataloader is None:
+            adata = self._validate_anndata(adata)
+            scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        else:
+            scdl = dataloader
+
+        results = []
+        with torch.inference_mode():
+            for tensors in scdl:
+                inf_inputs = self.module._get_inference_input(tensors)
+                out = self.module.inference(**inf_inputs)
+
+                if not give_z:
+                    # Return u (sample-unaware base)
+                    rep = out["qz_m"] if give_mean else out["u"]
+                else:
+                    # give_z=True: return z = z_base + eps using the real donor index.
+                    # give_mean=True: re-run qz with u_mean so the returned z uses
+                    #   the posterior mean of u (not a reparameterised sample).
+                    # give_mean=False: out["z"] is already z_base + eps from inference.
+                    if give_mean:
+                        sample_index = inf_inputs["sample_index"]
+                        u_mean = out["qz_m"]
+                        z_base, eps = self.module.qz(u_mean, sample_index)
+                        rep = z_base + eps
+                    else:
+                        rep = out["z"]
+
+                results.append(rep.cpu().numpy())
+
+        return np.concatenate(results, axis=0)
+
+    # ------------------------------------------------------------------
+    # Counterfactual representations (internal)
+    # ------------------------------------------------------------------
+
+    @torch.inference_mode()
+    def _compute_cf_representations(
+        self,
+        adata,
+        indices,
+        batch_size: int,
+        use_mean: bool = True,
+    ) -> tuple[npt.NDArray, list[str]]:
+        """Compute counterfactual z for every cell × donor combination.
+
+        For each cell, runs the encoder once to get ``u``, then loops over all
+        ``n_sample`` donors.  For each donor ``d``:
+
+        .. code-block::
+
+            cf_sample = d * ones(n_cells)
+            z_base, eps = module.qz(u, cf_sample)
+            z[cell, d, :] = z_base + eps
+
+        Returns
+        -------
+        reps : np.ndarray
+            Shape ``(n_cells, n_sample, n_latent)``.
+        cell_names : list[str]
+        """
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        n_sample = self.summary_stats.n_sample
+
+        all_reps: list[npt.NDArray] = []
+        all_cell_names: list[str] = []
+
+        for tensors in tqdm(scdl, desc="Counterfactual representations"):
+            cell_idx = tensors[REGISTRY_KEYS.INDICES_KEY].long().flatten()
+            all_cell_names.extend(adata.obs_names[cell_idx.numpy()].tolist())
+
+            inf_inputs = self.module._get_inference_input(tensors)
+            base_out = self.module.inference(**inf_inputs)
+
+            # u: sample-unaware base (MULTIVAE uses qz_m, not qz.loc)
+            u = base_out["qz_m"] if use_mean else base_out["u"]
+
+            n_cells = u.shape[0]
+            dev = u.device
+
+            cf_zs = []
+            for d in range(n_sample):
+                cf_sample = torch.full((n_cells, 1), d, dtype=torch.long, device=dev)
+                z_base, eps = self.module.qz(u, cf_sample)
+                cf_zs.append((z_base + eps).detach().cpu())
+
+            # (n_sample, n_cells, n_latent) → (n_cells, n_sample, n_latent)
+            batch_reps = torch.stack(cf_zs, dim=0).permute(1, 0, 2).numpy()
+            all_reps.append(batch_reps)
+
+        return np.concatenate(all_reps, axis=0), all_cell_names
+
+    # ------------------------------------------------------------------
+    # Public counterfactual API
+    # ------------------------------------------------------------------
+
+    @torch.inference_mode()
+    def get_local_sample_representation(
+        self,
+        adata=None,
+        indices=None,
+        batch_size: int = 256,
+        use_mean: bool = True,
+    ) -> xr.DataArray:
+        """Compute the local per-donor latent representation.
+
+        For each cell, returns a ``(n_sample, n_latent)`` matrix of
+        counterfactual ``z`` values — one per registered donor.
+
+        Returns
+        -------
+        :class:`~xarray.DataArray` of shape ``(n_cell, n_sample, n_latent)``.
+        """
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+
+        reps, cell_names = self._compute_cf_representations(
+            adata, indices, batch_size, use_mean=use_mean
+        )
+        return xr.DataArray(
+            reps,
+            dims=["cell_name", "sample", "latent_dim"],
+            coords={"cell_name": cell_names, "sample": self.sample_order},
+            name="sample_representations",
+        )
+
+    @torch.inference_mode()
+    def get_local_sample_distances(
+        self,
+        adata=None,
+        indices=None,
+        batch_size: int = 256,
+        use_mean: bool = True,
+        norm: Literal["l2", "l1"] = "l2",
+    ) -> xr.DataArray:
+        """Compute cell-specific pairwise donor distance matrices.
+
+        For each cell, computes a symmetric ``(n_sample, n_sample)`` distance
+        matrix over the counterfactual donor representations.
+
+        Returns
+        -------
+        :class:`~xarray.DataArray` of shape ``(n_cell, n_sample, n_sample)``.
+        """
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+
+        reps, cell_names = self._compute_cf_representations(
+            adata, indices, batch_size, use_mean=use_mean
+        )
+        reps_t = torch.tensor(reps)  # (n_cells, n_sample, n_latent)
+
+        def _pairwise(rep: torch.Tensor) -> torch.Tensor:
+            delta = rep.unsqueeze(0) - rep.unsqueeze(1)  # (n_s, n_s, n_latent)
+            if norm == "l2":
+                return torch.sqrt((delta**2).sum(-1))
+            elif norm == "l1":
+                return delta.abs().sum(-1)
+            else:
+                raise ValueError(f"Unsupported norm '{norm}'. Choose 'l2' or 'l1'.")
+
+        dists = np.stack([_pairwise(reps_t[i]).numpy() for i in range(reps_t.shape[0])])
+
+        return xr.DataArray(
+            dists,
+            dims=["cell_name", "sample_x", "sample_y"],
+            coords={
+                "cell_name": cell_names,
+                "sample_x": self.sample_order,
+                "sample_y": self.sample_order,
+            },
+            name="sample_distances",
+        )

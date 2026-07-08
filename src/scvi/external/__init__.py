@@ -12,6 +12,7 @@ from .gimvi import GIMVI
 from .methylvi import METHYLANVI, METHYLVI
 from .mrvi import MRVI
 from .mrvi_torch import TorchMRVI
+from .mrmultivi import MrMultiVI, MrMultiVAE
 from .mrtotalvi import MrTotalVI, MrTotalVAE
 from .poissonvi import POISSONVI
 from .resolvi import RESOLVI
@@ -40,6 +41,8 @@ __all__ = [
     "VELOVI",
     "MRVI",
     "TorchMRVI",
+    "MrMultiVI",
+    "MrMultiVAE",
     "MrTotalVI",
     "MrTotalVAE",
     "METHYLVI",

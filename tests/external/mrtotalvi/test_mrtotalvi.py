@@ -398,3 +398,41 @@ def test_learnable_prior_scale(adata_basic):
     assert not torch.allclose(pz_scale, torch.zeros_like(pz_scale)), (
         "pz_scale stayed at init=0.0 after training — gradient not flowing through kl_z"
     )
+
+
+# ---------------------------------------------------------------------------
+# (g) scale_observations
+# ---------------------------------------------------------------------------
+
+def test_scale_observations(adata_basic):
+    """scale_observations=True trains without error and produces finite ELBO."""
+    import math
+
+    model = _setup_and_train(
+        adata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        scale_observations=True,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with scale_observations=True"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (h) use_map=False (stochastic eps)
+# ---------------------------------------------------------------------------
+
+def test_use_map_false(adata_basic):
+    """use_map=False runs without error and produces finite ELBO."""
+    import math
+
+    model = _setup_and_train(
+        adata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        use_map=False,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with use_map=False"
+    )

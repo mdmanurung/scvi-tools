@@ -357,3 +357,41 @@ def test_mrmultivi_hierarchy_collapse_contrast(mdata_shifted):
         f"Zeroing the embedding did not collapse cross-donor distances.\n"
         f"Trained: {cross_donor_trained:.4f}  Zeroed: {cross_donor_zeroed:.4f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# (j) scale_observations
+# ---------------------------------------------------------------------------
+
+def test_scale_observations(mdata_basic):
+    """scale_observations=True trains without error and produces finite ELBO."""
+    import math
+
+    model = _setup_and_train(
+        mdata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        scale_observations=True,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with scale_observations=True"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (k) use_map=False (stochastic eps)
+# ---------------------------------------------------------------------------
+
+def test_use_map_false(mdata_basic):
+    """use_map=False runs without error and produces finite ELBO."""
+    import math
+
+    model = _setup_and_train(
+        mdata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        use_map=False,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with use_map=False"
+    )

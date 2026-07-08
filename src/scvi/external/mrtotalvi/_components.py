@@ -759,6 +759,11 @@ class EncoderUZ(nn.Module):
 
         residual = self.attention_block(query_embed=u_, kv_embed=sample_embed)
 
+        if not self.use_map:
+            # Stochastic eps: split 2*n_latent output into mean/log-scale and reparameterise
+            eps_mean, eps_log_scale = residual.chunk(2, dim=-1)
+            residual = Normal(eps_mean, eps_log_scale.exp()).rsample()
+
         if self.fc is not None:
             z_base = self.fc(u_stop)
             return z_base, residual

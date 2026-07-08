@@ -70,6 +70,8 @@ class MrMultiVAE(MULTIVAE):
         n_latent_sample: int = 16,
         z_u_prior_scale: float = 0.0,
         learn_z_u_prior_scale: bool = False,
+        use_map: bool = True,
+        scale_observations: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -83,6 +85,8 @@ class MrMultiVAE(MULTIVAE):
         self._n_latent_sample = n_latent_sample
         self._z_u_prior_scale = z_u_prior_scale
         self._learn_z_u_prior_scale = learn_z_u_prior_scale
+        self._use_map = use_map
+        self._scale_observations = scale_observations
 
         if n_sample > 0:
             self._setup_hierarchy(n_sample, n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale)
@@ -97,6 +101,9 @@ class MrMultiVAE(MULTIVAE):
         n_latent_sample: int | None = None,
         z_u_prior_scale: float | None = None,
         learn_z_u_prior_scale: bool | None = None,
+        use_map: bool | None = None,
+        scale_observations: bool | None = None,
+        n_obs_per_sample: torch.Tensor | None = None,
     ) -> None:
         """Build or replace the u→z hierarchy after MULTIVAE is initialised.
 
@@ -109,6 +116,14 @@ class MrMultiVAE(MULTIVAE):
             Total number of donors registered in the MuData.
         n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale
             Override stored values; ``None`` → use stored value.
+        use_map
+            If ``False``, treat eps as stochastic.  ``None`` → use stored value.
+        scale_observations
+            If ``True``, weight each cell's ELBO by ``1 / n_cells_in_that_sample``.
+            ``None`` → use stored value.
+        n_obs_per_sample
+            Integer tensor of shape ``(n_sample,)`` with per-donor cell counts.
+            Required (and used only) when ``scale_observations=True``.
         """
         if n_latent_sample is None:
             n_latent_sample = self._n_latent_sample
@@ -116,8 +131,14 @@ class MrMultiVAE(MULTIVAE):
             z_u_prior_scale = self._z_u_prior_scale
         if learn_z_u_prior_scale is None:
             learn_z_u_prior_scale = self._learn_z_u_prior_scale
+        if use_map is None:
+            use_map = self._use_map
+        if scale_observations is None:
+            scale_observations = self._scale_observations
 
         self._n_sample = n_sample
+        self._use_map = use_map
+        self._scale_observations = scale_observations
 
         # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, takes MULTIVAE mixed latent
         self.qu = EncoderXU_MultiVI(
@@ -132,7 +153,7 @@ class MrMultiVAE(MULTIVAE):
             n_sample=n_sample,
             n_latent_u=None,
             n_latent_sample=n_latent_sample,
-            use_map=True,
+            use_map=use_map,
         )
 
         if learn_z_u_prior_scale:
@@ -142,6 +163,12 @@ class MrMultiVAE(MULTIVAE):
                 "pz_scale",
                 torch.full((self.n_latent,), float(z_u_prior_scale)),
             )
+
+        # Per-sample cell counts for observation reweighting (non-persistent: recomputed at load)
+        if scale_observations and n_obs_per_sample is not None:
+            self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=False)
+        else:
+            self.n_obs_per_sample = None
 
     # ------------------------------------------------------------------
     # DataLoader → inference plumbing
@@ -271,7 +298,7 @@ class MrMultiVAE(MULTIVAE):
 
         eps = inference_outputs["eps"]
         peps = Normal(0.0, torch.exp(self.pz_scale))
-        # kl_z: (batch, n_latent) → (batch,); or (n_samples, batch) → (batch,)
+        # kl_z: (batch, n_latent) → (batch,)
         kl_z = -peps.log_prob(eps).sum(dim=-1)
         assert kl_z.ndim == 1, f"Expected 1D kl_z; got shape {kl_z.shape}"
 
@@ -280,8 +307,23 @@ class MrMultiVAE(MULTIVAE):
         kl_u = kl_local["kl_divergence_z"]
         kl_local["kl_divergence_z"] = kl_u + kl_z
 
+        if self._scale_observations and self.n_obs_per_sample is not None:
+            # Weight each cell's ELBO by 1/n_cells_in_that_sample.
+            # Reconstruct per-cell ELBO from component tensors (parent already called mean()).
+            sample_index = tensors[REGISTRY_KEYS.SAMPLE_KEY].to(torch.int64).flatten()
+            prefactors = self.n_obs_per_sample[sample_index]  # (batch,)
+            recon = (
+                loss_out.reconstruction_loss["reconstruction_loss_expression"]
+                + loss_out.reconstruction_loss["reconstruction_loss_accessibility"]
+                + loss_out.reconstruction_loss["reconstruction_loss_protein"]
+            )
+            per_cell = recon + kl_weight * kl_local["kl_divergence_z"] + kl_local["kl_divergence_paired"]
+            loss = (per_cell / prefactors).mean()
+        else:
+            loss = loss_out.loss + kl_weight * kl_z.mean()
+
         return LossOutput(
-            loss=loss_out.loss + kl_weight * kl_z.mean(),
+            loss=loss,
             reconstruction_loss=loss_out.reconstruction_loss,
             kl_local=kl_local,
             extra_metrics=loss_out.extra_metrics,

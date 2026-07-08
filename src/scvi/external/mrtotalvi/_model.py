@@ -88,6 +88,8 @@ class MrTotalVI(TOTALVI):
         n_latent_sample: int = 16,
         z_u_prior_scale: float = 0.0,
         learn_z_u_prior_scale: bool = False,
+        use_map: bool = True,
+        scale_observations: bool = False,
         **model_kwargs,
     ) -> None:
         if model_kwargs.get("latent_distribution", "normal") != "normal":
@@ -109,11 +111,20 @@ class MrTotalVI(TOTALVI):
 
         # At this point self.summary_stats is populated from the registry.
         n_sample = self.summary_stats.n_sample
+
+        n_obs_per_sample = torch.tensor(
+            adata.obs["_scvi_sample"].value_counts().sort_index().values,
+            dtype=torch.float32,
+        )
+
         self.module._setup_hierarchy(
             n_sample=n_sample,
             n_latent_sample=n_latent_sample,
             z_u_prior_scale=z_u_prior_scale,
             learn_z_u_prior_scale=learn_z_u_prior_scale,
+            use_map=use_map,
+            scale_observations=scale_observations,
+            n_obs_per_sample=n_obs_per_sample,
         )
 
         # Sample-level metadata for coordinate labelling

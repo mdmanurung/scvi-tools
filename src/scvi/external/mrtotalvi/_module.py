@@ -76,6 +76,8 @@ class MrTotalVAE(TOTALVAE):
         n_latent_sample: int = 16,
         z_u_prior_scale: float = 0.0,
         learn_z_u_prior_scale: bool = False,
+        use_map: bool = True,
+        scale_observations: bool = False,
         **kwargs,
     ) -> None:
         if kwargs.get("latent_distribution", "normal") != "normal":
@@ -93,6 +95,8 @@ class MrTotalVAE(TOTALVAE):
         self._n_latent_sample = n_latent_sample
         self._z_u_prior_scale = z_u_prior_scale
         self._learn_z_u_prior_scale = learn_z_u_prior_scale
+        self._use_map = use_map
+        self._scale_observations = scale_observations
 
         if n_sample > 0:
             self._setup_hierarchy(n_sample, n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale)
@@ -107,6 +111,9 @@ class MrTotalVAE(TOTALVAE):
         n_latent_sample: int | None = None,
         z_u_prior_scale: float | None = None,
         learn_z_u_prior_scale: bool | None = None,
+        use_map: bool | None = None,
+        scale_observations: bool | None = None,
+        n_obs_per_sample: torch.Tensor | None = None,
     ) -> None:
         """Build / replace the u→z hierarchy after the base TOTALVAE is initialised.
 
@@ -119,6 +126,16 @@ class MrTotalVAE(TOTALVAE):
             Total number of donors registered in the AnnData.
         n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale
             Override the values stored in ``__init__``; ``None`` → use stored value.
+        use_map
+            If ``False``, treat eps as stochastic (split attention output into mean and
+            log-scale; reparameterise).  ``None`` → use value from ``__init__``.
+        scale_observations
+            If ``True``, weight each cell's ELBO contribution by
+            ``1 / n_cells_in_that_sample`` so high-cell-count donors do not dominate.
+            ``None`` → use value from ``__init__``.
+        n_obs_per_sample
+            Integer tensor of shape ``(n_sample,)`` with per-donor cell counts.
+            Required (and used only) when ``scale_observations=True``.
         """
         if n_latent_sample is None:
             n_latent_sample = self._n_latent_sample
@@ -126,8 +143,14 @@ class MrTotalVAE(TOTALVAE):
             z_u_prior_scale = self._z_u_prior_scale
         if learn_z_u_prior_scale is None:
             learn_z_u_prior_scale = self._learn_z_u_prior_scale
+        if use_map is None:
+            use_map = self._use_map
+        if scale_observations is None:
+            scale_observations = self._scale_observations
 
         self._n_sample = n_sample
+        self._use_map = use_map
+        self._scale_observations = scale_observations
 
         # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, multimodal input
         self.qu = EncoderXU_TotalVI(
@@ -143,7 +166,7 @@ class MrTotalVAE(TOTALVAE):
             n_sample=n_sample,
             n_latent_u=None,
             n_latent_sample=n_latent_sample,
-            use_map=True,
+            use_map=use_map,
         )
 
         if learn_z_u_prior_scale:
@@ -153,6 +176,12 @@ class MrTotalVAE(TOTALVAE):
                 "pz_scale",
                 torch.full((self.n_latent,), float(z_u_prior_scale)),
             )
+
+        # Per-sample cell counts for observation reweighting (non-persistent: recomputed at load)
+        if scale_observations and n_obs_per_sample is not None:
+            self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=False)
+        else:
+            self.n_obs_per_sample = None
 
     # ------------------------------------------------------------------
     # DataLoader → inference plumbing
@@ -300,8 +329,25 @@ class MrTotalVAE(TOTALVAE):
         kl_u = kl_local["kl_div_z"]
         kl_local["kl_div_z"] = kl_u + kl_z
 
+        if self._scale_observations and self.n_obs_per_sample is not None:
+            # Weight each cell's ELBO by 1/n_cells_in_that_sample so high-cell-count
+            # donors do not dominate training.  Reconstruct the full per-cell ELBO from
+            # individual component tensors (parent loss() already called torch.mean()).
+            sample_index = tensors[REGISTRY_KEYS.SAMPLE_KEY].to(torch.int64).flatten()
+            prefactors = self.n_obs_per_sample[sample_index]  # (batch,)
+            per_cell = (
+                loss_out.reconstruction_loss["reconst_loss_gene"]
+                + kl_weight * pro_recons_weight * loss_out.reconstruction_loss["reconst_loss_protein"]
+                + kl_weight * kl_local["kl_div_z"]
+                + kl_local["kl_div_l_gene"]
+                + kl_weight * kl_local["kl_div_back_pro"]
+            )
+            loss = (per_cell / prefactors).mean()
+        else:
+            loss = loss_out.loss + kl_weight * kl_z.mean()
+
         return LossOutput(
-            loss=loss_out.loss + kl_weight * kl_z.mean(),
+            loss=loss,
             reconstruction_loss=loss_out.reconstruction_loss,
             kl_local=kl_local,
             extra_metrics=loss_out.extra_metrics,

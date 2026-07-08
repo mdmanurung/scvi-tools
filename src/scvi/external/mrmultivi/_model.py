@@ -74,23 +74,36 @@ class MrMultiVI(MULTIVI):
         n_latent_sample: int = 16,
         z_u_prior_scale: float = 0.0,
         learn_z_u_prior_scale: bool = False,
+        use_map: bool = True,
+        scale_observations: bool = False,
         **model_kwargs,
     ) -> None:
         # Inject hierarchy kwargs so they reach MrMultiVAE via MULTIVI's **model_kwargs
         model_kwargs["n_latent_sample"] = n_latent_sample
         model_kwargs["z_u_prior_scale"] = z_u_prior_scale
         model_kwargs["learn_z_u_prior_scale"] = learn_z_u_prior_scale
+        model_kwargs["use_map"] = use_map
+        model_kwargs["scale_observations"] = scale_observations
 
         # MULTIVI.__init__ → creates MrMultiVAE(n_sample=0) internally
         super().__init__(mdata, **model_kwargs)
 
         # summary_stats.n_sample is populated from the SAMPLE_KEY registry field
         n_sample = self.summary_stats.n_sample
+
+        n_obs_per_sample = torch.tensor(
+            mdata.obs["_scvi_sample"].value_counts().sort_index().values,
+            dtype=torch.float32,
+        )
+
         self.module._setup_hierarchy(
             n_sample=n_sample,
             n_latent_sample=n_latent_sample,
             z_u_prior_scale=z_u_prior_scale,
             learn_z_u_prior_scale=learn_z_u_prior_scale,
+            use_map=use_map,
+            scale_observations=scale_observations,
+            n_obs_per_sample=n_obs_per_sample,
         )
 
         self._sample_key = sample_key

@@ -124,3 +124,10 @@ Record non-obvious choices made during development. One entry per decision. Refe
 **Decision**: `EncoderXU_MultiVI.forward(u0, sample_covariate)` takes `u0 = MULTIVAE's inference["z"]` directly with NO `log1p` preprocessing. The same ConditionalNormalization → GELU → NormalDistOutputNN architecture is used, but the input semantics differ. Do not add log1p to this path — it would distort negative latent values (log1p of negative = NaN or bad gradients) and is meaningless for a latent representation.
 **Consequences**: `EncoderXU_TotalVI` and `EncoderXU_MultiVI` share architectural structure (both live in `mrtotalvi/_components.py`) but differ in input preprocessing. Future MultiVI-style models (ATAC-only, etc.) should follow the same pattern: no log1p when input is a latent, log1p when input is raw counts.
 **Status**: active
+
+### D-015 — [2026-07-08] use_map=False keeps kl_z = -log p(eps) formula unchanged
+**Context**: When eps is stochastic (use_map=False), eps is sampled via reparameterisation from N(eps_mean, exp(eps_log_scale)). The question was whether kl_z needs a new term for the entropy of q(eps).
+**Decision**: Keep kl_z = -log p(eps) unchanged. The ELBO is still valid because we are treating q(eps|u, sample) as an implicit distribution defined by the reparameterisation, and the prior p(eps) = N(0, exp(pz_scale)) is fixed. The term -log p(eps) appears in the ELBO as the log-likelihood under the prior, which is correct regardless of whether eps is deterministic (use_map=True) or stochastic (use_map=False).
+**Rationale**: Adding an entropy term H[q(eps)] would require an explicit q(eps) density, which is available (N(eps_mean, eps_log_scale.exp())), but it would make the ELBO tighter only marginally. Keeping the formula unchanged preserves the exact MrVI pattern and avoids a new hyperparameter or term.
+**Consequences**: use_map=False adds stochasticity to eps but does NOT add a proper KL(q(eps) || p(eps)) to the loss. The eps prior still regularises through -log p(eps). This is a deliberate simplification consistent with the MrVI reference design.
+**Status**: active

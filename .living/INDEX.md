@@ -8,8 +8,8 @@
 
 | File | Contents |
 |------|----------|
-| [decisions.md](decisions.md) | Architecture and design decisions (D-001…D-014) |
-| [learnings.md](learnings.md) | Gotchas, bugs, edge cases (L-001…L-048) |
+| [decisions.md](decisions.md) | Architecture and design decisions (D-001…D-015) |
+| [learnings.md](learnings.md) | Gotchas, bugs, edge cases (L-001…L-050) |
 | [conventions.md](conventions.md) | Active conventions crystallized from learnings (C-001…C-003) |
 | [conventions/bioinformatics/](conventions/bioinformatics/analysis-conventions.md) | Bioinformatics domain conventions (BIO-01…BIO-10) |
 | [findings/FINDINGS_REGISTRY.md](findings/FINDINGS_REGISTRY.md) | Empirical results registry (F-001…F-011) |
@@ -30,6 +30,7 @@
 | Manifest-mode aggregation for publication | D-007 | PRD 2026-06-28 |
 | B8 job cancel + resubmit after correctness fixes | D-XXX | — |
 | MrMultiVI u-encoder input is MULTIVAE mixed latent u0 (no log1p) | D-014 | `docs/adr/0006` |
+| use_map=False keeps kl_z = -log p(eps) unchanged (ELBO still valid) | D-015 | — |
 
 ### By tag
 
@@ -60,7 +61,10 @@
 | top-level-package | D-006 |
 | multivae, qz_m, qz_v, inference-output | L-047 |
 | testing, gradient-flow, conditional-normalization | L-048 |
+| mrtotalvi, mrmultivi, scale_observations, elbo, loss | L-049 |
+| mrtotalvi, mrmultivi, n_obs_per_sample, indexing, sort | L-050 |
 | mrmultivi, log1p, latent-input | D-014 |
+| mrtotalvi, mrmultivi, use_map, elbo, stochastic-eps | D-015 |
 | B1, macro-F1, label-transfer | F-001, F-002, F-003 |
 | B2, scib, batch-mixing, bio-conservation | F-004, F-005 |
 | B3, cross-panel, concordance | F-006 |

@@ -335,3 +335,17 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **mitigation_type**: structural
 **structural_mitigation_candidate**: test_qu_encoder_gradients_flow
 **Body**: To verify that a specific submodule (e.g. `qu.cond_norm1.gamma_embedding`) is connected to the loss, the correct test shape is a single manual forward-backward pass on an UNTRAINED model (no training loop, no Lightning). Pattern: `module.train() → inf_inputs = module._get_inference_input(tensors) → inf_out = module.inference(**inf_inputs) → gen_inputs = module._get_generative_input(tensors, inf_out) → gen_out = module.generative(**gen_inputs) → loss_out = module.loss(tensors, inf_out, gen_out) → loss_out.loss.backward()`. Then assert `param.grad is not None` and `param.grad.abs().max() > 0`. Benefits: (1) runs in <1s (no training overhead), (2) directly tests gradient connectivity (the ground truth), (3) works on an untrained model so no initialization assumptions. Contrast with checking parameter drift after training, which is indirect and can give false negatives if LR is too small or training too short.
+
+### L-049 — [2026-07-08] Per-cell ELBO reconstruction when parent loss() already called mean()
+**Category**: design
+**Tags**: mrtotalvi, mrmultivi, scale_observations, elbo, loss
+**mitigation_type**: convention
+**structural_mitigation_candidate**: test_scale_observations
+**Body**: When a parent `loss()` returns a scalar (already called `torch.mean()`), reweighting per-cell ELBO requires reconstructing the per-cell total from the individual component tensors stored in `loss_out.kl_local` and `loss_out.reconstruction_loss`. Apply the exact same scaling factors as the parent formula (e.g. `kl_weight * pro_recons_weight` for protein in TOTALVAE), divide by `prefactors = n_obs_per_sample[sample_index]`, then take `.mean()`. Never try to undo a `mean()` — always work from the per-cell tensors before aggregation.
+
+### L-050 — [2026-07-08] value_counts().sort_index() ordering for n_obs_per_sample
+**Category**: gotcha
+**Tags**: mrtotalvi, mrmultivi, scale_observations, n_obs_per_sample, indexing
+**mitigation_type**: convention
+**structural_mitigation_candidate**: (none)
+**Body**: Computing `n_obs_per_sample` from `adata.obs["_scvi_sample"]` must use `value_counts().sort_index()` not `value_counts()` (which sorts by count, descending). The buffer must be indexed by integer sample index matching the embedding table row, so the sort must be by index (0, 1, 2, …), not by cell count. Wrong sort → wrong prefactor applied to each donor's cells → silently biased ELBO.

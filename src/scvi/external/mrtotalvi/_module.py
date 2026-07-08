@@ -5,7 +5,6 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from torch.distributions import kl_divergence as kl
 
 from scvi import REGISTRY_KEYS
 from scvi.module._constants import MODULE_KEYS
@@ -263,7 +262,7 @@ class MrTotalVAE(TOTALVAE):
             return loss_out
 
         eps = inference_outputs["eps"]
-        peps = Normal(torch.zeros_like(eps), torch.exp(self.pz_scale))
+        peps = Normal(0.0, torch.exp(self.pz_scale))
         # kl_z shape: (batch, n_latent) → (batch,)  [or (n_samples, batch) → (batch,)]
         kl_z = -peps.log_prob(eps).sum(dim=-1)
         if kl_z.ndim > 1:

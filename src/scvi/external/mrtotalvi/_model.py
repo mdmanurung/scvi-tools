@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import warnings
 from typing import TYPE_CHECKING
 
@@ -24,9 +23,6 @@ if TYPE_CHECKING:
 
     import numpy.typing as npt
     from anndata import AnnData
-
-logger = logging.getLogger(__name__)
-
 
 class MrTotalVI(TOTALVI):
     """TotalVI with an MrVI-style hierarchical donor latent space.
@@ -100,12 +96,13 @@ class MrTotalVI(TOTALVI):
             )
         model_kwargs["latent_distribution"] = "normal"
 
-        # Call TOTALVI.__init__; this creates MrTotalVAE(n_sample=0) internally
-        # because n_sample / n_latent_sample / z_u_prior_scale / learn_z_u_prior_scale
-        # are NOT in TOTALVI's explicit signature → they land in **model_kwargs
-        # and reach MrTotalVAE.__init__.  MrTotalVAE builds the hierarchy
-        # immediately if n_sample > 0; here we defer until _setup_hierarchy below
-        # so that summary_stats.n_sample (set by super()) is the source of truth.
+        # Call TOTALVI.__init__. n_sample / n_latent_sample / z_u_prior_scale /
+        # learn_z_u_prior_scale are explicit kwargs here but are absent from
+        # TOTALVI's signature — Python routes them into **model_kwargs so they
+        # reach MrTotalVAE.__init__ as explicit parameters (not via **kwargs
+        # pass-through: MrTotalVAE names them explicitly in its own __init__).
+        # MrTotalVAE always builds with n_sample=0 until _setup_hierarchy below
+        # so that summary_stats.n_sample (populated by super()) is the source of truth.
         super().__init__(adata, n_latent=n_latent, **model_kwargs)
 
         # At this point self.summary_stats is populated from the registry.
@@ -139,8 +136,8 @@ class MrTotalVI(TOTALVI):
     def train(self, *args, accelerator: str = "auto", **kwargs) -> None:
         """Train MrTotalVI.
 
-        Identical to :meth:`~scvi.model.TOTALVI.train` but raises loudly when no
-        CUDA device is detected instead of silently falling back to CPU.
+        Identical to :meth:`~scvi.model.TOTALVI.train` but warns when no CUDA
+        device is detected instead of silently falling back to CPU.
 
         Pass ``accelerator='cpu'`` explicitly to suppress the warning and run on CPU.
         """
@@ -201,12 +198,6 @@ class MrTotalVI(TOTALVI):
         -------
         %(returns)s
         """
-        warnings.warn(
-            "We recommend using setup_mudata for multi-modal data. "
-            "It does not influence model performance.",
-            DeprecationWarning,
-            stacklevel=settings.warnings_stacklevel,
-        )
         # Add integer index column required by compute_local_statistics
         adata.obs["_indices"] = np.arange(adata.n_obs).astype(int)
 
@@ -300,37 +291,41 @@ class MrTotalVI(TOTALVI):
         adata = self._validate_anndata(adata)
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
+        was_training = self.module.training
+        self.module.eval()
         results = []
-        for tensors in scdl:
-            inf_inputs = self.module._get_inference_input(tensors)
-            with torch.inference_mode():
-                out = self.module.inference(**inf_inputs)
+        try:
+            for tensors in scdl:
+                inf_inputs = self.module._get_inference_input(tensors)
+                with torch.inference_mode():
+                    out = self.module.inference(**inf_inputs)
 
-            if not give_z:
-                # Return u (sample-unaware base)
-                rep = out["qz"].loc if give_mean else out["u"]
-            else:
-                # give_z=True: return z = z_base + eps using real sample_index.
-                # When give_mean=False, out[Z_KEY] is already z_base + eps from
-                # the reparameterised sample.  When give_mean=True we re-run qz
-                # with u_mean so the returned z uses the posterior mean of u.
-                if give_mean:
-                    sample_index = inf_inputs["sample_index"]
-                    u_mean = out["qz"].loc
-                    with torch.inference_mode():
-                        z_base, eps = self.module.qz(u_mean, sample_index)
-                    rep = z_base + eps
+                if not give_z:
+                    # Return u (sample-unaware base)
+                    rep = out["qz"].loc if give_mean else out["u"]
                 else:
-                    rep = out[MODULE_KEYS.Z_KEY]
+                    # give_z=True: return z = z_base + eps using real sample_index.
+                    # When give_mean=False, out[Z_KEY] is already z_base + eps from
+                    # the reparameterised sample.  When give_mean=True we re-run qz
+                    # with u_mean so the returned z uses the posterior mean of u.
+                    if give_mean:
+                        sample_index = inf_inputs["sample_index"]
+                        u_mean = out["qz"].loc
+                        with torch.inference_mode():
+                            z_base, eps = self.module.qz(u_mean, sample_index)
+                        rep = z_base + eps
+                    else:
+                        rep = out[MODULE_KEYS.Z_KEY]
 
-            results.append(rep.detach().cpu().numpy())
+                results.append(rep.detach().cpu().numpy())
+        finally:
+            self.module.train(was_training)
         return np.concatenate(results, axis=0)
 
     # ------------------------------------------------------------------
     # Counterfactual representations (internal)
     # ------------------------------------------------------------------
 
-    @torch.inference_mode()
     def _compute_cf_representations(
         self,
         adata: AnnData,
@@ -374,33 +369,39 @@ class MrTotalVI(TOTALVI):
         all_reps = []
         all_cell_names = []
 
-        for tensors in tqdm(scdl, desc="Counterfactual representations"):
-            cell_idx = tensors[REGISTRY_KEYS.INDICES_KEY].long().flatten()
-            all_cell_names.extend(adata.obs_names[cell_idx.numpy()].tolist())
+        was_training = self.module.training
+        self.module.eval()
+        try:
+            with torch.inference_mode():
+                for tensors in tqdm(scdl, desc="Counterfactual representations"):
+                    cell_idx = tensors[REGISTRY_KEYS.INDICES_KEY].long().flatten()
+                    all_cell_names.extend(adata.obs_names[cell_idx.numpy()].tolist())
 
-            # Full TotalVI + MrTotalVI encoder pass
-            inf_inputs = self.module._get_inference_input(tensors)
-            base_out = self.module.inference(**inf_inputs)
+                    # Full TotalVI + MrTotalVI encoder pass
+                    inf_inputs = self.module._get_inference_input(tensors)
+                    base_out = self.module.inference(**inf_inputs)
 
-            # u: sample-unaware base representation
-            if use_mean:
-                u = base_out["qz"].loc  # posterior mean: (batch, n_latent)
-            else:
-                u = base_out["u"]       # reparameterised sample
+                    # u: sample-unaware base representation
+                    if use_mean:
+                        u = base_out["qz"].loc  # posterior mean: (batch, n_latent)
+                    else:
+                        u = base_out["u"]       # reparameterised sample
 
-            n_cells = u.shape[0]
-            dev = u.device
+                    n_cells = u.shape[0]
+                    dev = u.device
 
-            # Counterfactual loop: fix u, vary donor
-            cf_zs = []
-            for d in range(n_sample):
-                cf_sample = torch.full((n_cells, 1), d, dtype=torch.long, device=dev)
-                z_base, eps = self.module.qz(u, cf_sample)
-                cf_zs.append((z_base + eps).detach().cpu())
+                    # Counterfactual loop: fix u, vary donor
+                    cf_zs = []
+                    for d in range(n_sample):
+                        cf_sample = torch.full((n_cells, 1), d, dtype=torch.long, device=dev)
+                        z_base, eps = self.module.qz(u, cf_sample)
+                        cf_zs.append((z_base + eps).detach().cpu())
 
-            # (n_sample, n_cells, n_latent) → (n_cells, n_sample, n_latent)
-            batch_reps = torch.stack(cf_zs, dim=0).permute(1, 0, 2).numpy()
-            all_reps.append(batch_reps)
+                    # (n_sample, n_cells, n_latent) → (n_cells, n_sample, n_latent)
+                    batch_reps = torch.stack(cf_zs, dim=0).permute(1, 0, 2).numpy()
+                    all_reps.append(batch_reps)
+        finally:
+            self.module.train(was_training)
 
         return np.concatenate(all_reps, axis=0), all_cell_names
 
@@ -408,7 +409,6 @@ class MrTotalVI(TOTALVI):
     # Public counterfactual API
     # ------------------------------------------------------------------
 
-    @torch.inference_mode()
     def get_local_sample_representation(
         self,
         adata: AnnData | None = None,
@@ -452,7 +452,6 @@ class MrTotalVI(TOTALVI):
             name="sample_representations",
         )
 
-    @torch.inference_mode()
     def get_local_sample_distances(
         self,
         adata: AnnData | None = None,

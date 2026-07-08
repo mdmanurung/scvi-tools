@@ -78,23 +78,29 @@ class MrMultiVI(MULTIVI):
         scale_observations: bool = False,
         **model_kwargs,
     ) -> None:
-        # Inject hierarchy kwargs so they reach MrMultiVAE via MULTIVI's **model_kwargs
-        model_kwargs["n_latent_sample"] = n_latent_sample
-        model_kwargs["z_u_prior_scale"] = z_u_prior_scale
-        model_kwargs["learn_z_u_prior_scale"] = learn_z_u_prior_scale
-        model_kwargs["use_map"] = use_map
-        model_kwargs["scale_observations"] = scale_observations
-
-        # MULTIVI.__init__ → creates MrMultiVAE(n_sample=0) internally
+        # MULTIVI.__init__ → creates MrMultiVAE(n_sample=0) internally.
+        # Hierarchy params (n_latent_sample etc.) are NOT injected into model_kwargs here:
+        # they are named args in MrMultiVI.__init__ and would cause duplicate-kwargs TypeError
+        # at load time if also present in model_kwargs (_get_init_params captures both).
+        # _setup_hierarchy below wires all hierarchy params correctly after super().__init__.
         super().__init__(mdata, **model_kwargs)
 
         # summary_stats.n_sample is populated from the SAMPLE_KEY registry field
         n_sample = self.summary_stats.n_sample
 
-        n_obs_per_sample = torch.tensor(
-            mdata.obs["_scvi_sample"].value_counts().sort_index().values,
-            dtype=torch.float32,
+        counts = (
+            mdata.obs["_scvi_sample"]
+            .value_counts()
+            .reindex(range(n_sample), fill_value=0)
+            .sort_index()
         )
+        if (counts == 0).any():
+            missing = counts[counts == 0].index.tolist()
+            raise ValueError(
+                f"Donors at index positions {missing} have no cells in the registered "
+                "MuData. Remove them from sample_key or filter them from the data."
+            )
+        n_obs_per_sample = torch.tensor(counts.values, dtype=torch.float32)
 
         self.module._setup_hierarchy(
             n_sample=n_sample,
@@ -384,7 +390,7 @@ class MrMultiVI(MULTIVI):
                     if give_mean:
                         sample_index = inf_inputs["sample_index"]
                         u_mean = out["qz_m"]
-                        z_base, eps = self.module.qz(u_mean, sample_index)
+                        z_base, eps, _ = self.module.qz(u_mean, sample_index)
                         rep = z_base + eps
                     else:
                         rep = out["z"]
@@ -444,7 +450,7 @@ class MrMultiVI(MULTIVI):
             cf_zs = []
             for d in range(n_sample):
                 cf_sample = torch.full((n_cells, 1), d, dtype=torch.long, device=dev)
-                z_base, eps = self.module.qz(u, cf_sample)
+                z_base, eps, _ = self.module.qz(u, cf_sample)
                 cf_zs.append((z_base + eps).detach().cpu())
 
             # (n_sample, n_cells, n_latent) → (n_cells, n_sample, n_latent)

@@ -655,8 +655,10 @@ class EncoderUZ(nn.Module):
         Whether to stop gradients through the MLP in the attention block.
     use_map
         If ``True``, use the MAP (deterministic) estimate: attention produces one
-        residual directly. If ``False``, produces mean + log-var of a Normal.
-        Must be ``True`` when using ``kl_z = -log p(eps)`` as the KL term.
+        residual directly and ``kl_z = -log p(eps)`` is the correct ELBO term.
+        If ``False``, the attention output is split into mean and log-scale of a
+        Normal; ``forward()`` returns the distribution so the caller can compute
+        the proper analytic ``KL(q(eps) || p(eps))`` including the entropy term.
     n_hidden
         Number of hidden units in the MLP.
     n_layers
@@ -728,7 +730,7 @@ class EncoderUZ(nn.Module):
         self,
         u: torch.Tensor,
         sample_covariate: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, Normal | None]:
         """Compute z_base and eps from u and sample covariate.
 
         Parameters
@@ -746,6 +748,10 @@ class EncoderUZ(nn.Module):
             ``(mc_samples, batch, n_latent)``.
         eps : torch.Tensor
             Sample-specific residual: same shape as ``z_base``.
+        eps_dist : Normal or None
+            When ``use_map=False``, the posterior ``q(eps) = Normal(eps_mean, eps_scale)``
+            used to draw ``eps``; enables analytic KL in the loss.  ``None`` when
+            ``use_map=True`` (deterministic point estimate).
         """
         sample_covariate = sample_covariate.to(torch.int64).flatten()
         has_mc_samples = u.ndim == 3
@@ -759,14 +765,17 @@ class EncoderUZ(nn.Module):
 
         residual = self.attention_block(query_embed=u_, kv_embed=sample_embed)
 
+        eps_dist = None
         if not self.use_map:
-            # Stochastic eps: split 2*n_latent output into mean/log-scale and reparameterise
+            # Stochastic eps: split 2*n_latent into mean/log-scale; clamp before exp (M1)
             eps_mean, eps_log_scale = residual.chunk(2, dim=-1)
-            residual = Normal(eps_mean, eps_log_scale.exp()).rsample()
+            eps_scale = eps_log_scale.clamp(max=10.0).exp()
+            eps_dist = Normal(eps_mean, eps_scale)
+            residual = eps_dist.rsample()
 
         if self.fc is not None:
             z_base = self.fc(u_stop)
-            return z_base, residual
+            return z_base, residual, eps_dist
         else:
             # Isomorphic: z_base = u (preserves decoder input unchanged)
-            return u, residual
+            return u, residual, eps_dist

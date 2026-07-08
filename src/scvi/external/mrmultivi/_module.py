@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from torch.distributions import Normal
+from torch.distributions import Normal, kl_divergence
 
 from scvi import REGISTRY_KEYS
 from scvi.module._multivae import MULTIVAE
@@ -254,12 +254,13 @@ class MrMultiVAE(MULTIVAE):
             raise ValueError(
                 "sample_index must be provided when the MrMultiVI hierarchy is active."
             )
-        z_base, eps = self.qz(u, sample_index_cf)
+        z_base, eps, eps_dist = self.qz(u, sample_index_cf)
         z = z_base + eps
 
         outputs["u"] = u
         outputs["z_base"] = z_base
         outputs["eps"] = eps
+        outputs["eps_dist"] = eps_dist  # None when use_map=True
         outputs["z"] = z
         return outputs
 
@@ -297,9 +298,14 @@ class MrMultiVAE(MULTIVAE):
             return loss_out
 
         eps = inference_outputs["eps"]
+        eps_dist = inference_outputs.get("eps_dist")
         peps = Normal(0.0, torch.exp(self.pz_scale))
-        # kl_z: (batch, n_latent) → (batch,)
-        kl_z = -peps.log_prob(eps).sum(dim=-1)
+        if eps_dist is not None:
+            # use_map=False: analytic KL(q(eps) || p(eps)) — correct ELBO includes entropy
+            kl_z = kl_divergence(eps_dist, peps).sum(dim=-1)
+        else:
+            # use_map=True: deterministic eps — cross-entropy -log p(eps) is the correct term
+            kl_z = -peps.log_prob(eps).sum(dim=-1)
         assert kl_z.ndim == 1, f"Expected 1D kl_z; got shape {kl_z.shape}"
 
         # kl_divergence_z now = kl_u + kl_z
@@ -320,6 +326,15 @@ class MrMultiVAE(MULTIVAE):
             per_cell = recon + kl_weight * kl_local["kl_divergence_z"] + kl_local["kl_divergence_paired"]
             loss = (per_cell / prefactors).mean()
         else:
+            if self._scale_observations:
+                import warnings
+                warnings.warn(
+                    "scale_observations=True but n_obs_per_sample is None "
+                    "(buffer was not restored after load). "
+                    "Call _setup_hierarchy(n_obs_per_sample=...) to restore weighting.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             loss = loss_out.loss + kl_weight * kl_z.mean()
 
         return LossOutput(

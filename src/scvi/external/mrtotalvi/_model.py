@@ -112,10 +112,19 @@ class MrTotalVI(TOTALVI):
         # At this point self.summary_stats is populated from the registry.
         n_sample = self.summary_stats.n_sample
 
-        n_obs_per_sample = torch.tensor(
-            adata.obs["_scvi_sample"].value_counts().sort_index().values,
-            dtype=torch.float32,
+        counts = (
+            adata.obs["_scvi_sample"]
+            .value_counts()
+            .reindex(range(n_sample), fill_value=0)
+            .sort_index()
         )
+        if (counts == 0).any():
+            missing = counts[counts == 0].index.tolist()
+            raise ValueError(
+                f"Donors at index positions {missing} have no cells in the registered "
+                "AnnData. Remove them from sample_key or filter them from the data."
+            )
+        n_obs_per_sample = torch.tensor(counts.values, dtype=torch.float32)
 
         self.module._setup_hierarchy(
             n_sample=n_sample,
@@ -325,7 +334,7 @@ class MrTotalVI(TOTALVI):
                         sample_index = inf_inputs["sample_index"]
                         u_mean = out["qz"].loc
                         with torch.inference_mode():
-                            z_base, eps = self.module.qz(u_mean, sample_index)
+                            z_base, eps, _ = self.module.qz(u_mean, sample_index)
                         rep = z_base + eps
                     else:
                         rep = out[MODULE_KEYS.Z_KEY]
@@ -407,7 +416,7 @@ class MrTotalVI(TOTALVI):
                     cf_zs = []
                     for d in range(n_sample):
                         cf_sample = torch.full((n_cells, 1), d, dtype=torch.long, device=dev)
-                        z_base, eps = self.module.qz(u, cf_sample)
+                        z_base, eps, _ = self.module.qz(u, cf_sample)
                         cf_zs.append((z_base + eps).detach().cpu())
 
                     # (n_sample, n_cells, n_latent) → (n_cells, n_sample, n_latent)

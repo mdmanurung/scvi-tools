@@ -133,6 +133,31 @@ class MrTotalVI(TOTALVI):
         self.init_params_ = self._get_init_params(locals())
 
     # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
+
+    def train(self, *args, accelerator: str = "auto", **kwargs) -> None:
+        """Train MrTotalVI.
+
+        Identical to :meth:`~scvi.model.TOTALVI.train` but raises loudly when no
+        CUDA device is detected instead of silently falling back to CPU.
+
+        Pass ``accelerator='cpu'`` explicitly to suppress the warning and run on CPU.
+        """
+        if accelerator == "auto":
+            if torch.cuda.is_available():
+                accelerator = "gpu"
+            else:
+                warnings.warn(
+                    "No CUDA device found — MrTotalVI will train on CPU. "
+                    "Pass accelerator='cpu' to suppress this warning, or "
+                    "run on a GPU node.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        super().train(*args, accelerator=accelerator, **kwargs)
+
+    # ------------------------------------------------------------------
     # Data registration
     # ------------------------------------------------------------------
 

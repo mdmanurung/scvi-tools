@@ -63,8 +63,13 @@
 | testing, gradient-flow, conditional-normalization | L-048 |
 | mrtotalvi, mrmultivi, scale_observations, elbo, loss | L-049 |
 | mrtotalvi, mrmultivi, n_obs_per_sample, indexing, sort | L-050 |
+| mrmultivi, model-save-load, model_kwargs, duplicate-kwargs | L-051 |
+| mrtotalvi, mrmultivi, scale_observations, save-load, persistent-buffer, silent-failure | L-052 |
+| mrtotalvi, mrmultivi, scale_observations, value_counts, reindex, zero-count | L-053 |
 | mrmultivi, log1p, latent-input | D-014 |
-| mrtotalvi, mrmultivi, use_map, elbo, stochastic-eps | D-015 |
+| mrtotalvi, mrmultivi, use_map, elbo, stochastic-eps, entropy-term | D-015 |
+| mrtotalvi, mrmultivi, pz_scale, kl_z, prior-collapse, clamp | D-016, L-054 |
+| testing, save-load, cuda, device-mismatch, torch.allclose | L-055 |
 | B1, macro-F1, label-transfer | F-001, F-002, F-003 |
 | B2, scib, batch-mixing, bio-conservation | F-004, F-005 |
 | B3, cross-panel, concordance | F-006 |

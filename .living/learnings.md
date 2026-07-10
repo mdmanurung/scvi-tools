@@ -349,3 +349,38 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **mitigation_type**: convention
 **structural_mitigation_candidate**: (none)
 **Body**: Computing `n_obs_per_sample` from `adata.obs["_scvi_sample"]` must use `value_counts().sort_index()` not `value_counts()` (which sorts by count, descending). The buffer must be indexed by integer sample index matching the embedding table row, so the sort must be by index (0, 1, 2, …), not by cell count. Wrong sort → wrong prefactor applied to each donor's cells → silently biased ELBO.
+
+### L-051 — [2026-07-08] MrMultiVI model_kwargs injection causes duplicate kwargs at load()
+**Category**: bug
+**Tags**: mrmultivi, model-save-load, model_kwargs, init-params, duplicate-kwargs
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_mrmultivi_save_load_roundtrip
+**Body**: `MrMultiVI.__init__` both declares `n_latent_sample`, `z_u_prior_scale`, `learn_z_u_prior_scale`, `use_map`, `scale_observations` as named params AND injects them into `model_kwargs` before calling `super().__init__(mdata, **model_kwargs)`. `_get_init_params(locals())` captures the named params as non-kwargs AND the `model_kwargs` dict containing the same keys. At load time, `cls(adata, **non_kwargs, **expanded_model_kwargs)` gets duplicate keyword arguments → `TypeError`. Fix: remove all injections into `model_kwargs`; they are already named params that flow through to `_setup_hierarchy` directly after `super().__init__()`. `MrTotalVI` does NOT have this bug (it passes params directly). This bug makes any saved `MrMultiVI` model unloadable.
+
+### L-052 — [2026-07-08] Non-persistent buffer silently None after save/load when scale_observations=True
+**Category**: bug
+**Tags**: mrtotalvi, mrmultivi, scale_observations, n_obs_per_sample, save-load, persistent-buffer
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_scale_observations_warns_after_load
+**Body**: `n_obs_per_sample` is registered with `register_buffer(..., persistent=False)` so it is excluded from `state_dict` and not restored on `load()`. After loading a model trained with `scale_observations=True`, `self.n_obs_per_sample is None` and the guard `if self._scale_observations and self.n_obs_per_sample is not None` silently falls through to the unweighted loss — no error, no warning, just quietly wrong training. Fix: emit `UserWarning` in `loss()` when `_scale_observations=True` and buffer is `None` (after a `load()` call, the caller must recompute the buffer from adata). The non-persistent pattern is intentional (buffer depends on the data subset, not the weights) but the silent fallback is not.
+
+### L-054 — [2026-07-10] pz_scale degeneracy direction: σ→0 (min), not σ→∞ (max)
+**Category**: bug
+**Tags**: mrtotalvi, mrmultivi, pz_scale, kl_z, degeneracy, prior-collapse
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_learnable_prior_scale_clamp
+**Body**: Early analysis of the `pz_scale` degeneracy (session publication-readiness review) incorrectly stated that the collapse direction was `pz_scale→+∞` (σ→∞). The correct direction is `pz_scale→−∞` (σ→0). Under `use_map=True`, `kl_z = -log Normal(0, σ).log_prob(eps)`. Expanding: `-log_prob = 0.5*log(2π) + log(σ) + eps²/(2σ²)`. As σ→∞, `log(σ)→+∞` so loss INCREASES — the optimizer has no incentive to push σ large. As σ→0 and eps→0 jointly: `log(σ)→−∞` dominates (goes to −∞ faster than eps²/σ² diverges) → `kl_z→−∞` → ELBO unbounded above. The fix is therefore `clamp(min=...)`, NOT `clamp(max=...)`. Any future degeneracy analysis on a `log(σ)` term must check both limits before concluding direction.
+
+### L-055 — [2026-07-10] `torch.allclose` across CUDA/CPU device raises RuntimeError in save-load tests
+**Category**: bug
+**Tags**: testing, save-load, cuda, device-mismatch, torch.allclose
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_mrtotalvi_save_load_preserves_latent_hierarchy, test_mrmultivi_save_load_preserves_latent_hierarchy
+**Body**: `test_mrtotalvi_save_load_preserves_latent_hierarchy` and the mrmultivi equivalent were asserting `torch.allclose(loaded.module.u_prior_means, model.module.u_prior_means)`. After save-load, buffers are restored to CPU even if the original model was on GPU (`cuda:0`). The `torch.allclose` call raised `RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!`. Fix: `.cpu()` both sides before comparison. Pattern to remember: after `Model.load(path)`, all buffers and parameters land on CPU regardless of training device. Always call `.cpu()` on both sides of any post-load comparison.
+
+### L-053 — [2026-07-08] value_counts() omits absent samples → wrong-length n_obs_per_sample
+**Category**: bug
+**Tags**: mrtotalvi, mrmultivi, scale_observations, n_obs_per_sample, value_counts, reindex
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_scale_observations_missing_sample
+**Body**: `adata.obs["_scvi_sample"].value_counts().sort_index()` omits any sample index that has zero cells in the current `adata`. If the model was registered with `n_sample` donors but the current adata is a subset, the resulting tensor has length < `n_sample`. Indexing with a missing sample index raises `IndexError` at training time. Fix: use `.reindex(range(n_sample), fill_value=0).sort_index()` (after `value_counts()`) to ensure the tensor always has length `n_sample`. Also need a downstream guard: a `fill_value=0` entry causes division by zero in the `per_cell / prefactors` computation — raise a `ValueError` for zero-count donors before training begins.

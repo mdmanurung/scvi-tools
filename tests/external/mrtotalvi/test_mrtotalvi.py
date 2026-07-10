@@ -76,7 +76,12 @@ def _setup_and_train(adata, max_epochs: int = MAX_EPOCHS_QUICK, **model_kwargs) 
         batch_key="batch",
     )
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, **model_kwargs)
-    model.train(max_epochs=max_epochs, plan_kwargs={"lr": 1e-3}, check_val_every_n_epoch=max_epochs)
+    model.train(
+        max_epochs=max_epochs,
+        accelerator="cpu",
+        plan_kwargs={"lr": 1e-3},
+        check_val_every_n_epoch=max_epochs,
+    )
     return model
 
 
@@ -147,6 +152,412 @@ def test_smoke_counterfactual_finite(adata_basic):
     eps = out["eps"]
     assert torch.all(torch.isfinite(z)), "z contains NaN / Inf (cf + mc_samples path)"
     assert torch.all(torch.isfinite(eps)), "eps contains NaN / Inf"
+
+
+def test_mrtotalvi_non_isomorphic_u_dimension(adata_basic):
+    """n_latent_u can be smaller than z while the decoder still receives n_latent."""
+    import torch
+
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata_basic, sample_key="sample", n_latent=N_LATENT, n_latent_u=5)
+
+    assert model.module.n_latent_u == 5
+    assert model.module.qz.fc is not None
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    with torch.no_grad():
+        out = model.module._regular_inference(**inf_inputs)
+
+    assert out["u"].shape[-1] == 5
+    assert out["z"].shape[-1] == N_LATENT
+
+
+def test_mrtotalvi_non_isomorphic_u_dimension_with_mc_samples(adata_basic):
+    """MC samples preserve the u and z dimensions and keep the ELBO finite."""
+    import torch
+
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata_basic, sample_key="sample", n_latent=N_LATENT, n_latent_u=5)
+    module = model.module.train()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module._regular_inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    batch_size = tensors[scvi.REGISTRY_KEYS.X_KEY].shape[0]
+    assert inf_out["u"].shape == torch.Size([2, batch_size, 5])
+    assert inf_out["z"].shape == torch.Size([2, batch_size, N_LATENT])
+    assert inf_out["eps"].shape == torch.Size([2, batch_size, N_LATENT])
+    assert loss_out.kl_local["kl_div_z"].shape == torch.Size([batch_size])
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrtotalvi_singleton_mc_loss_matches_single_sample_loss(adata_basic):
+    """The custom MC loss is equivalent to the parent loss for one sampled z."""
+    import torch
+
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(
+        adata_basic,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        n_latent_u=5,
+        u_prior_mixture=False,
+    )
+    module = model.module.eval()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    with torch.no_grad():
+        inf_out = module._regular_inference(**inf_inputs)
+        gen_out = module.generative(**module._get_generative_input(tensors, inf_out))
+        loss_out = module.loss(tensors, inf_out, gen_out)
+
+        batch_size = tensors[scvi.REGISTRY_KEYS.X_KEY].shape[0]
+
+        def _unsqueeze_batch_tensors(value):
+            if isinstance(value, torch.Tensor) and value.ndim > 0 and value.shape[0] == batch_size:
+                return value.unsqueeze(0)
+            if isinstance(value, dict):
+                return {k: _unsqueeze_batch_tensors(v) for k, v in value.items()}
+            return value
+
+        inf_mc = dict(inf_out)
+        for key in ("z", "u", "z_base", "eps", "library_gene"):
+            inf_mc[key] = inf_mc[key].unsqueeze(0)
+        gen_mc = _unsqueeze_batch_tensors(gen_out)
+        loss_mc = module.loss(tensors, inf_mc, gen_mc)
+
+    assert torch.allclose(
+        loss_mc.reconstruction_loss["reconst_loss_gene"].squeeze(0),
+        loss_out.reconstruction_loss["reconst_loss_gene"],
+        atol=1e-5,
+    )
+    assert torch.allclose(
+        loss_mc.reconstruction_loss["reconst_loss_protein"].squeeze(0),
+        loss_out.reconstruction_loss["reconst_loss_protein"],
+        atol=1e-5,
+    )
+    assert torch.allclose(loss_mc.kl_local["kl_div_z"], loss_out.kl_local["kl_div_z"], atol=1e-5)
+    assert torch.allclose(loss_mc.loss, loss_out.loss, atol=1e-5)
+
+
+def test_mrtotalvi_mc_samples_with_stochastic_eps_and_scaled_observations(adata_basic):
+    """MC samples work when eps is stochastic and observations are sample-scaled."""
+    import torch
+
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(
+        adata_basic,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        n_latent_u=5,
+        use_map=False,
+        scale_observations=True,
+    )
+    module = model.module.train()
+    assert module.n_obs_per_sample is not None
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module._regular_inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    batch_size = tensors[scvi.REGISTRY_KEYS.X_KEY].shape[0]
+    assert inf_out["eps_dist"] is not None
+    assert inf_out["eps_dist"].loc.shape == torch.Size([2, batch_size, N_LATENT])
+    assert loss_out.kl_local["kl_div_z"].shape == torch.Size([batch_size])
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrtotalvi_mc_samples_with_size_factor_and_protein_batch_mask(adata_basic):
+    """MC loss handles TotalVI size factors and protein batch masks."""
+    import torch
+
+    adata = adata_basic.copy()
+    adata.obs["batch"] = np.where(np.arange(adata.n_obs) % 2 == 0, "batch_0", "batch_1")
+    adata.obs["size_factor"] = np.asarray(adata.X.sum(axis=1)).reshape(-1) + 1.0
+    protein = np.asarray(adata.obsm["protein_expression"]).copy()
+    protein[adata.obs["batch"].to_numpy() == "batch_0", 0] = 0
+    adata.obsm["protein_expression"] = protein
+
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+        size_factor_key="size_factor",
+    )
+    with pytest.warns(UserWarning, match="Some proteins have all 0 counts"):
+        model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=5)
+    module = model.module.train()
+    assert module.use_size_factor_key
+    assert module.protein_batch_mask is not None
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module._regular_inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    batch_size = tensors[scvi.REGISTRY_KEYS.X_KEY].shape[0]
+    assert loss_out.reconstruction_loss["reconst_loss_protein"].shape == torch.Size([2, batch_size])
+    assert loss_out.kl_local["kl_div_z"].shape == torch.Size([batch_size])
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrtotalvi_default_u_dimension_is_isomorphic(adata_basic):
+    """n_latent_u=None preserves the original isomorphic u->z behavior."""
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata_basic, sample_key="sample", n_latent=N_LATENT)
+
+    assert model.module.n_latent_u == N_LATENT
+    assert model.module.qz.fc is None
+
+
+def test_mrtotalvi_label_conditioned_mog_prior(adata_basic):
+    """labels_key switches the MoG prior to one component per label and biases logits."""
+    import torch
+    from torch.distributions import MixtureSameFamily
+
+    adata = adata_basic.copy()
+    adata.obs["cell_type"] = np.where(np.arange(adata.n_obs) % 2 == 0, "T", "B")
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+        labels_key="cell_type",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+
+    assert model.label_order.tolist() == ["B", "T"] or model.label_order.tolist() == ["T", "B"]
+    assert model.module.u_prior_logits.shape == (model.summary_stats.n_labels,)
+    assert model.module.u_prior_means.shape == (model.summary_stats.n_labels, 4)
+
+    labels = torch.tensor([[0], [1], [0]])
+    u = torch.zeros(3, 4)
+    prior = model.module.build_u_prior(u, labels)
+
+    assert isinstance(prior, MixtureSameFamily)
+    assert prior.mixture_distribution.logits.argmax(dim=-1).tolist() == [0, 1, 0]
+
+
+def test_mrtotalvi_label_conditioned_mog_flows_through_mc_loss(adata_basic):
+    """Registered labels condition the MoG prior in the actual MC loss path."""
+    import torch
+
+    adata = adata_basic.copy()
+    adata.obs["cell_type"] = np.where(np.arange(adata.n_obs) % 2 == 0, "T", "B")
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+        labels_key="cell_type",
+    )
+    model = MrTotalVI(
+        adata,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        n_latent_u=4,
+        z_u_prior=False,
+    )
+    module = model.module.train()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module._regular_inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    expected_kl_u = module.kl_u(
+        inf_out["qu"],
+        inf_out["u"],
+        tensors[scvi.REGISTRY_KEYS.LABELS_KEY],
+    )
+    assert module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
+    assert torch.allclose(loss_out.kl_local["kl_div_z"], expected_kl_u, atol=1e-5)
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrtotalvi_gaussian_u_prior_and_z_u_prior_off(adata_basic):
+    """u_prior_mixture=False uses analytic Gaussian KL and z_u_prior=False omits kl_z."""
+    import torch
+
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(
+        adata_basic,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        u_prior_mixture=False,
+        z_u_prior=False,
+    )
+    assert not hasattr(model.module, "u_prior_logits")
+
+    module = model.module.train()
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module._regular_inference(**inf_inputs)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    expected_kl_u = module.kl_u(
+        inf_out["qz"],
+        inf_out["u"],
+        tensors[scvi.REGISTRY_KEYS.LABELS_KEY],
+    )
+    assert torch.allclose(loss_out.kl_local["kl_div_z"], expected_kl_u, atol=1e-5)
+
+
+def test_mrtotalvi_encode_covariates_expands_qu_input(adata_basic):
+    """encode_covariates=True appends batch, categorical, and continuous covariates to qu."""
+    adata = adata_basic.copy()
+    adata.obs["stim"] = np.where(np.arange(adata.n_obs) % 2 == 0, "ctrl", "stim")
+    adata.obs["score"] = np.linspace(0.0, 1.0, adata.n_obs)
+
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+        categorical_covariate_keys=["stim"],
+        continuous_covariate_keys=["score"],
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, encode_covariates=True)
+
+    base_features = model.summary_stats.n_vars + model.summary_stats.n_proteins
+    expected_extra = model.summary_stats.n_batch + 2 + 1
+    assert model.module.qu.fc1.in_features == base_features + expected_extra
+
+
+def test_mrtotalvi_save_load_preserves_latent_hierarchy(adata_basic, tmp_path):
+    """Save/load preserves non-isomorphic u, MoG prior, and label/sample mappings."""
+    import torch
+
+    adata = adata_basic.copy()
+    adata.obs["cell_type"] = np.where(np.arange(adata.n_obs) % 2 == 0, "T", "B")
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+        labels_key="cell_type",
+    )
+    model = MrTotalVI(
+        adata,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        n_latent_u=4,
+        u_prior_mixture=True,
+    )
+
+    save_path = tmp_path / "mrtotalvi"
+    model.save(save_path, overwrite=True)
+    loaded = MrTotalVI.load(save_path, adata=adata)
+
+    assert loaded.module.n_latent_u == 4
+    assert loaded.module.qz.fc is not None
+    assert loaded.module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
+    assert loaded.sample_order.tolist() == model.sample_order.tolist()
+    assert loaded.label_order.tolist() == model.label_order.tolist()
+    assert torch.allclose(loaded.module.u_prior_means, model.module.u_prior_means)
+    assert torch.allclose(loaded.module.u_prior_scales, model.module.u_prior_scales)
+
+
+def test_mrtotalvi_u_space_statistical_apis(adata_basic):
+    """Aggregated posterior, DA, and admissibility APIs operate over u."""
+    import torch
+    from torch.distributions import MixtureSameFamily
+
+    adata = adata_basic.copy()
+    adata.obs["condition"] = np.where(adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b")
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    ap = model.get_aggregated_posterior(batch_size=32)
+    assert isinstance(ap, MixtureSameFamily)
+    assert ap.component_distribution.event_shape == torch.Size([4])
+
+    da = model.differential_abundance(sample_cov_keys=["condition"], batch_size=32)
+    assert "log_probs" in da
+    assert "condition_log_probs" in da
+    assert da["log_probs"].dims == ("cell_name", "sample")
+
+    outliers = model.get_outlier_cell_sample_pairs(batch_size=32, subsample_size=10)
+    assert {"log_probs", "log_ratios", "is_admissible"} <= set(outliers.data_vars)
+
+
+def test_mrtotalvi_differential_expression_returns_latent_statistics(adata_basic):
+    """MrTotalVI DE exposes beta, effect_size, and pvalue over local z shifts."""
+    adata = adata_basic.copy()
+    adata.obs["condition"] = np.where(adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b")
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    de = model.differential_expression(sample_cov_keys=["condition"], batch_size=32)
+
+    assert {"beta", "effect_size", "pvalue"} <= set(de.data_vars)
+    assert de["beta"].dims == ("cell_name", "covariate", "latent_dim")
+    assert de["effect_size"].shape == de["pvalue"].shape
 
 
 # ---------------------------------------------------------------------------

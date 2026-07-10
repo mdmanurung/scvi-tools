@@ -31,10 +31,12 @@ ConditionalNormalization(sample) → act → (+sample_embed) → NormalDistOutpu
 Sample identity is woven into `u` itself via per-donor `gamma`/`beta` embeddings — not just the
 `eps` residual. This means the two-level hierarchy carries sample information at both levels.
 
-**Isomorphic dims (`n_latent_u == n_latent`).**
-`EncoderUZ.fc is None` and `z_base == u`. This means the decoder input dimension is identical to
-stock TotalVI — zero decoder changes are needed. The hierarchy adds capacity without reshaping any
-existing weight matrices.
+**Configurable `u` dimensionality.**
+`n_latent_u=None` preserves the original isomorphic setting (`n_latent_u == n_latent`,
+`EncoderUZ.fc is None`, `z_base == u`). When `n_latent_u != n_latent`, `EncoderXU_TotalVI`
+emits the requested `u` dimension and `EncoderUZ` projects `u -> z` before the unchanged TotalVI
+decoder. This keeps the decoder contract stable while allowing non-isomorphic MrVI-style
+hierarchies.
 
 **`latent_distribution` forced to `"normal"`.**
 Under `"ln"` (softmax normalisation), `u` is simplex-constrained. An additive Euclidean residual on
@@ -45,11 +47,21 @@ Emits one deterministic `eps` per (u, sample) pair. The correct KL term is then
 `kl_z = −log p(eps) = −log N(0, exp(pz_scale))(eps)`, not a full encoder KL. This matches MrVI's
 loss formulation.
 
-**Two-level KL loss.**
-- `kl_u = KL(qu ‖ N(0,1))` — from `EncoderXU_TotalVI`; replaces TotalVI's `kl_div_z` by overriding
-  `inference_outputs["qz"]` with `qu` so TotalVI's `loss()` computes it automatically.
-- `kl_z = −log p(eps)` — new second-level term for the donor residual.
-- Both fold into the existing `kl_local["kl_div_z"]` slot for compatibility with the training loop.
+**Two-level KL loss with MrVI parity.**
+- `kl_u` is computed explicitly against either a learned mixture-of-Gaussians prior over `u` or an
+  analytic Gaussian prior.
+- If `labels_key` is registered and `n_labels > 1`, the MoG prior uses one component per label and
+  biases the matching component logits by `u_prior_label_weight`.
+- `kl_z = -log p(eps)` is added when `z_u_prior=True`; `z_u_prior=False` drops the residual prior
+  penalty while retaining `kl_u`.
+- The custom `kl_u + kl_z` replaces TotalVI's parent `kl_div_z` value inside
+  `kl_local["kl_div_z"]`.
+
+**Covariate-aware `qu`.**
+When `encode_covariates=True`, `EncoderXU_TotalVI` appends one-hot batch/categorical covariates and
+continuous covariates to the RNA+protein encoder input before its first linear layer. The donor
+sample axis remains separate and continues to enter through conditional normalization and the
+`EncoderUZ` embedding table.
 
 **Three categorical axes kept distinct.**
 - `sample_key` → `EncoderUZ` embedding table (new).
@@ -72,11 +84,10 @@ which follows the same pattern.
 - **No ArchesMixin** — the per-sample embedding is fixed at `n_sample`. New-donor surgery would
   require embedding surgery or a projection module (future work).
 - **No `latent_distribution="ln"`** — architecturally invalid; asserted rather than silently ignored.
-- **No `differential_expression` / `differential_abundance`** — deferred to v2 after the
-  counterfactual API is validated.
 - **No minified-mode inference** — the hierarchy requires the full encoder path.
-- **u prior = `N(0,1)` (MoG/label-conditioned deferred)** — MrVI supports a mixture-of-Gaussians
-  prior conditioned on cell type labels; this is not ported in v1.
+- **Decoded RNA/protein LFC storage is not implemented yet** — `differential_expression` returns
+  latent-space `beta`, `effect_size`, and `pvalue` from the local counterfactual linear model, but
+  does not yet store decoded RNA/protein LFC arrays.
 
 ### MultiVI path (implemented)
 `EncoderUZ`, `ConditionalNormalization`, and `NormalDistOutputNN` are factored into
@@ -91,6 +102,8 @@ latent input) is grafted into `MrMultiVAE` at the same level — see ADR-0006.
 - Counterfactual donor queries (`get_local_sample_representation`, `get_local_sample_distances`)
   work by re-running `EncoderUZ` with a substituted donor index, a cheap O(n_cells × n_donors)
   loop over the attention block.
+- `get_aggregated_posterior`, `differential_abundance`, and
+  `get_outlier_cell_sample_pairs` operate over `u` using TorchMRVI-style aggregated posteriors.
 - Five deepening-invariance tests verify: finite ELBO + `give_z` wiring check, fragile counterfactual
   path (cf_sample + mc_samples), non-degenerate embedding, and donor-axis separation with
   before/after contrast (zeroed-embedding collapse).

@@ -193,6 +193,8 @@ Module classes in the external API with respective generative and inference proc
    external.mrvi.MRVAE
    external.mrvi_jax.JaxMRVAE
    external.mrvi_torch.TorchMRVAE
+   external.mrtotalvi.MrTotalVAE
+   external.mrmultivi.MrMultiVAE
    external.methylvi.METHYLVAE
    external.methylvi.METHYLANVAE
    external.decipher.DecipherPyroModule

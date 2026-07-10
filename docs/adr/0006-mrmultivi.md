@@ -51,14 +51,25 @@ The decoder receives `z` with the same shape as before — **unchanged**.
 
 ### Two-level KL
 
-MULTIVAE's existing `kl_divergence_z = KL(q_u || N(0,1))` is already `kl_u`.  MrMultiVAE adds
-`kl_z = -log N(0, exp(pz_scale))(eps)` and folds it into both `loss` and
-`kl_local["kl_divergence_z"]`.
+MULTIVAE's parent loss is still used for reconstruction and paired-modality penalties, but
+`kl_divergence_z` is replaced with custom `kl_u + kl_z`. `kl_u` is computed against either a
+learned mixture-of-Gaussians prior over `u` or an analytic Gaussian prior. `kl_z =
+-log N(0, exp(pz_scale))(eps)` is included when `z_u_prior=True`; setting `z_u_prior=False`
+omits the residual prior penalty.
 
-### Isomorphic dims
+### Configurable `u` dimensionality
 
-`EncoderUZ` is called with `n_latent_u=None` → `z_base = u` (identity projection); no decoder
-dimension change is needed.
+`n_latent_u=None` preserves the original isomorphic setting and calls `EncoderUZ` with
+`n_latent_u=None`, so `z_base = u`. When `n_latent_u != n_latent`, `EncoderXU_MultiVI` emits the
+requested `u` dimension and `EncoderUZ` projects `u -> z`. The MULTIVAE decoders continue to
+receive `z` with the stock `n_latent` dimension.
+
+### u prior
+
+`u_prior_mixture=True` registers learned `u_prior_logits`, `u_prior_means`, and
+`u_prior_scales`, and computes Monte Carlo `KL(q(u) || p(u))`. If `labels_key` is registered and
+`n_labels > 1`, the prior uses one component per label and biases the matching component logits by
+`u_prior_label_weight`. Setting `u_prior_mixture=False` uses an analytic Gaussian KL instead.
 
 ### `setup_mudata` re-implementation
 
@@ -82,13 +93,12 @@ mean of `u`, not `z`.  For `give_z=True, give_mean=True`, the method re-runs `En
 - **Minified-mode inference**: off.  MULTIVAE minified mode is rare; deferred.
 - **ArchesMixin new-donor surgery**: embedding table is fixed at `n_sample` at training time.
   Adding new donors post-training is out of scope.
-- **`differential_expression` / `differential_abundance`**: not implemented.  These require
-  marginalising over the counterfactual distribution, which is a separate design problem.
-- **u prior**: `N(0,1)` (same as stock MULTIVAE).  MrVI's Mixture-of-Gaussians / label-conditioned
-  prior is not implemented.
-- **u is sample-unaware**: MULTIVAE's encoder is unchanged — unlike MrVI which conditions the
-  u-encoder on sample identity (`EncoderXU`).  All donor signal is isolated to `eps` by design;
-  this is not a porting bug.
+- **ATAC differential expression is explicitly unsupported**: `differential_expression` rejects
+  ATAC-containing models with `NotImplementedError`; ATAC effects should use a future
+  `differential_accessibility` API instead of mixing semantics.
+- **Decoded RNA/protein differential expression is not implemented yet**: `differential_abundance`
+  and outlier/admissibility APIs operate over `u`, but DE remains separate from ATAC and decoder
+  LFC semantics.
 
 ---
 
@@ -104,6 +114,9 @@ Five tests in `tests/external/mrmultivi/test_mrmultivi.py`:
    `(n_cell, n_donor, n_donor)`.
 5. **Hierarchy-collapse contrast** (L-6): zeroing `module.qz.embedding.weight` collapses
    cross-donor distances.  Trained distances must exceed zeroed baseline.
+6. **Prior/statistical parity**: non-isomorphic `u`, label-conditioned MoG priors, analytic
+   Gaussian prior fallback, `z_u_prior=False`, aggregated posterior, DA, outlier scoring, and
+   explicit ATAC DE rejection.
 
 ---
 

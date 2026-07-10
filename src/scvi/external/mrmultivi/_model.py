@@ -18,6 +18,11 @@ from scvi.data._utils import _get_adata_minify_type, _validate_adata_dataloader_
 from scvi.model._multivi import MULTIVI
 from scvi.utils import setup_anndata_dsp
 
+from ..mrtotalvi._stats import (
+    differential_abundance as _differential_abundance,
+    get_aggregated_posterior as _get_aggregated_posterior,
+    get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
+)
 from ._module import MrMultiVAE
 
 if TYPE_CHECKING:
@@ -72,18 +77,45 @@ class MrMultiVI(MULTIVI):
         mdata: MuData,
         sample_key: str,
         n_latent_sample: int = 16,
+        n_latent_u: int | None = None,
+        z_u_prior: bool = True,
         z_u_prior_scale: float = 0.0,
+        u_prior_scale: float = 0.0,
+        u_prior_mixture: bool = True,
+        u_prior_mixture_k: int = 20,
+        u_prior_label_weight: float = 10.0,
         learn_z_u_prior_scale: bool = False,
+        qz_kwargs: dict | None = None,
+        qu_kwargs: dict | None = None,
         use_map: bool = True,
         scale_observations: bool = False,
         **model_kwargs,
     ) -> None:
+        if model_kwargs.get("latent_distribution", "normal") != "normal":
+            raise ValueError(
+                "MrMultiVI requires latent_distribution='normal'. "
+                "Under 'ln' (softmax normalisation), the additive u→z "
+                "hierarchy is mathematically invalid."
+            )
+        model_kwargs["latent_distribution"] = "normal"
+
         # MULTIVI.__init__ → creates MrMultiVAE(n_sample=0) internally.
         # Hierarchy params (n_latent_sample etc.) are NOT injected into model_kwargs here:
         # they are named args in MrMultiVI.__init__ and would cause duplicate-kwargs TypeError
         # at load time if also present in model_kwargs (_get_init_params captures both).
         # _setup_hierarchy below wires all hierarchy params correctly after super().__init__.
-        super().__init__(mdata, **model_kwargs)
+        super().__init__(
+            mdata,
+            n_latent_u=n_latent_u,
+            z_u_prior=z_u_prior,
+            u_prior_scale=u_prior_scale,
+            u_prior_mixture=u_prior_mixture,
+            u_prior_mixture_k=u_prior_mixture_k,
+            u_prior_label_weight=u_prior_label_weight,
+            qz_kwargs=qz_kwargs,
+            qu_kwargs=qu_kwargs,
+            **model_kwargs,
+        )
 
         # summary_stats.n_sample is populated from the SAMPLE_KEY registry field
         n_sample = self.summary_stats.n_sample
@@ -110,17 +142,27 @@ class MrMultiVI(MULTIVI):
             use_map=use_map,
             scale_observations=scale_observations,
             n_obs_per_sample=n_obs_per_sample,
+            n_labels=self.summary_stats.get("n_labels", 0),
         )
 
         self._sample_key = sample_key
+        self.sample_key = sample_key
         self.sample_order = (
             self.adata_manager.get_state_registry(REGISTRY_KEYS.SAMPLE_KEY).categorical_mapping
         )
+        self.label_order = (
+            self.adata_manager.get_state_registry(REGISTRY_KEYS.LABELS_KEY).categorical_mapping
+        )
+        self.sample_info = self.adata.obs[[sample_key]].drop_duplicates().reset_index(drop=True)
 
         self._model_summary_string = (
             f"MrMultiVI Model\n"
-            f"  n_latent_sample: {n_latent_sample}, n_sample: {n_sample}\n"
-            f"  z_u_prior_scale: {z_u_prior_scale}"
+            f"  n_latent: {self.module.n_latent}, n_latent_u: {self.module.n_latent_u}, "
+            f"n_latent_sample: {n_latent_sample}\n"
+            f"  n_sample: {n_sample}, z_u_prior: {z_u_prior}, "
+            f"z_u_prior_scale: {z_u_prior_scale}\n"
+            f"  u_prior_mixture: {u_prior_mixture}, "
+            f"u_prior_mixture_k: {self.module.resolved_u_prior_mixture_k}"
         )
         self.init_params_ = self._get_init_params(locals())
 
@@ -162,6 +204,7 @@ class MrMultiVI(MULTIVI):
         atac_layer: str | None = None,
         protein_layer: str | None = None,
         batch_key: str | None = None,
+        labels_key: str | None = None,
         size_factor_key: str | None = None,
         categorical_covariate_keys: list[str] | None = None,
         continuous_covariate_keys: list[str] | None = None,
@@ -184,6 +227,9 @@ class MrMultiVI(MULTIVI):
         protein_layer
             Protein layer key. If ``None``, uses ``.X`` of the specified modality.
         %(param_batch_key)s
+        labels_key
+            Optional key in ``mdata.obs`` identifying labels used to condition
+            the mixture-of-Gaussians prior over ``u``.
         %(param_cat_cov_keys)s
         %(param_cont_cov_keys)s
         %(param_modalities)s
@@ -224,8 +270,8 @@ class MrMultiVI(MULTIVI):
             batch_field,
             fields.MuDataCategoricalObsField(
                 REGISTRY_KEYS.LABELS_KEY,
-                None,
-                mod_key=None,
+                labels_key,
+                mod_key=modalities.labels_key,
             ),
             fields.MuDataNumericalJointObsField(
                 REGISTRY_KEYS.SIZE_FACTOR_KEY,
@@ -295,6 +341,87 @@ class MrMultiVI(MULTIVI):
         adata_manager = AnnDataManager(fields=mudata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(mdata, **kwargs)
         cls.register_manager(adata_manager)
+
+    # ------------------------------------------------------------------
+    # u-space statistical APIs
+    # ------------------------------------------------------------------
+
+    def get_aggregated_posterior(
+        self,
+        adata=None,
+        sample: str | int | None = None,
+        indices: Sequence[int] | None = None,
+        batch_size: int = 256,
+    ):
+        """Compute the aggregated posterior mixture over ``u``."""
+        return _get_aggregated_posterior(
+            self,
+            adata=adata,
+            sample_key=self.sample_key,
+            sample=sample,
+            indices=indices,
+            batch_size=batch_size,
+        )
+
+    def differential_abundance(
+        self,
+        adata=None,
+        sample_cov_keys: list[str] | None = None,
+        sample_subset: list[str] | None = None,
+        compute_log_enrichment: bool = False,
+        omit_original_sample: bool = True,
+        batch_size: int = 128,
+    ) -> xr.Dataset:
+        """Compute MrVI-style differential abundance log probabilities over ``u``."""
+        return _differential_abundance(
+            self,
+            adata=adata,
+            sample_key=self.sample_key,
+            sample_cov_keys=sample_cov_keys,
+            sample_subset=sample_subset,
+            compute_log_enrichment=compute_log_enrichment,
+            omit_original_sample=omit_original_sample,
+            batch_size=batch_size,
+        )
+
+    def get_outlier_cell_sample_pairs(
+        self,
+        adata=None,
+        subsample_size: int | None = 5_000,
+        quantile_threshold: float = 0.05,
+        admissibility_threshold: float = 0.0,
+        batch_size: int = 256,
+    ) -> xr.Dataset:
+        """Compute admissible cell-sample pairs using aggregated posteriors over ``u``."""
+        return _get_outlier_cell_sample_pairs(
+            self,
+            adata=adata,
+            sample_key=self.sample_key,
+            subsample_size=subsample_size,
+            quantile_threshold=quantile_threshold,
+            admissibility_threshold=admissibility_threshold,
+            batch_size=batch_size,
+        )
+
+    def differential_expression(self, *args, **kwargs) -> xr.Dataset:
+        """Reject ambiguous DE semantics when ATAC is present."""
+        if getattr(self, "n_regions", 0) > 0:
+            raise NotImplementedError(
+                "MrMultiVI differential_expression is only defined for RNA/protein "
+                "outputs. ATAC-containing models should use a future "
+                "differential_accessibility API instead."
+            )
+        raise NotImplementedError(
+            "MrMultiVI differential_expression for RNA/protein-only models is not "
+            "implemented in this pass."
+        )
+
+    def differential_accessibility(self, *args, **kwargs) -> xr.Dataset:
+        """ATAC differential accessibility is intentionally separate from DE."""
+        raise NotImplementedError(
+            "MrMultiVI differential_accessibility is not implemented yet; ATAC effects "
+            "are intentionally not mixed into differential_expression."
+        )
 
     # ------------------------------------------------------------------
     # Latent representation

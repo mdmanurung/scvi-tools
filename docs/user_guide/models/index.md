@@ -17,6 +17,7 @@ linearscvi
 methylanvi
 methylvi
 mrvi
+mr_multimodal
 multivi
 peakvi
 poissonvi

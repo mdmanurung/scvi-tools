@@ -141,6 +141,481 @@ def test_mrmultivi_counterfactual_finite(mdata_basic):
     assert torch.all(torch.isfinite(out["eps"])), "eps contains NaN/Inf on cf_sample path"
 
 
+def test_mrmultivi_rejects_logistic_normal_latent(mdata_basic):
+    """MrMultiVI rejects logistic-normal latents because the hierarchy is additive."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+
+    with pytest.raises(ValueError, match="latent_distribution='normal'"):
+        MrMultiVI(
+            mdata_basic,
+            sample_key="donor",
+            n_latent=N_LATENT,
+            latent_distribution="ln",
+        )
+
+
+def test_mrmultivi_hierarchy_uses_mixed_posterior_mean(mdata_basic):
+    """qu receives MULTIVAE's mixed posterior mean, not a sampled base latent."""
+    import torch
+    from torch import nn
+    from torch.distributions import Normal
+
+    from scvi.module._multivae import MULTIVAE
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+    module = model.module.eval()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=32)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    base_inputs = {k: v for k, v in inf_inputs.items() if k != "sample_index"}
+
+    with torch.no_grad():
+        base_out = MULTIVAE.inference(module, **base_inputs)
+
+    class RecordingQu(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.last_input = None
+
+        def forward(self, u0, sample_index):
+            self.last_input = u0.detach().clone()
+            return Normal(u0, torch.ones_like(u0))
+
+    module.qu = RecordingQu()
+
+    with torch.no_grad():
+        module.inference(**inf_inputs)
+
+    assert not torch.allclose(base_out["z"], base_out["qz_m"]), (
+        "Synthetic fixture produced a sampled z identical to qz_m; "
+        "this regression test cannot distinguish the hierarchy input."
+    )
+    assert torch.allclose(module.qu.last_input, base_out["qz_m"], atol=1e-6)
+
+
+def test_mrmultivi_non_isomorphic_u_dimension(mdata_basic):
+    """n_latent_u can be smaller than z while the decoder still receives n_latent."""
+    import torch
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT, n_latent_u=5)
+
+    assert model.module.n_latent_u == 5
+    assert model.module.qz.fc is not None
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    with torch.no_grad():
+        out = model.module.inference(**inf_inputs)
+
+    assert out["u"].shape[-1] == 5
+    assert out["z"].shape[-1] == N_LATENT
+
+
+def test_mrmultivi_non_isomorphic_u_dimension_with_mc_samples(mdata_basic):
+    """MC samples preserve the u and z dimensions and keep the ELBO finite."""
+    import torch
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT, n_latent_u=5)
+    module = model.module.train()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module.inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    assert inf_out["u"].shape == torch.Size([2, tensors["X"].shape[0], 5])
+    assert inf_out["z"].shape == torch.Size([2, tensors["X"].shape[0], N_LATENT])
+    assert inf_out["eps"].shape == torch.Size([2, tensors["X"].shape[0], N_LATENT])
+    assert loss_out.kl_local["kl_divergence_z"].shape == torch.Size([tensors["X"].shape[0]])
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrmultivi_singleton_mc_loss_matches_single_sample_loss(mdata_basic):
+    """The custom MC loss is equivalent to the parent loss for one sampled z."""
+    import torch
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata_basic,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        n_latent_u=5,
+        u_prior_mixture=False,
+    )
+    module = model.module.eval()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    with torch.no_grad():
+        inf_out = module.inference(**inf_inputs)
+        gen_out = module.generative(**module._get_generative_input(tensors, inf_out))
+        loss_out = module.loss(tensors, inf_out, gen_out)
+
+        batch_size = tensors["X"].shape[0]
+
+        def _unsqueeze_batch_tensors(value):
+            if isinstance(value, torch.Tensor) and value.ndim > 0 and value.shape[0] == batch_size:
+                return value.unsqueeze(0)
+            if isinstance(value, dict):
+                return {k: _unsqueeze_batch_tensors(v) for k, v in value.items()}
+            return value
+
+        inf_mc = dict(inf_out)
+        for key in ("z", "u", "z_base", "eps", "libsize_expr", "libsize_acc"):
+            inf_mc[key] = inf_mc[key].unsqueeze(0)
+        gen_mc = _unsqueeze_batch_tensors(gen_out)
+        loss_mc = module.loss(tensors, inf_mc, gen_mc)
+
+    for key in (
+        "reconstruction_loss_expression",
+        "reconstruction_loss_accessibility",
+        "reconstruction_loss_protein",
+    ):
+        assert torch.allclose(
+            loss_mc.reconstruction_loss[key].squeeze(0),
+            loss_out.reconstruction_loss[key],
+            atol=1e-5,
+        )
+    assert torch.allclose(
+        loss_mc.kl_local["kl_divergence_z"],
+        loss_out.kl_local["kl_divergence_z"],
+        atol=1e-5,
+    )
+    assert torch.allclose(loss_mc.loss, loss_out.loss, atol=1e-5)
+
+
+def test_mrmultivi_mc_samples_with_stochastic_eps_and_scaled_observations(mdata_basic):
+    """MC samples work when eps is stochastic and observations are sample-scaled."""
+    import torch
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata_basic,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        n_latent_u=5,
+        use_map=False,
+        scale_observations=True,
+    )
+    module = model.module.train()
+    assert module.n_obs_per_sample is not None
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module.inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    assert inf_out["eps_dist"] is not None
+    assert inf_out["eps_dist"].loc.shape == torch.Size([2, tensors["X"].shape[0], N_LATENT])
+    assert loss_out.kl_local["kl_divergence_z"].shape == torch.Size([tensors["X"].shape[0]])
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrmultivi_mc_samples_with_size_factors_and_missing_modalities(mdata_basic):
+    """MC loss handles size factors and cells missing individual modalities."""
+    import scipy.sparse as sp
+    import torch
+
+    mdata = _make_mdata()
+    mdata.obs["size_factor_rna"] = np.asarray(mdata["rna"].X.sum(1)).reshape(-1) + 1.0
+    mdata.obs["size_factor_atac"] = (np.asarray(mdata["accessibility"].X.sum(1)).reshape(-1) + 1.0) / (
+        np.asarray(mdata["accessibility"].X.sum(1)).max() + 1.01
+    )
+
+    def zero_rows(mod_key, rows):
+        x = mdata[mod_key].X
+        if sp.issparse(x):
+            x = x.toarray()
+        else:
+            x = np.asarray(x).copy()
+        x[rows, :] = 0
+        mdata[mod_key].X = x
+
+    zero_rows("rna", np.arange(0, 8))
+    zero_rows("accessibility", np.arange(8, 16))
+    zero_rows("protein_expression", np.arange(16, 24))
+
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        size_factor_key=["size_factor_rna", "size_factor_atac"],
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=5)
+    module = model.module.train()
+    assert module.use_size_factor_key
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=24)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module.inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    batch_size = tensors["X"].shape[0]
+    assert loss_out.reconstruction_loss["reconstruction_loss_expression"].shape == torch.Size(
+        [2, batch_size]
+    )
+    assert loss_out.reconstruction_loss["reconstruction_loss_accessibility"].shape == torch.Size(
+        [2, batch_size]
+    )
+    assert loss_out.reconstruction_loss["reconstruction_loss_protein"].shape == torch.Size(
+        [2, batch_size]
+    )
+    assert loss_out.kl_local["kl_divergence_z"].shape == torch.Size([batch_size])
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrmultivi_label_conditioned_mog_prior(mdata_basic):
+    """labels_key switches the MoG prior to one component per label and biases logits."""
+    import torch
+    from torch.distributions import MixtureSameFamily
+
+    mdata = _make_mdata()
+    mdata.obs["cell_type"] = np.where(np.arange(mdata.n_obs) % 2 == 0, "T", "B")
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        labels_key="cell_type",
+        modalities={**MODALITIES, "labels_key": None},
+    )
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+
+    assert model.module.u_prior_logits.shape == (model.summary_stats.n_labels,)
+    assert model.module.u_prior_means.shape == (model.summary_stats.n_labels, 4)
+
+    labels = torch.tensor([[0], [1], [0]])
+    u = torch.zeros(3, 4)
+    prior = model.module.build_u_prior(u, labels)
+
+    assert isinstance(prior, MixtureSameFamily)
+    assert prior.mixture_distribution.logits.argmax(dim=-1).tolist() == [0, 1, 0]
+
+
+def test_mrmultivi_label_conditioned_mog_flows_through_mc_loss(mdata_basic):
+    """Registered labels condition the MoG prior in the actual MC loss path."""
+    import torch
+
+    mdata = _make_mdata()
+    mdata.obs["cell_type"] = np.where(np.arange(mdata.n_obs) % 2 == 0, "T", "B")
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        labels_key="cell_type",
+        modalities={**MODALITIES, "labels_key": None},
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        n_latent_u=4,
+        z_u_prior=False,
+    )
+    module = model.module.train()
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module.inference(**inf_inputs, n_samples=2)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    expected_kl_u = module.kl_u(inf_out["qu"], inf_out["u"], tensors["labels"])
+    assert module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
+    assert torch.allclose(loss_out.kl_local["kl_divergence_z"], expected_kl_u, atol=1e-5)
+    assert torch.isfinite(loss_out.loss)
+
+
+def test_mrmultivi_gaussian_u_prior_and_z_u_prior_off(mdata_basic):
+    """u_prior_mixture=False uses analytic Gaussian KL and z_u_prior=False omits kl_z."""
+    import torch
+
+    mdata = _make_mdata()
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        u_prior_mixture=False,
+        z_u_prior=False,
+    )
+    assert not hasattr(model.module, "u_prior_logits")
+
+    module = model.module.train()
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = module._get_inference_input(tensors)
+    inf_out = module.inference(**inf_inputs)
+    gen_inputs = module._get_generative_input(tensors, inf_out)
+    gen_out = module.generative(**gen_inputs)
+    loss_out = module.loss(tensors, inf_out, gen_out)
+
+    expected_kl_u = module.kl_u(inf_out["qu"], inf_out["u"], tensors["labels"])
+    assert torch.allclose(loss_out.kl_local["kl_divergence_z"], expected_kl_u, atol=1e-5)
+
+
+def test_mrmultivi_encode_covariates_expands_qu_input(mdata_basic):
+    """encode_covariates=True appends batch, categorical, and continuous covariates to qu."""
+    import torch
+
+    mdata = _make_mdata()
+    mdata.obs["stim"] = np.where(np.arange(mdata.n_obs) % 2 == 0, "ctrl", "stim")
+    mdata.obs["score"] = np.linspace(0.0, 1.0, mdata.n_obs)
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        categorical_covariate_keys=["stim"],
+        continuous_covariate_keys=["score"],
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        encode_covariates=True,
+    )
+
+    expected_extra = model.summary_stats.n_batch + 2 + 1
+    assert model.module.qu.fc1.in_features == N_LATENT + expected_extra
+
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    with torch.no_grad():
+        out = model.module.inference(**inf_inputs)
+    assert torch.all(torch.isfinite(out["u"]))
+
+
+def test_mrmultivi_save_load_preserves_latent_hierarchy(mdata_basic, tmp_path):
+    """Save/load preserves non-isomorphic u, MoG prior, and label/sample mappings."""
+    import torch
+
+    mdata = _make_mdata()
+    mdata.obs["cell_type"] = np.where(np.arange(mdata.n_obs) % 2 == 0, "T", "B")
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        labels_key="cell_type",
+        modalities={**MODALITIES, "labels_key": None},
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        n_latent_u=4,
+        u_prior_mixture=True,
+    )
+
+    save_path = tmp_path / "mrmultivi"
+    model.save(save_path, overwrite=True)
+    loaded = MrMultiVI.load(save_path, adata=mdata)
+
+    assert loaded.module.n_latent_u == 4
+    assert loaded.module.qz.fc is not None
+    assert loaded.module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
+    assert loaded.sample_order.tolist() == model.sample_order.tolist()
+    assert loaded.label_order.tolist() == model.label_order.tolist()
+    assert torch.allclose(loaded.module.u_prior_means, model.module.u_prior_means)
+    assert torch.allclose(loaded.module.u_prior_scales, model.module.u_prior_scales)
+
+
+def test_mrmultivi_u_space_statistical_apis(mdata_basic):
+    """Aggregated posterior, DA, and admissibility APIs operate over u."""
+    import torch
+    from torch.distributions import MixtureSameFamily
+
+    mdata = _make_mdata()
+    mdata.obs["condition"] = np.where(mdata.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b")
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    ap = model.get_aggregated_posterior(batch_size=32)
+    assert isinstance(ap, MixtureSameFamily)
+    assert ap.component_distribution.event_shape == torch.Size([4])
+
+    da = model.differential_abundance(sample_cov_keys=["condition"], batch_size=32)
+    assert "log_probs" in da
+    assert "condition_log_probs" in da
+    assert da["log_probs"].dims == ("cell_name", "sample")
+
+    outliers = model.get_outlier_cell_sample_pairs(batch_size=32, subsample_size=10)
+    assert {"log_probs", "log_ratios", "is_admissible"} <= set(outliers.data_vars)
+
+
+def test_mrmultivi_atac_differential_expression_is_explicitly_unsupported(mdata_basic):
+    """ATAC-containing differential expression paths fail with a clear API error."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+
+    with pytest.raises(NotImplementedError, match="ATAC"):
+        model.differential_expression()
+
+
 # ---------------------------------------------------------------------------
 # (b) Reconstruction not regressed vs stock MULTIVI
 # ---------------------------------------------------------------------------

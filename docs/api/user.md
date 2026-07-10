@@ -63,6 +63,8 @@ import scvi
    external.MRVI
    external.TorchMRVI
    external.JaxMRVI
+   external.MrTotalVI
+   external.MrMultiVI
    external.METHYLVI
    external.METHYLANVI
    external.Decipher

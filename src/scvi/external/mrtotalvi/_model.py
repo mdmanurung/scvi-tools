@@ -17,6 +17,11 @@ from scvi.module._constants import MODULE_KEYS
 from scvi.utils import setup_anndata_dsp
 
 from ._module import MrTotalVAE
+from ._stats import (
+    differential_abundance as _differential_abundance,
+    get_aggregated_posterior as _get_aggregated_posterior,
+    get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
+)
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -86,8 +91,16 @@ class MrTotalVI(TOTALVI):
         sample_key: str,
         n_latent: int = 20,
         n_latent_sample: int = 16,
+        n_latent_u: int | None = None,
+        z_u_prior: bool = True,
         z_u_prior_scale: float = 0.0,
+        u_prior_scale: float = 0.0,
+        u_prior_mixture: bool = True,
+        u_prior_mixture_k: int = 20,
+        u_prior_label_weight: float = 10.0,
         learn_z_u_prior_scale: bool = False,
+        qz_kwargs: dict | None = None,
+        qu_kwargs: dict | None = None,
         use_map: bool = True,
         scale_observations: bool = False,
         **model_kwargs,
@@ -107,7 +120,19 @@ class MrTotalVI(TOTALVI):
         # pass-through: MrTotalVAE names them explicitly in its own __init__).
         # MrTotalVAE always builds with n_sample=0 until _setup_hierarchy below
         # so that summary_stats.n_sample (populated by super()) is the source of truth.
-        super().__init__(adata, n_latent=n_latent, **model_kwargs)
+        super().__init__(
+            adata,
+            n_latent=n_latent,
+            n_latent_u=n_latent_u,
+            z_u_prior=z_u_prior,
+            u_prior_scale=u_prior_scale,
+            u_prior_mixture=u_prior_mixture,
+            u_prior_mixture_k=u_prior_mixture_k,
+            u_prior_label_weight=u_prior_label_weight,
+            qz_kwargs=qz_kwargs,
+            qu_kwargs=qu_kwargs,
+            **model_kwargs,
+        )
 
         # At this point self.summary_stats is populated from the registry.
         n_sample = self.summary_stats.n_sample
@@ -134,18 +159,28 @@ class MrTotalVI(TOTALVI):
             use_map=use_map,
             scale_observations=scale_observations,
             n_obs_per_sample=n_obs_per_sample,
+            n_labels=self.summary_stats.get("n_labels", 0),
         )
 
         # Sample-level metadata for coordinate labelling
         self._sample_key = sample_key
+        self.sample_key = sample_key
         self.sample_order = (
             self.adata_manager.get_state_registry(REGISTRY_KEYS.SAMPLE_KEY).categorical_mapping
         )
+        self.label_order = (
+            self.adata_manager.get_state_registry(REGISTRY_KEYS.LABELS_KEY).categorical_mapping
+        )
+        self.sample_info = self.adata.obs[[sample_key]].drop_duplicates().reset_index(drop=True)
 
         self._model_summary_string = (
             f"MrTotalVI Model\n"
-            f"  n_latent: {n_latent}, n_latent_sample: {n_latent_sample}\n"
-            f"  n_sample: {n_sample}, z_u_prior_scale: {z_u_prior_scale}\n"
+            f"  n_latent: {n_latent}, n_latent_u: {self.module.n_latent_u}, "
+            f"n_latent_sample: {n_latent_sample}\n"
+            f"  n_sample: {n_sample}, z_u_prior: {z_u_prior}, "
+            f"z_u_prior_scale: {z_u_prior_scale}\n"
+            f"  u_prior_mixture: {u_prior_mixture}, "
+            f"u_prior_mixture_k: {self.module.resolved_u_prior_mixture_k}\n"
             f"  gene_likelihood: {model_kwargs.get('gene_likelihood', 'nb')}"
         )
         # Overwrite init_params_ from TOTALVI with MrTotalVI's full local scope
@@ -187,6 +222,7 @@ class MrTotalVI(TOTALVI):
         adata: AnnData,
         protein_expression_obsm_key: str,
         sample_key: str,
+        labels_key: str | None = None,
         protein_names_uns_key: str | None = None,
         batch_key: str | None = None,
         panel_key: str | None = None,
@@ -206,6 +242,9 @@ class MrTotalVI(TOTALVI):
         sample_key
             Key in ``adata.obs`` identifying the donor/sample for each cell.
             Each unique value becomes one row in the per-sample embedding table.
+        labels_key
+            Optional key in ``adata.obs`` identifying labels used to condition
+            the mixture-of-Gaussians prior over ``u``.
         protein_names_uns_key
             Key in ``adata.uns`` for protein names.
         %(param_batch_key)s
@@ -233,7 +272,7 @@ class MrTotalVI(TOTALVI):
 
         anndata_fields = [
             fields.LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
-            fields.CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, None),
+            fields.CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
             fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
             fields.NumericalObsField(
                 REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False
@@ -264,6 +303,149 @@ class MrTotalVI(TOTALVI):
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
+
+    # ------------------------------------------------------------------
+    # u-space statistical APIs
+    # ------------------------------------------------------------------
+
+    def get_aggregated_posterior(
+        self,
+        adata: AnnData | None = None,
+        sample: str | int | None = None,
+        indices: npt.ArrayLike | None = None,
+        batch_size: int = 256,
+    ):
+        """Compute the aggregated posterior mixture over ``u``."""
+        return _get_aggregated_posterior(
+            self,
+            adata=adata,
+            sample_key=self.sample_key,
+            sample=sample,
+            indices=indices,
+            batch_size=batch_size,
+        )
+
+    def differential_abundance(
+        self,
+        adata: AnnData | None = None,
+        sample_cov_keys: list[str] | None = None,
+        sample_subset: list[str] | None = None,
+        compute_log_enrichment: bool = False,
+        omit_original_sample: bool = True,
+        batch_size: int = 128,
+    ) -> xr.Dataset:
+        """Compute MrVI-style differential abundance log probabilities over ``u``."""
+        return _differential_abundance(
+            self,
+            adata=adata,
+            sample_key=self.sample_key,
+            sample_cov_keys=sample_cov_keys,
+            sample_subset=sample_subset,
+            compute_log_enrichment=compute_log_enrichment,
+            omit_original_sample=omit_original_sample,
+            batch_size=batch_size,
+        )
+
+    def get_outlier_cell_sample_pairs(
+        self,
+        adata: AnnData | None = None,
+        subsample_size: int | None = 5_000,
+        quantile_threshold: float = 0.05,
+        admissibility_threshold: float = 0.0,
+        batch_size: int = 256,
+    ) -> xr.Dataset:
+        """Compute admissible cell-sample pairs using aggregated posteriors over ``u``."""
+        return _get_outlier_cell_sample_pairs(
+            self,
+            adata=adata,
+            sample_key=self.sample_key,
+            subsample_size=subsample_size,
+            quantile_threshold=quantile_threshold,
+            admissibility_threshold=admissibility_threshold,
+            batch_size=batch_size,
+        )
+
+    def differential_expression(
+        self,
+        adata: AnnData | None = None,
+        sample_cov_keys: list[str] | None = None,
+        indices: npt.ArrayLike | None = None,
+        batch_size: int = 128,
+        normalize_design_matrix: bool = True,
+        store_lfc: bool = False,
+        **kwargs,
+    ) -> xr.Dataset:
+        """Fit a cell-specific linear model over counterfactual ``z`` shifts.
+
+        Returns latent-space ``beta``, ``effect_size``, and ``pvalue`` variables.
+        Decoded RNA/protein LFC storage is intentionally rejected until the
+        TotalVI decoder contrast semantics are finalized.
+        """
+        if kwargs:
+            raise NotImplementedError(
+                f"Unsupported MrTotalVI differential_expression options: {sorted(kwargs)}"
+            )
+        if store_lfc:
+            raise NotImplementedError(
+                "MrTotalVI decoded RNA/protein LFC storage is not implemented yet."
+            )
+        if not sample_cov_keys:
+            raise ValueError("sample_cov_keys must contain at least one sample-level covariate.")
+
+        from scipy.stats import chi2
+        import pandas as pd
+
+        self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
+        reps = self.get_local_sample_representation(
+            adata=adata,
+            indices=indices,
+            batch_size=batch_size,
+            use_mean=True,
+        )
+        sample_names = reps.coords["sample"].to_numpy()
+        sample_info = (
+            adata.obs[[self.sample_key, *sample_cov_keys]]
+            .drop_duplicates(subset=self.sample_key)
+            .set_index(self.sample_key)
+            .loc[sample_names]
+        )
+        design = pd.get_dummies(sample_info[sample_cov_keys], dtype=float)
+        design_names = design.columns.to_numpy(dtype=str)
+        x = design.to_numpy(dtype=float)
+        if normalize_design_matrix:
+            scale = x.std(axis=0, ddof=0)
+            scale[scale == 0] = 1.0
+            x = (x - x.mean(axis=0)) / scale
+
+        x_aug = np.concatenate([np.ones((x.shape[0], 1)), x], axis=1)
+        xtx_inv = np.linalg.pinv(x_aug.T @ x_aug)
+        pinv = xtx_inv @ x_aug.T
+        y = reps.values
+        coef = np.einsum("ps,csl->cpl", pinv, y)
+        beta = coef[:, 1:, :]
+        fitted = np.einsum("sp,cpl->csl", x_aug, coef)
+        resid = y - fitted
+        dof = max(x_aug.shape[0] - x_aug.shape[1], 1)
+        sigma2 = (resid**2).sum(axis=1) / dof
+        se = np.sqrt(sigma2[:, None, :] * np.diag(xtx_inv)[1:][None, :, None] + 1e-8)
+        wald = ((beta / se) ** 2).sum(axis=-1)
+
+        return xr.Dataset(
+            {
+                "beta": (["cell_name", "covariate", "latent_dim"], beta),
+                "effect_size": (
+                    ["cell_name", "covariate"],
+                    np.sqrt((beta**2).sum(axis=-1)),
+                ),
+                "pvalue": (["cell_name", "covariate"], chi2.sf(wald, df=beta.shape[-1])),
+            },
+            coords={
+                "cell_name": reps.coords["cell_name"].to_numpy(),
+                "covariate": design_names,
+                "latent_dim": np.arange(beta.shape[-1]),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Latent representation

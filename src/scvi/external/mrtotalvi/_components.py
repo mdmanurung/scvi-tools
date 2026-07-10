@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.distributions import Normal
+from torch.distributions import Categorical, Independent, MixtureSameFamily, Normal, kl_divergence
 from torch.nn import init
 
 from scvi.module.base import auto_move_data
@@ -204,6 +204,139 @@ class NormalDistOutputNN(nn.Module):
         return Normal(mean, scale + self.scale_eps)
 
 
+def init_u_prior(
+    module: nn.Module,
+    n_latent_u: int,
+    n_labels: int = 0,
+    u_prior_scale: float = 0.0,
+    u_prior_mixture: bool = True,
+    u_prior_mixture_k: int = 20,
+    u_prior_label_weight: float = 10.0,
+) -> None:
+    """Register the MrVI-style prior over ``u`` on ``module``.
+
+    The parameters are kept directly on the parent module so state dicts and
+    debugging match TorchMRVI's naming.
+    """
+    for name in ("u_prior_logits", "u_prior_means", "u_prior_scales", "u_prior_scale"):
+        if hasattr(module, name):
+            delattr(module, name)
+
+    module.n_latent_u = int(n_latent_u)
+    module.n_labels = int(n_labels or 0)
+    module.u_prior_mixture = bool(u_prior_mixture)
+    module.u_prior_mixture_k = int(u_prior_mixture_k)
+    module.u_prior_label_weight = float(u_prior_label_weight)
+
+    if module.u_prior_mixture:
+        resolved_k = module.n_labels if module.n_labels > 1 else module.u_prior_mixture_k
+        module.resolved_u_prior_mixture_k = int(resolved_k)
+        module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
+        module.u_prior_means = nn.Parameter(torch.randn(resolved_k, n_latent_u))
+        module.u_prior_scales = nn.Parameter(
+            torch.full((resolved_k, n_latent_u), float(u_prior_scale))
+        )
+    else:
+        module.resolved_u_prior_mixture_k = 0
+        module.register_buffer("u_prior_scale", torch.tensor(float(u_prior_scale)))
+
+
+def build_u_prior(
+    module: nn.Module,
+    u: torch.Tensor,
+    label_index: torch.Tensor | None = None,
+) -> Normal | MixtureSameFamily:
+    """Construct the prior distribution over ``u`` for the current minibatch."""
+    if module.u_prior_mixture:
+        logits = module.u_prior_logits
+        if (
+            label_index is not None
+            and module.n_labels > 1
+            and module.resolved_u_prior_mixture_k == module.n_labels
+        ):
+            labels = label_index.to(torch.int64).flatten()
+            offset = module.u_prior_label_weight * F.one_hot(
+                labels,
+                num_classes=module.n_labels,
+            ).to(dtype=logits.dtype, device=logits.device)
+            logits = logits + offset
+
+        cats = Categorical(logits=logits)
+        components = Independent(
+            Normal(module.u_prior_means, torch.exp(module.u_prior_scales)),
+            1,
+        )
+        return MixtureSameFamily(cats, components)
+
+    zero = torch.zeros((), device=u.device, dtype=u.dtype)
+    scale = torch.exp(module.u_prior_scale.to(device=u.device, dtype=u.dtype))
+    return Normal(zero, scale)
+
+
+def kl_u(
+    module: nn.Module,
+    qu: Normal,
+    sampled_u: torch.Tensor,
+    label_index: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Compute ``KL(q(u|x,s) || p(u))`` with MoG or Gaussian prior semantics."""
+    pu = build_u_prior(module, sampled_u, label_index)
+    if module.u_prior_mixture:
+        kl = qu.log_prob(sampled_u).sum(-1) - pu.log_prob(sampled_u)
+    else:
+        kl = kl_divergence(qu, pu).sum(-1)
+    if kl.ndim > 1:
+        kl = kl.mean(dim=0)
+    return kl
+
+
+def _covariate_n_input(
+    n_batch: int,
+    n_continuous_cov: int,
+    n_cats_per_cov: list[int],
+    encode_covariates: bool,
+) -> int:
+    if not encode_covariates:
+        return 0
+    return int(n_batch) + int(n_continuous_cov) + int(sum(n_cats_per_cov))
+
+
+def _append_covariates(
+    x: torch.Tensor,
+    *,
+    batch_index: torch.Tensor | None,
+    cont_covs: torch.Tensor | None,
+    cat_covs: torch.Tensor | None,
+    n_batch: int,
+    n_continuous_cov: int,
+    n_cats_per_cov: list[int],
+    encode_covariates: bool,
+) -> torch.Tensor:
+    if not encode_covariates:
+        return x
+
+    covariates: list[torch.Tensor] = []
+    if n_batch > 0:
+        if batch_index is None:
+            raise ValueError("batch_index is required when encode_covariates=True.")
+        covariates.append(F.one_hot(batch_index.squeeze(-1).to(torch.int64), n_batch).float())
+
+    if len(n_cats_per_cov) > 0:
+        if cat_covs is None:
+            raise ValueError("cat_covs is required when categorical covariates are registered.")
+        for cov, n_cat in zip(torch.split(cat_covs, 1, dim=-1), n_cats_per_cov, strict=False):
+            covariates.append(F.one_hot(cov.squeeze(-1).to(torch.int64), n_cat).float())
+
+    if n_continuous_cov > 0:
+        if cont_covs is None:
+            raise ValueError("cont_covs is required when continuous covariates are registered.")
+        covariates.append(cont_covs.float())
+
+    if covariates:
+        return torch.cat([x, *covariates], dim=-1)
+    return x
+
+
 class ConditionalNormalization(nn.Module):
     """Condition-specific normalization.
 
@@ -304,13 +437,30 @@ class EncoderXU_TotalVI(nn.Module):
         n_input_proteins: int,
         n_latent: int,
         n_sample: int,
+        n_batch: int = 0,
+        n_continuous_cov: int = 0,
+        n_cats_per_cov: Iterable[int] | None = None,
+        encode_covariates: bool = False,
         n_hidden: int = 128,
         n_layers: int = 1,
         activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
     ):
         super().__init__()
         self.activation = activation
-        n_input = n_input_genes + n_input_proteins
+        self.n_batch = int(n_batch)
+        self.n_continuous_cov = int(n_continuous_cov)
+        self.n_cats_per_cov = list(n_cats_per_cov or [])
+        self.encode_covariates = bool(encode_covariates)
+        n_input = (
+            n_input_genes
+            + n_input_proteins
+            + _covariate_n_input(
+                self.n_batch,
+                self.n_continuous_cov,
+                self.n_cats_per_cov,
+                self.encode_covariates,
+            )
+        )
 
         self.fc1 = nn.Linear(n_input, n_hidden)
         self.cond_norm1 = ConditionalNormalization(n_hidden, n_sample)
@@ -328,6 +478,9 @@ class EncoderXU_TotalVI(nn.Module):
         x_rna: torch.Tensor,
         x_protein: torch.Tensor,
         sample_covariate: torch.Tensor,
+        batch_index: torch.Tensor | None = None,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
     ) -> Normal:
         """Compute the sample-conditioned u distribution.
 
@@ -347,6 +500,16 @@ class EncoderXU_TotalVI(nn.Module):
             ``(batch, n_latent)``.
         """
         x = torch.log1p(torch.cat([x_rna, x_protein], dim=-1))
+        x = _append_covariates(
+            x,
+            batch_index=batch_index,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+            n_batch=self.n_batch,
+            n_continuous_cov=self.n_continuous_cov,
+            n_cats_per_cov=self.n_cats_per_cov,
+            encode_covariates=self.encode_covariates,
+        )
         x = self.fc1(x)
         x = self.cond_norm1(x, sample_covariate)
         x = self.activation(x)
@@ -397,12 +560,26 @@ class EncoderXU_MultiVI(nn.Module):
         n_input: int,
         n_latent: int,
         n_sample: int,
+        n_batch: int = 0,
+        n_continuous_cov: int = 0,
+        n_cats_per_cov: Iterable[int] | None = None,
+        encode_covariates: bool = False,
         n_hidden: int = 128,
         n_layers: int = 1,
         activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
     ):
         super().__init__()
         self.activation = activation
+        self.n_batch = int(n_batch)
+        self.n_continuous_cov = int(n_continuous_cov)
+        self.n_cats_per_cov = list(n_cats_per_cov or [])
+        self.encode_covariates = bool(encode_covariates)
+        n_input = n_input + _covariate_n_input(
+            self.n_batch,
+            self.n_continuous_cov,
+            self.n_cats_per_cov,
+            self.encode_covariates,
+        )
 
         self.fc1 = nn.Linear(n_input, n_hidden)
         self.cond_norm1 = ConditionalNormalization(n_hidden, n_sample)
@@ -419,6 +596,9 @@ class EncoderXU_MultiVI(nn.Module):
         self,
         u0: torch.Tensor,
         sample_covariate: torch.Tensor,
+        batch_index: torch.Tensor | None = None,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
     ) -> Normal:
         """Compute the sample-conditioned u distribution.
 
@@ -434,7 +614,17 @@ class EncoderXU_MultiVI(nn.Module):
         :class:`~torch.distributions.Normal`
             Distribution over ``u`` with parameters of shape ``(batch, n_latent)``.
         """
-        x = self.fc1(u0)
+        x = _append_covariates(
+            u0,
+            batch_index=batch_index,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+            n_batch=self.n_batch,
+            n_continuous_cov=self.n_continuous_cov,
+            n_cats_per_cov=self.n_cats_per_cov,
+            encode_covariates=self.encode_covariates,
+        )
+        x = self.fc1(x)
         x = self.cond_norm1(x, sample_covariate)
         x = self.activation(x)
         x = self.fc2(x)

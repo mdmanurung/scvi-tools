@@ -137,7 +137,7 @@ Full-cohort results (max_epochs=1000, 3 seeds). Numbers are mean ± std across s
 | B3 (p1) cross-panel | Roider BNHL | panel-1 holdout macro-F1 | **0.828 ± 0.015** | — | ✅ defensible supervised headline |
 | B3 (p2) cross-panel | Roider BNHL | inter-method concordance | 0.671 ± 0.008 | CytoVI-kNN | ❌ below ≥0.80 gate — **concordance, not accuracy** |
 | B5 novelty detection | Roider BNHL | mean AUROC | 0.484 ± 0.019 | CytoVI kNN-OOD 0.775 ± 0.002 | ❌ **NEGATIVE** — TTA uncertainty below chance |
-| B8 HCE vs flat CE | Nuñez PBMC | Δ macro-F1 | **+0.0862 ± 0.0027** | flat CE | ✅ hierarchy helps on coarse labels |
+| B8 HCE vs flat CE | Nuñez PBMC / Hao CITE-seq | lineage-coherence Δ | fewer cross-lineage errors (see below) | flat CE | ⚠️ helps *lineage coherence* under partial annotation, not fine accuracy |
 
 ### Limitations of the current evidence
 
@@ -150,8 +150,14 @@ Full-cohort results (max_epochs=1000, 3 seeds). Numbers are mean ± std across s
 - **B5 novelty is a genuine negative result.** CytoANVI's test-time-augmentation uncertainty does
   not detect held-out cell types better than a trivial kNN-distance baseline in CytoVI latent, and
   the held-out "novel" types are proxy Leiden clusters rather than manually gated populations.
-- **B8's gain is on a nearly flat tree.** The Nuñez hierarchy has a single internal node, so the
-  +0.086 improvement should not be read as evidence for deep, multi-level cell hierarchies.
+- **B8/HCE helps lineage coherence, not fine accuracy.** HCE is *mathematically identical to flat
+  CE for leaf-only labels* — it only engages when some cells are labelled at coarse (internal)
+  nodes (partial/mixed-granularity annotation; Nuñez's +0.086 came from a populated coarse node).
+  On a genuinely deep tree (Hao CITE-seq ADT, 8 internal nodes, 3 seeds) the fine leaf-F1 effect
+  is within noise, but HCE *consistently reduces cross-lineage errors* (all seeds, ~2.75σ, scaling
+  with the coarse-label fraction). The magnitude is small (~9% relative) because rich ADT panels
+  already give ~99% lineage accuracy. Report B8 with a lineage-level / hierarchical metric, not
+  leaf macro-F1, and frame it around partial annotation.
 
 B2 on the full Roider cohort, B9 mapping-QC (blocked by an upstream `mapqc` bug), and the
 continual-update tasks (B4/B6, which currently use pseudo-batch splits) are not yet reportable

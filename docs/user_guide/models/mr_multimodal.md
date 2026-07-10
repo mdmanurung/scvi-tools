@@ -94,3 +94,29 @@ yet.
 
 `MrMultiVI.differential_expression()` rejects ATAC-containing models. ATAC effects should use a
 separate differential-accessibility API rather than being mixed into RNA/protein DE semantics.
+
+## v1 Limitations
+
+These limitations are intentional cuts documented in ADR-0005 / ADR-0006.
+
+**Differential expression:**
+- `MrTotalVI.differential_expression` is latent-space only (`beta`/`effect_size`/`pvalue` over
+  counterfactual `z` shifts). Setting `store_lfc=True` or requesting decoded RNA/protein LFC
+  raises `NotImplementedError` — TotalVI decoder contrast semantics are not yet finalized.
+- `MrMultiVI.differential_expression` and `differential_accessibility` raise `NotImplementedError`
+  for all inputs. Use `differential_abundance` for sample-level DA over `u` instead.
+
+**ArchesMixin / scArches surgery:**
+Neither model supports reference-query surgery or the `ArchesMixin` protocol.
+
+**Objective (methods note):**
+The default training objective (`use_map=True`) is a MAP/cross-entropy penalty on the residual
+`eps`, not a strict ELBO. The analytic ELBO — including the `q(eps)` entropy term — is available
+via `use_map=False` at model construction:
+```python
+model = scvi.external.MrTotalVI(adata, sample_key="donor", use_map=False)
+```
+
+The `kl_u` term uses a single-sample Monte-Carlo estimate of `KL(q(u)‖p(u))` (unbiased, higher
+variance than analytic). The MrMultiVI mixed-posterior variance is regularized only via the
+`kl_div_paired` penalty, not through a KL-to-prior on the per-modality encoders.

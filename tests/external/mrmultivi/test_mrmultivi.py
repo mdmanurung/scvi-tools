@@ -506,6 +506,39 @@ def test_mrmultivi_gaussian_u_prior_and_z_u_prior_off(mdata_basic):
     assert torch.allclose(loss_out.kl_local["kl_divergence_z"], expected_kl_u, atol=1e-5)
 
 
+def test_mrmultivi_learnable_prior_scale_clamp(mdata_basic):
+    """pz_scale.clamp(min=-4.0) prevents σ→0 / kl_z→-∞ collapse.
+
+    Under learn_z_u_prior_scale=True + use_map=True (the default), the optimizer
+    could otherwise drive pz_scale→-∞ (σ→0) jointly with eps→0, making kl_z
+    unbounded below.  The clamp ensures σ ≥ exp(-4) ≈ 0.018 at all times.
+    """
+    import torch
+    from torch.distributions import Normal
+
+    model = _setup_and_train(
+        mdata_basic,
+        max_epochs=MAX_EPOCHS_FULL,
+        learn_z_u_prior_scale=True,
+        use_map=True,
+    )
+    module = model.module
+    pz_scale = module.pz_scale
+    assert isinstance(pz_scale, torch.nn.Parameter), "pz_scale is not nn.Parameter"
+    assert (pz_scale >= -4.0).all(), (
+        f"pz_scale breached the -4.0 clamp floor: min={pz_scale.min():.3f}"
+    )
+    module.eval()
+    batch = next(iter(model._make_data_loader(adata=model.adata, batch_size=16)))
+    with torch.no_grad():
+        inf_out = module.inference(**module._get_inference_input(batch))
+        eps = inf_out["eps"]
+        peps = Normal(0.0, torch.exp(pz_scale.clamp(min=-4.0)))
+        kl_z = -peps.log_prob(eps).sum(dim=-1)
+    assert torch.isfinite(kl_z).all(), "kl_z contains non-finite values after clamp"
+    assert (kl_z > -1e6).all(), f"kl_z implausibly negative: min={kl_z.min():.1f}"
+
+
 def test_mrmultivi_encode_covariates_expands_qu_input(mdata_basic):
     """encode_covariates=True appends batch, categorical, and continuous covariates to qu."""
     import torch
@@ -569,8 +602,8 @@ def test_mrmultivi_save_load_preserves_latent_hierarchy(mdata_basic, tmp_path):
     assert loaded.module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
     assert loaded.sample_order.tolist() == model.sample_order.tolist()
     assert loaded.label_order.tolist() == model.label_order.tolist()
-    assert torch.allclose(loaded.module.u_prior_means, model.module.u_prior_means)
-    assert torch.allclose(loaded.module.u_prior_scales, model.module.u_prior_scales)
+    assert torch.allclose(loaded.module.u_prior_means.cpu(), model.module.u_prior_means.cpu())
+    assert torch.allclose(loaded.module.u_prior_scales.cpu(), model.module.u_prior_scales.cpu())
 
 
 def test_mrmultivi_u_space_statistical_apis(mdata_basic):

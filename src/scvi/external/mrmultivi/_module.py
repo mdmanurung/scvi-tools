@@ -496,7 +496,7 @@ class MrMultiVAE(MULTIVAE):
         if self.z_u_prior:
             eps = inference_outputs["eps"]
             eps_dist = inference_outputs.get("eps_dist")
-            peps = Normal(0.0, torch.exp(self.pz_scale))
+            peps = Normal(0.0, torch.exp(self.pz_scale.clamp(min=-4.0)))
             if eps_dist is not None:
                 # use_map=False: analytic KL(q(eps) || p(eps)) — correct ELBO includes entropy
                 kl_z = kl_divergence(eps_dist, peps).sum(dim=-1)

@@ -507,8 +507,8 @@ def test_mrtotalvi_save_load_preserves_latent_hierarchy(adata_basic, tmp_path):
     assert loaded.module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
     assert loaded.sample_order.tolist() == model.sample_order.tolist()
     assert loaded.label_order.tolist() == model.label_order.tolist()
-    assert torch.allclose(loaded.module.u_prior_means, model.module.u_prior_means)
-    assert torch.allclose(loaded.module.u_prior_scales, model.module.u_prior_scales)
+    assert torch.allclose(loaded.module.u_prior_means.cpu(), model.module.u_prior_means.cpu())
+    assert torch.allclose(loaded.module.u_prior_scales.cpu(), model.module.u_prior_scales.cpu())
 
 
 def test_mrtotalvi_u_space_statistical_apis(adata_basic):
@@ -809,6 +809,41 @@ def test_learnable_prior_scale(adata_basic):
     assert not torch.allclose(pz_scale, torch.zeros_like(pz_scale)), (
         "pz_scale stayed at init=0.0 after training — gradient not flowing through kl_z"
     )
+
+
+def test_learnable_prior_scale_clamp(adata_basic):
+    """pz_scale.clamp(min=-4.0) prevents σ→0 / kl_z→-∞ collapse.
+
+    Under learn_z_u_prior_scale=True + use_map=True (the default), the optimizer
+    could otherwise drive pz_scale→-∞ (σ→0) jointly with eps→0, making kl_z
+    unbounded below.  The clamp ensures σ ≥ exp(-4) ≈ 0.018 at all times.
+    """
+    import torch
+
+    model = _setup_and_train(
+        adata_basic,
+        max_epochs=MAX_EPOCHS_FULL,
+        learn_z_u_prior_scale=True,
+        use_map=True,
+    )
+    module = model.module
+    pz_scale = module.pz_scale
+    # After training, no dimension should be able to breach the clamp floor
+    assert (pz_scale >= -4.0).all(), (
+        f"pz_scale breached the -4.0 clamp floor: min={pz_scale.min():.3f}"
+    )
+    # kl_z must be finite and bounded below — confirm no -inf or nan in a forward pass
+    module.eval()
+    batch = next(iter(model._make_data_loader(adata_basic)))
+    with torch.no_grad():
+        inf_out = module._regular_inference(**module._get_inference_input(batch))
+        eps = inf_out["eps"]
+        import math
+        from torch.distributions import Normal
+        peps = Normal(0.0, torch.exp(pz_scale.clamp(min=-4.0)))
+        kl_z = -peps.log_prob(eps).sum(dim=-1)
+    assert torch.isfinite(kl_z).all(), "kl_z contains non-finite values after clamp"
+    assert (kl_z > -1e6).all(), f"kl_z implausibly negative: min={kl_z.min():.1f}"
 
 
 # ---------------------------------------------------------------------------

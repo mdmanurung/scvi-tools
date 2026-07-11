@@ -85,9 +85,17 @@ which follows the same pattern.
   require embedding surgery or a projection module (future work).
 - **No `latent_distribution="ln"`** — architecturally invalid; asserted rather than silently ignored.
 - **No minified-mode inference** — the hierarchy requires the full encoder path.
-- **Decoded RNA/protein LFC storage is not implemented yet** — `differential_expression` returns
-  latent-space `beta`, `effect_size`, and `pvalue` from the local counterfactual linear model, but
-  does not yet store decoded RNA/protein LFC arrays.
+- **Decoded RNA/protein LFC** — `differential_expression` now supports `store_lfc=True`, which
+  returns decoded gene- and protein-space `lfc`, `lfc_std`, optional `pde` (when `delta` is
+  provided), and optional `baseline_expression`. Design decisions resolved:
+  - **D-021 (deterministic protein background)**: the LFC contrast path uses
+    `rate_back = exp(back_alpha)` (deterministic) instead of sampling from the background prior, so
+    x_0 / x_1 calls differ only via `extra_eps` and background noise does not inflate LFC variance.
+  - **D-022 (feature layout)**: `compute_h_from_x_eps` returns `concat(px_scale, py_scale)`;
+    feature coordinates are split into `"gene"` / `"protein"` labels at the model level.
+  - **D-023 (vmap policy)**: default `use_vmap=False` (explicit per-donor loop) because MrTotalVI's
+    inherited TotalVI decoder uses BatchNorm, which breaks `torch.vmap`. Reserved as opt-in future
+    work.
 
 ### MultiVI path (implemented)
 `EncoderUZ`, `ConditionalNormalization`, and `NormalDistOutputNN` are factored into

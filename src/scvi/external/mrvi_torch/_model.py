@@ -1396,7 +1396,7 @@ class TorchMRVI(
                         # mc_samples also taken for eps. vmap over mc_samples
                     )
 
-                batch_index_ = torch.arange(self.summary_stats.n_batch)[:, None]
+                batch_index_ = torch.arange(self.summary_stats.n_batch, device=self.device)[:, None]
                 batch_index_ = batch_index_.repeat(1, n_cells)[..., None]  # (n_batch, n_cells, 1)
                 betas_null = torch.zeros_like(betas_covariates)
 

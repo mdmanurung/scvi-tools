@@ -1180,3 +1180,125 @@ def test_vamprior_has_correct_parameters(adata_basic):
     assert module.u_prior_mixture is True, (
         "VampPrior must set u_prior_mixture=True to enable MC KL path"
     )
+
+
+def test_vamprior_save_load(tmp_path):
+    """VampPrior pseudo-inputs and logits survive a save/load cycle."""
+    import torch
+
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    K = 4
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K)
+    model.train(
+        max_epochs=1,
+        accelerator="cpu",
+        plan_kwargs={"lr": 1e-3},
+        check_val_every_n_epoch=1,
+    )
+
+    save_path = tmp_path / "mrtotalvi_vamp"
+    model.save(save_path, overwrite=True)
+    loaded = MrTotalVI.load(save_path, adata=adata)
+
+    assert loaded.module.u_prior_type == "vamp"
+    assert loaded.module.u_vamp_pseudo.shape == model.module.u_vamp_pseudo.shape
+    assert loaded.module.u_prior_logits.shape == model.module.u_prior_logits.shape
+    assert torch.allclose(
+        loaded.module.u_vamp_pseudo.cpu(),
+        model.module.u_vamp_pseudo.cpu(),
+    )
+    assert torch.allclose(
+        loaded.module.u_prior_logits.cpu(),
+        model.module.u_prior_logits.cpu(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Change E — n_obs_per_sample buffer persistence
+# ---------------------------------------------------------------------------
+
+def test_n_obs_per_sample_in_state_dict():
+    """Change E: n_obs_per_sample is persistent → present in state_dict and survives load_state_dict."""
+    import torch
+
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, scale_observations=True)
+    sd = model.module.state_dict()
+    assert "n_obs_per_sample" in sd, "n_obs_per_sample must appear in state_dict (persistent=True)"
+
+    model2 = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, scale_observations=True)
+    model2.module.load_state_dict(sd)
+    assert torch.allclose(
+        model2.module.n_obs_per_sample.cpu(),
+        model.module.n_obs_per_sample.cpu(),
+    ), "load_state_dict must restore n_obs_per_sample"
+
+
+# ---------------------------------------------------------------------------
+# Change C — separate KL weights for kl_u and kl_z
+# ---------------------------------------------------------------------------
+
+def test_kl_weights_stored_and_non_default_differ():
+    """Change C: kl_u_weight / kl_z_weight are stored; non-default values are set correctly."""
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model_default = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
+                               kl_u_weight=1.0, kl_z_weight=1.0)
+    assert model_default.module.kl_u_weight == 1.0
+    assert model_default.module.kl_z_weight == 1.0
+
+    model_scaled = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
+                              kl_u_weight=0.5, kl_z_weight=2.0)
+    assert model_scaled.module.kl_u_weight == 0.5
+    assert model_scaled.module.kl_z_weight == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Change D — data-driven VampPrior initialisation
+# ---------------------------------------------------------------------------
+
+def test_init_prior_from_data_vamprior():
+    """Change D: init_prior_from_data=True yields finite pseudo-inputs near the data manifold."""
+    import math
+
+    import torch
+
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    K = 4
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K,
+                      init_prior_from_data=True)
+    pseudo = model.module.u_vamp_pseudo
+    dim = model.module.n_input_genes + model.module.n_input_proteins
+    assert pseudo.shape == (K, dim)
+    assert torch.all(torch.isfinite(pseudo)), "data-driven VampPrior pseudo-inputs must be finite"
+    # Norms should be substantially larger than the default randn*0.01 init
+    norms = pseudo.norm(dim=-1)
+    assert (norms > 0.5).any(), (
+        f"data-driven pseudo-inputs norms {norms.tolist()} are unexpectedly small; "
+        "expected them near data centroids"
+    )

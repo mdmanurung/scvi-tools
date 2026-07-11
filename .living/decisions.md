@@ -252,3 +252,43 @@ accept **kwargs.
 **Rationale**: Mirrors MrTotalVI's exact pattern. Using `log1p` is numerically stable for protein counts. Softplus-constraining only the protein pseudo-columns keeps the u0 pseudo-columns free to roam latent space. Default off so no existing behaviour changes.
 **Consequences**: When `protein_in_encoder=True`, `fc1.in_features = n_latent + n_input_proteins` (wider). Save/load is safe because `protein_in_encoder` is in `init_params_`. The vamp + protein combo is covered by test_protein_in_encoder_with_vamprior.
 **Status**: active
+
+### D-027 — [2026-07-11] Do not port peps clamp to mrvi_torch reference model
+**Context**: MrTotalVI and MrMultiVI both clamp `peps` scale to `min=-4.0` (added in a safety pass). The original `mrvi_torch/_module.py` lacks this clamp (G10 in the gap analysis).
+**Decision**: Leave `mrvi_torch` untouched. The clamp is applied in the two extension models only.
+**Rationale**: `mrvi_torch` is the upstream reference implementation; modifying it introduces divergence from upstream and risks unintended side-effects on MrVI users. The extension models already have the guard where it matters.
+**Status**: active
+
+### D-028 — [2026-07-11] Cell-state comparison method: label-separability (F1) as primary signal; de-novo clustering as secondary hypothesis
+**Context**: To determine whether MrMultiVI_u and MrTotalVI_u resolve different cell states, two main options existed: (a) independent Leiden + cluster matching, or (b) per-label kNN classification metrics over known `celltype` labels. Option (a) is sensitive to resolution parameter and seed, and cluster matching is noisy. Option (b) is interpretable, directly tied to biology, and robust across seeds.
+**Decision**: Use label-grounded kNN macro-F1 + neighborhood purity as the primary signal (step 1). Use independent Leiden cross-recoverability (step 2) and kNN-Jaccard (step 4) only as secondary structural characterization, not for headline claims. Any flagged state must pass a donor/batch validity gate before biological interpretation.
+**Rationale**: Known labels give a ground truth anchor unavailable to pure clustering comparisons. F1 deltas < 0.05 are within single-seed noise; only report states with |ΔF1| ≥ 0.05 as substantive differences (CD16- NK: +0.105, Tem/Trm T: +0.072, Plasma: -0.071 cleared this threshold).
+**Status**: active
+
+### D-030 — [2026-07-11] Separate kl_u_weight / kl_z_weight for MrTotalVI/MrMultiVI KL terms
+**Context**: Both models combine kl_u + kl_z into a single tensor before applying the global `kl_weight` annealing schedule. The benchmark analysis flagged the balance between donor-integration KL (`kl_u`) and the hierarchical residual KL (`kl_z`) as a tunable lever on the integration/bio-conservation tradeoff.
+**Decision**: Add `kl_u_weight: float = 1.0` and `kl_z_weight: float = 1.0` as static scalar multipliers in both `MrTotalVAE` and `MrMultiVAE`, applied as `kl_u_weight * kl_u + kl_z_weight * kl_z` before the global schedule. Default 1.0 reproduces prior behaviour exactly.
+**Rationale**: Static scalars require no training-plan changes. A separate annealing *schedule* would need `TrainingPlan` modifications; the static knob is sufficient for benchmark sweeps. Named explicitly in the module `__init__` (not absorbed into `**kwargs`) so they thread correctly through `super().__init__()`.
+**Consequences**: Per-term control is now available without touching the training plan. Callers must not pass both via model kwarg and `**model_kwargs` (duplicate-kwarg TypeError). Tests verify stored values at construction time.
+**Status**: active
+
+### D-031 — [2026-07-11] Data-driven VampPrior init for TotalVI; deferred for MultiVI
+**Context**: VampPrior pseudo-inputs were initialized from `randn * 0.01`, far from the data manifold. This is a known VampPrior failure mode. Data-driven init via k-means centroids can seed pseudo-inputs near the manifold.
+**Decision**: Add `init_prior_from_data: bool = False` to both models. For TotalVI+VampPrior: k-means on ≤10k cells of raw gene+protein data, softplus-inverse applied to centroids → `prior_centroids` passed to `init_u_prior`. For MultiVI+VampPrior: flag is accepted but silently deferred (pseudo-inputs live in MULTIVAE continuous latent space, not accessible at init time without a forward pass).
+**Rationale**: TotalVI pseudo-inputs are in raw count space (softplus-constrained), so data centroids → softplus-inverse is a valid seeding strategy. MultiVI pseudo-inputs are in a continuous latent space that can't be approximated from raw features at init time. Separating the two cases avoids a confusing "ignored" behavior for TotalVI while being honest about the MultiVI limitation.
+**Consequences**: MultiVI data-driven init is documented as unsupported (class docstring). Future work: after training, pseudo-inputs could be re-initialized using latent centroids from `get_latent_representation()`.
+**Status**: active
+
+### D-032 — [2026-07-11] protein_encoder_mode experimental spike via qu_kwargs, not a first-class model param
+**Context**: Benchmarks showed `protein_in_encoder=True` (raw log1p protein) degrades batch/donor integration because u must be sample-unaware but raw protein carries donor/batch/panel signal. The plan called for experimental alternatives: LayerNorm and learned projection of protein before concatenation.
+**Decision**: Implement `protein_encoder_mode` (options: "log1p", "layernorm", "project") and `protein_encoder_proj_dim` as kwargs on `EncoderXU_MultiVI.__init__`. They flow naturally through `qu_kwargs` at the model level — no new first-class model params needed.
+**Rationale**: These are speculative research directions. Keeping them in `qu_kwargs` avoids cluttering the model API with experimental flags. Any mode that proves beneficial can be promoted to a first-class param later. `protein_in_encoder` stays at `False` by default — the modes only matter when it's `True`.
+**Consequences**: Users invoke via `qu_kwargs={"protein_encoder_mode": "layernorm"}`. The "project" mode changes `fc1.in_features`, which must be consistent at save/load time (since `qu_kwargs` is in `init_params_`, this is safe). A projection to 2D is tested to verify the dim reduction is wired correctly.
+**Status**: active
+
+### D-029 — [2026-07-11] Permutation null at donor level, not cell level, for MrTotalVI DE calibration
+**Context**: MrTotalVI DE uses a between-donor design matrix — `sample_cov_keys=['timepoint']` maps each donor to a timepoint from their FIRST occurrence in adata.obs. The test statistic is a donor-level WLS chi-squared. To check p-value calibration, we need to permute at the level of the exchangeable unit (the donor), not individual cells.
+**Decision**: Permute donor→timepoint assignments (10 donors, preserve the multiset of timepoints), re-run `differential_expression`, check p-value distribution against Uniform(0,1) via KS test. 20 permutations. Script: `.scratch/mr-schisto-benchmark/run_de_permutation_null.py` (job 25211101).
+**Rationale**: Cell-level permutation would break the design matrix (donors would no longer map to a single timepoint). Donor-level permutation breaks the genotype→timepoint association while preserving group sizes — the correct exchangeability assumption for this WLS test. If permuted p-values are also concentrated near 0, the test statistic is anti-conservative (inflated Type I error), ruling out the current DE results as valid.
+**Consequences**: If null is not calibrated, DE results (F-017) cannot be used for publication. If calibrated, the IFN-suppression signature and protein results survive. The DDX3Y/sex-confound is a separate confounder issue (not a calibration issue) that needs `nuisance_keys` or explicit sex covariate.
+**Status**: active

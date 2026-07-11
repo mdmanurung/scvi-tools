@@ -357,12 +357,12 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **structural_mitigation_candidate**: test_mrmultivi_save_load_roundtrip
 **Body**: `MrMultiVI.__init__` both declares `n_latent_sample`, `z_u_prior_scale`, `learn_z_u_prior_scale`, `use_map`, `scale_observations` as named params AND injects them into `model_kwargs` before calling `super().__init__(mdata, **model_kwargs)`. `_get_init_params(locals())` captures the named params as non-kwargs AND the `model_kwargs` dict containing the same keys. At load time, `cls(adata, **non_kwargs, **expanded_model_kwargs)` gets duplicate keyword arguments → `TypeError`. Fix: remove all injections into `model_kwargs`; they are already named params that flow through to `_setup_hierarchy` directly after `super().__init__()`. `MrTotalVI` does NOT have this bug (it passes params directly). This bug makes any saved `MrMultiVI` model unloadable.
 
-### L-052 — [2026-07-08] Non-persistent buffer silently None after save/load when scale_observations=True
+### L-052 — [2026-07-08] Non-persistent buffer silently None after save/load when scale_observations=True  **[CLOSED 2026-07-11]**
 **Category**: bug
 **Tags**: mrtotalvi, mrmultivi, scale_observations, n_obs_per_sample, save-load, persistent-buffer
 **mitigation_type**: structural
-**structural_mitigation_candidate**: test_scale_observations_warns_after_load
-**Body**: `n_obs_per_sample` is registered with `register_buffer(..., persistent=False)` so it is excluded from `state_dict` and not restored on `load()`. After loading a model trained with `scale_observations=True`, `self.n_obs_per_sample is None` and the guard `if self._scale_observations and self.n_obs_per_sample is not None` silently falls through to the unweighted loss — no error, no warning, just quietly wrong training. Fix: emit `UserWarning` in `loss()` when `_scale_observations=True` and buffer is `None` (after a `load()` call, the caller must recompute the buffer from adata). The non-persistent pattern is intentional (buffer depends on the data subset, not the weights) but the silent fallback is not.
+**structural_mitigation_candidate**: test_n_obs_per_sample_in_state_dict
+**Body**: `n_obs_per_sample` was registered with `register_buffer(..., persistent=False)` so it was excluded from `state_dict` and not restored on direct `load_state_dict`. The standard `Model.load()` path re-runs `__init__` and recomputes the buffer, so it was unaffected. The gap was direct `load_state_dict` usage. Fix applied 2026-07-11: flipped both modules (`mrtotalvi/_module.py:241`, `mrmultivi/_module.py:256`) to `persistent=True`. The `UserWarning` guard for `None` buffer in `loss()` is retained as belt-and-suspenders for any code that creates the module without calling `_setup_hierarchy`. New test `test_n_obs_per_sample_in_state_dict` verifies `state_dict()` contains the buffer and `load_state_dict` round-trip preserves it.
 
 ### L-054 — [2026-07-10] pz_scale degeneracy direction: σ→0 (min), not σ→∞ (max)
 **Category**: bug
@@ -465,7 +465,50 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **structural_mitigation_candidate**: test_vamprior_trains_finite_elbo (guards forward pass through qu)
 **Body**: `MrTotalVI` defaults `encode_covariates=True`. `EncoderXU_TotalVI._append_covariates` raises `ValueError: batch_index is required when encode_covariates=True.` if `batch_index=None` is passed. `_vamp_component_dist` initially called `self.qu(x_p, y_p, sample_idx)` without `batch_index`, triggering this error during training. Fix: pass `batch_index=torch.zeros(K, 1, ...)` when `self.encode_covariates` is True. MrMultiVI is unaffected (defaults `encode_covariates=False`).
 
+### L-065 — [2026-07-11] MrTotalVI/MrMultiVI `encode_covariates` default was True in `MrTotalVAE` (bug)
+**Category**: bug
+**Tags**: encode-covariates, mrtotalvi, checkpoint-load, model-load, size-mismatch
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_mrtotalvi_load_pretrained_checkpoint
+**Body**: `MrTotalVAE.__init__` had `encode_covariates = kwargs.get("encode_covariates", True)` as its default. The reference MRVI design and `EncoderXU_TotalVI.__init__` both default to `False` (u-encoder should be batch-uninformed). The pre-trained checkpoint was saved with `False` — `qu.fc1.weight = [128, 10130]`. Loading with the buggy `True` default caused `n_input = 10130 + n_batch(6) = 10136` in the current model, producing a `RuntimeError: size mismatch for qu.fc1.weight` on load. Fix: change the default to `False` in `_module.py:110`. Same fix needed in MrMultiVI; check was also `False` there, confirming consistency. Any checkpoint trained with `encode_covariates=True` would need an explicit kwarg on load.
+
+### L-066 — [2026-07-11] SLURM `gpu` partition may allocate TITAN Xp (sm_61), incompatible with PyTorch sm_75+
+**Category**: infra
+**Tags**: slurm, gpu, cuda, pytorch, titan-xp
+**mitigation_type**: convention
+**Body**: The `gpu` partition on the cluster includes TITAN Xp nodes (sm_61, Pascal). The scvi-test conda env's PyTorch build requires sm_75+. Allocating from the unspecified `gpu` partition randomly assigned a TITAN Xp → `cudaErrorNoKernelImageForDevice` at first CUDA call. Fix: use `--partition=gpu-long --gres=gpu:L40S:1` for any MrTotalVI/MrMultiVI GPU inference. L40S (sm_89, Ada) is available on `res-hpc-gpu[11-12]`. RTX6000/RTX8000 (sm_75) are also compatible but on the `short` partition.
+
 ### L-064 — [2026-07-11] MrMultiVI protein_in_encoder: VampPrior pseudoinputs must split at n_latent
 **Category**: design
 **Tags**: protein-in-encoder, vamprior, mrmultivi, pseudoinputs
 **Body**: When both `protein_in_encoder=True` and `u_prior="vamp"` are active, `u_vamp_pseudo` has shape `(K, n_latent + n_input_proteins)`. In `_vamp_component_dist`, the tensor must be split: `u0_pseudo = pseudo[:, :n_latent]` (unconstrained, continuous latent space) and `y_pseudo = F.softplus(pseudo[:, n_latent:])` (positive, fed as log1p-transformed pseudo-counts). Using Softplus on the whole pseudo-tensor would incorrectly constrain u0 to be positive. The split index is `self.n_latent`, not `module.qu.n_input_proteins`.
+
+### L-067 — [2026-07-11] Architectural prior for MrTotalVI/MrMultiVI protein resolution is only half-predictive
+**Category**: data
+**Tags**: mrmultivi, mrtotalvi, cell-state, protein, architectural-prior, benchmark
+**Body**: Expected: MrTotalVI_u (raw protein in u-encoder) better on protein-defined states; MrMultiVI_u (protein second-hand via MULTIVAE) better on RNA-dominant states. Observed (schisto CITE-seq, 49k cells, kNN-F1): architectural prior correctly predicts Plasma (−0.071) and DC2 (−0.038) to be better in MrTotalVI_u. But CD16- NK cells (protein-defined by CD16/CD56) are *better* in MrMultiVI_u (+0.105). MAIT cells (primarily RNA/TCR-defined) are better in MrMultiVI_u (+0.044) — this one is consistent. The split is ~50/50 between architecturally predicted vs surprising. Likely explanation: MULTIVAE joint encoding is more effective than TotalVI's additive decomposition for some intermediate populations (like CD16- NK), even though those populations are protein-defined.
+
+### L-070 — [2026-07-11] `torch.arange(n_batch)` defaults to CPU — passes CPU index into vmap where embedding weight is on CUDA
+**Category**: bug
+**Tags**: mrvi, vmap, device, batch_index, torch-arange, embedding
+**mitigation_type**: structural
+**structural_mitigation_candidate**: always pass device= when creating index tensors for vmap
+**Body**: In `mrvi_torch/_model.py` line 1399, `batch_index_ = torch.arange(self.summary_stats.n_batch)[:, None]` creates a CPU tensor. This is passed as the second argument to the triple-nested vmap (`in_dims=0` in the outermost vmap). Inside vmap, each vmapped slice is still on CPU. When it flows through `compute_h_from_x_eps → generative → DecoderZXAttention.forward → batch_embedding(batch_covariate)`, the embedding weight is on CUDA but the index is on CPU → `RuntimeError: Expected all tensors to be on the same device`. All other tensors in the LFC block either explicitly use `device=eps_mean_.device` or are moved via `.to(self.device)` OUTSIDE the vmap — but `batch_index_` enters the vmap without a device move. Calling `.to(device)` INSIDE vmap is not vmap-traceable and causes a different crash. The fix is to add `device=self.device` to the `torch.arange` call before the vmap entry. This was a 1-character source change to `mrvi_torch/_model.py`. General rule: any tensor created with `torch.arange`, `torch.ones`, `torch.zeros`, or `torch.full` that will enter a vmap must have `device=` explicitly set.
+
+### L-069 — [2026-07-11] `@auto_move_data` is vmap-incompatible in eval mode — requires instance-level monkey-patch
+**Category**: gotcha
+**Tags**: mrvi, vmap, auto_move_data, torch-func, monkey-patch, attention
+**mitigation_type**: structural
+**structural_mitigation_candidate**: make_mrvi_vmap_safe
+**Body**: MRVI's `store_lfc=True` path uses triple-nested `torch.func.vmap`. In eval mode, `@auto_move_data` wraps every submodule's `forward`/`inference`/`generative` and calls `.to(device, non_blocking=True)` on every input tensor. Under `torch.vmap`, vmapped tensors are BatchedTensors that do not support `.to()` with non_blocking; the tensor becomes `None` downstream, crashing at `F.scaled_dot_product_attention` with "Expected proper Tensor but got None for argument #0 'self'". The wrapper is a no-op in intent (all tensors are already on the correct device post-load), but fatal under vmap. Fix: after `MRVI.load(...)`, iterate over `model.module.modules()`, find any class-level attribute that has `__wrapped__` set (confirming `@auto_move_data` / `@wraps` was used), and install an instance-level bound method from the original function via `setattr(submod, attr_name, types.MethodType(cls_attr.__wrapped__, submod))`. This overrides class-attribute lookup for the specific model instance without modifying any source files. Affected methods: `ResnetBlock.forward`, `MLP.forward`, `NormalDistOutputNN.forward`, `ConditionalNormalization.forward`, `AttentionBlock.forward`, `DecoderZXAttention.forward`, `EncoderUZ.forward`, `EncoderXU.forward`, `TorchMRVAE.inference`, `TorchMRVAE.generative` (10 methods).
+
+### L-071 — [2026-07-11] MultiVI VampPrior pseudo-inputs are in continuous latent space — data-driven init not feasible at construction time
+**Category**: design
+**Tags**: mrmultivi, vamprior, pseudoinputs, latent-space, init
+**mitigation_type**: ambient-awareness
+**Body**: `EncoderXU_MultiVI` takes MULTIVAE's mixed latent `u0` (continuous, can be negative) as input — not raw counts. So MrMultiVI VampPrior pseudo-inputs (shape `(K, n_latent)`) live in `u0` space. Unlike MrTotalVI (raw count space, Softplus-constrained), you can't compute data centroids and apply softplus-inverse. The only way to seed them from data at init time would be to run a forward pass through the random (untrained) MULTIVAE encoder, which produces meaningless latents. `init_prior_from_data=True` is accepted syntactically by MrMultiVI but silently deferred. If data-driven MoG/VampPrior init is wanted for MultiVI, it must be done post-training via `model.module.u_prior_means.data = compute_latent_centroids(model)`.
+
+### L-068 — [2026-07-11] Subsample/h5ad version mismatch causes UMAP overlay misalignment
+**Category**: infra
+**Tags**: umap, subsample, h5ad, mismatch, benchmark
+**Body**: Pre-computed UMAP coords (`umap_coords_MrMultiVI_u.tsv.gz`) generated Jul 11 11:35; the h5ad was subsequently modified (Jul 11 19:43). The subsample (SEED=0, same MAX_CELLS=50k, same `celltype_not_null` filter) produces a different set of obs_names when reindex is done on the new h5ad, yielding only 19861/49752 aligned cells for the Jaccard overlay. Analysis results (F1, purity, ARI, NMI, Leiden cross-recoverability) are fully valid on the current subsample. Fix: always regenerate UMAP coords in the same script that generates the analysis subsample, or save subsample obs_names as a sidecar file.

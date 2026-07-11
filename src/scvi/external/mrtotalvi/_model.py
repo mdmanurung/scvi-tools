@@ -65,6 +65,19 @@ class MrTotalVI(TOTALVI):
         ``0.0`` → ``p(eps) = N(0, 1)``.
     learn_z_u_prior_scale
         Whether ``pz_scale`` is a learnable parameter.
+    kl_u_weight
+        Static scalar weight applied to ``KL(q_u ‖ p_u)`` before the global
+        ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
+    kl_z_weight
+        Static scalar weight applied to ``KL(q_z ‖ p_z)`` before the global
+        ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
+    init_prior_from_data
+        If ``True`` and ``u_prior="vamp"``, run k-means on a random subsample
+        (≤10 000 cells) of the raw encoder input (genes + proteins) and use the
+        centroids — mapped through the softplus-inverse — to initialise VampPrior
+        pseudo-inputs near the data manifold (see :cite:t:`Tomczak2018`).
+        Ignored for ``u_prior="mog"`` (latent-space centroids require a forward
+        pass, not available at init time).
     **model_kwargs
         Additional keyword arguments forwarded to :class:`~._module.MrTotalVAE`
         (and transitively to :class:`~scvi.module._totalvae.TOTALVAE`).
@@ -105,6 +118,9 @@ class MrTotalVI(TOTALVI):
         qu_kwargs: dict | None = None,
         use_map: bool = True,
         scale_observations: bool = False,
+        kl_u_weight: float = 1.0,
+        kl_z_weight: float = 1.0,
+        init_prior_from_data: bool = False,
         **model_kwargs,
     ) -> None:
         if model_kwargs.get("latent_distribution", "normal") != "normal":
@@ -134,6 +150,8 @@ class MrTotalVI(TOTALVI):
             u_prior=u_prior,
             qz_kwargs=qz_kwargs,
             qu_kwargs=qu_kwargs,
+            kl_u_weight=kl_u_weight,
+            kl_z_weight=kl_z_weight,
             **model_kwargs,
         )
 
@@ -154,6 +172,35 @@ class MrTotalVI(TOTALVI):
             )
         n_obs_per_sample = torch.tensor(counts.values, dtype=torch.float32)
 
+        prior_centroids = None
+        if init_prior_from_data and u_prior == "vamp":
+            from scipy.sparse import issparse
+            from sklearn.cluster import KMeans
+
+            rng = np.random.default_rng(0)
+            n_cells = adata.n_obs
+            idx = rng.choice(n_cells, min(n_cells, 10_000), replace=False)
+
+            X_genes = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)[idx]
+            if issparse(X_genes):
+                X_genes = X_genes.toarray()
+            X_genes = X_genes.astype(np.float32)
+
+            n_proteins = self.module.n_input_proteins
+            if n_proteins > 0:
+                X_prot = self.adata_manager.get_from_registry(REGISTRY_KEYS.PROTEIN_EXP_KEY)[idx]
+                if issparse(X_prot):
+                    X_prot = X_prot.toarray()
+                X_combined = np.hstack([X_genes, X_prot.astype(np.float32)])
+            else:
+                X_combined = X_genes
+
+            kmeans = KMeans(n_clusters=u_prior_mixture_k, random_state=0, n_init="auto")
+            kmeans.fit(X_combined)
+            c = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)
+            # Softplus-inverse: F.softplus(prior_centroids) ≈ data centroids
+            prior_centroids = torch.log(torch.expm1(c.clamp(min=1e-6)))
+
         self.module._setup_hierarchy(
             n_sample=n_sample,
             n_latent_sample=n_latent_sample,
@@ -163,6 +210,7 @@ class MrTotalVI(TOTALVI):
             scale_observations=scale_observations,
             n_obs_per_sample=n_obs_per_sample,
             n_labels=self.summary_stats.get("n_labels", 0),
+            prior_centroids=prior_centroids,
         )
 
         # Sample-level metadata for coordinate labelling

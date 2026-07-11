@@ -89,22 +89,33 @@ outliers = model.get_outlier_cell_sample_pairs()
 ```
 
 `MrTotalVI.differential_expression()` returns latent-space `beta`, `effect_size`, and `pvalue`
-from the local counterfactual linear model. Decoded RNA/protein LFC storage is not implemented
-yet.
+from the local counterfactual linear model, and optionally decoded gene/protein-space LFC arrays
+when `store_lfc=True`:
 
-`MrMultiVI.differential_expression()` rejects ATAC-containing models. ATAC effects should use a
-separate differential-accessibility API rather than being mixed into RNA/protein DE semantics.
+```python
+ds = model.differential_expression(
+    sample_cov_keys=["condition"],
+    store_lfc=True,          # adds lfc, lfc_std, feature coords
+    delta=0.5,               # adds pde = P(|lfc| >= delta)
+    store_baseline=True,     # adds baseline_expression
+)
+# ds["lfc"].coords["feature"] values: "gene" or "protein"
+```
+
+`MrMultiVI.differential_expression()` supports `store_lfc=True` for RNA-only or RNA+protein
+bimodal models. ATAC-containing models raise `NotImplementedError`; ATAC effects should use a
+future `differential_accessibility` API.
 
 ## v1 Limitations
 
 These limitations are intentional cuts documented in ADR-0005 / ADR-0006.
 
 **Differential expression:**
-- `MrTotalVI.differential_expression` is latent-space only (`beta`/`effect_size`/`pvalue` over
-  counterfactual `z` shifts). Setting `store_lfc=True` or requesting decoded RNA/protein LFC
-  raises `NotImplementedError` — TotalVI decoder contrast semantics are not yet finalized.
-- `MrMultiVI.differential_expression` and `differential_accessibility` raise `NotImplementedError`
-  for all inputs. Use `differential_abundance` for sample-level DA over `u` instead.
+- Both models default to `use_vmap=False`. MrTotalVI's inherited TotalVI decoder uses BatchNorm
+  (incompatible with `torch.vmap`). MrMultiVI uses LayerNorm and may support `use_vmap=True` as
+  an opt-in in a future release.
+- `MrMultiVI.differential_expression` rejects ATAC-containing models. Use `differential_abundance`
+  for sample-level DA over `u` instead.
 
 **ArchesMixin / scArches surgery:**
 Neither model supports reference-query surgery or the `ArchesMixin` protocol.

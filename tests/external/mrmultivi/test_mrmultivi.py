@@ -1204,6 +1204,44 @@ def test_vamprior_has_correct_parameters(mdata_basic):
     )
 
 
+def test_vamprior_save_load(tmp_path):
+    """VampPrior pseudo-inputs and logits survive a save/load cycle."""
+    import torch
+
+    mdata = _make_mdata()
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    K = 4
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K)
+    model.train(
+        max_epochs=1,
+        accelerator="cpu",
+        plan_kwargs={"lr": 1e-3},
+        check_val_every_n_epoch=1,
+    )
+
+    save_path = tmp_path / "mrmultivi_vamp"
+    model.save(save_path, overwrite=True)
+    loaded = MrMultiVI.load(save_path, adata=mdata)
+
+    assert loaded.module.u_prior_type == "vamp"
+    assert loaded.module.u_vamp_pseudo.shape == model.module.u_vamp_pseudo.shape
+    assert loaded.module.u_prior_logits.shape == model.module.u_prior_logits.shape
+    assert torch.allclose(
+        loaded.module.u_vamp_pseudo.cpu(),
+        model.module.u_vamp_pseudo.cpu(),
+    )
+    assert torch.allclose(
+        loaded.module.u_prior_logits.cpu(),
+        model.module.u_prior_logits.cpu(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # (m) protein_in_encoder toggle
 # ---------------------------------------------------------------------------
@@ -1317,4 +1355,136 @@ def test_protein_in_encoder_with_vamprior(mdata_basic):
     history = model.history["elbo_train"]
     assert all(math.isfinite(v) for v in history.values.flatten()), (
         "Non-finite ELBO with protein_in_encoder=True + u_prior='vamp'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Change E — n_obs_per_sample buffer persistence
+# ---------------------------------------------------------------------------
+
+def test_n_obs_per_sample_in_state_dict(mdata_basic):
+    """Change E: n_obs_per_sample is persistent → present in state_dict and survives load_state_dict."""
+    import torch
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT, scale_observations=True)
+    sd = model.module.state_dict()
+    assert "n_obs_per_sample" in sd, "n_obs_per_sample must appear in state_dict (persistent=True)"
+
+    model2 = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT, scale_observations=True)
+    model2.module.load_state_dict(sd)
+    assert torch.allclose(
+        model2.module.n_obs_per_sample.cpu(),
+        model.module.n_obs_per_sample.cpu(),
+    ), "load_state_dict must restore n_obs_per_sample"
+
+
+# ---------------------------------------------------------------------------
+# Change C — separate KL weights for kl_u and kl_z
+# ---------------------------------------------------------------------------
+
+def test_kl_weights_stored_and_non_default_differ(mdata_basic):
+    """Change C: kl_u_weight / kl_z_weight are stored; non-default values are set correctly."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model_default = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                               kl_u_weight=1.0, kl_z_weight=1.0)
+    assert model_default.module.kl_u_weight == 1.0
+    assert model_default.module.kl_z_weight == 1.0
+
+    model_scaled = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                              kl_u_weight=0.5, kl_z_weight=2.0)
+    assert model_scaled.module.kl_u_weight == 0.5
+    assert model_scaled.module.kl_z_weight == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Change B1 — protein_in_encoder=False default
+# ---------------------------------------------------------------------------
+
+def test_protein_in_encoder_default_false(mdata_basic):
+    """Change B1: protein_in_encoder defaults to False; qu.n_input_proteins == 0 by default."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+    assert model.module.protein_in_encoder is False
+    assert model.module.qu.n_input_proteins == 0, (
+        "With protein_in_encoder=False, qu should have n_input_proteins=0"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Change B2 — protein_encoder_mode experimental spike
+# ---------------------------------------------------------------------------
+
+def test_protein_encoder_mode_layernorm(mdata_basic):
+    """Change B2: protein_encoder_mode='layernorm' via qu_kwargs trains to finite ELBO."""
+    import math
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata_basic,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        protein_in_encoder=True,
+        qu_kwargs={"protein_encoder_mode": "layernorm"},
+    )
+    assert model.module.qu.protein_encoder_mode == "layernorm"
+    assert hasattr(model.module.qu, "protein_layernorm"), (
+        "layernorm mode must add protein_layernorm submodule"
+    )
+    model.train(
+        max_epochs=MAX_EPOCHS_QUICK,
+        accelerator="cpu",
+        plan_kwargs={"lr": 1e-3},
+        check_val_every_n_epoch=MAX_EPOCHS_QUICK,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO with protein_encoder_mode='layernorm'"
+    )
+
+
+def test_protein_encoder_mode_project(mdata_basic):
+    """Change B2: protein_encoder_mode='project' reduces protein dim before fc1."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata_basic,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        protein_in_encoder=True,
+        qu_kwargs={"protein_encoder_mode": "project", "protein_encoder_proj_dim": 2},
+    )
+    qu = model.module.qu
+    assert qu.protein_encoder_mode == "project"
+    assert hasattr(qu, "protein_proj"), "project mode must add protein_proj submodule"
+    assert qu.protein_proj.out_features == 2
+    # fc1 input must use proj_dim (2), not full protein dim
+    n_proteins_full = model.module.n_input_proteins
+    n_proteins_in_fc1 = qu.protein_proj.out_features
+    assert n_proteins_in_fc1 < n_proteins_full or n_proteins_full <= 2, (
+        "Projected protein dim should be smaller than full protein dim"
     )

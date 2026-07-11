@@ -214,6 +214,7 @@ def init_u_prior(
     u_prior_label_weight: float = 10.0,
     u_prior_type: str = "mog",
     u_vamp_pseudo_dim: int | None = None,
+    prior_centroids: "torch.Tensor | None" = None,
 ) -> None:
     """Register the MrVI-style prior over ``u`` on ``module``.
 
@@ -230,6 +231,11 @@ def init_u_prior(
     u_vamp_pseudo_dim
         Width of each VampPrior pseudoinput vector (required when
         ``u_prior_type="vamp"``).
+    prior_centroids
+        Optional ``(K, dim)`` float tensor of cluster centroids for data-driven
+        initialization. For VampPrior: centroids should already be in
+        pre-activation space (i.e. softplus-inverse of the raw data values).
+        For MoG: centroids should be in latent space. Ignored when ``None``.
     """
     for name in ("u_prior_logits", "u_prior_means", "u_prior_scales", "u_prior_scale", "u_vamp_pseudo"):
         if hasattr(module, name):
@@ -247,15 +253,23 @@ def init_u_prior(
         resolved_k = module.n_labels if module.n_labels > 1 else u_prior_mixture_k
         module.resolved_u_prior_mixture_k = int(resolved_k)
         module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
-        # Small-scale init; Softplus applied in _vamp_component_dist keeps TotalVI input ≥ 0.
-        module.u_vamp_pseudo = nn.Parameter(torch.randn(resolved_k, u_vamp_pseudo_dim) * 0.01)
+        if prior_centroids is not None and prior_centroids.shape[0] == resolved_k:
+            # Data-driven init: centroids already in pre-activation space (softplus-inverse applied)
+            module.u_vamp_pseudo = nn.Parameter(prior_centroids.float().clone())
+        else:
+            # Small-scale init; Softplus applied in _vamp_component_dist keeps TotalVI input ≥ 0.
+            module.u_vamp_pseudo = nn.Parameter(torch.randn(resolved_k, u_vamp_pseudo_dim) * 0.01)
         module.u_prior_mixture = True  # enables MC KL path in kl_u
     elif u_prior_mixture:
         module.u_prior_mixture = True
         resolved_k = module.n_labels if module.n_labels > 1 else u_prior_mixture_k
         module.resolved_u_prior_mixture_k = int(resolved_k)
         module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
-        module.u_prior_means = nn.Parameter(torch.randn(resolved_k, n_latent_u))
+        if prior_centroids is not None and prior_centroids.shape[0] == resolved_k:
+            # Data-driven init: centroids in latent space
+            module.u_prior_means = nn.Parameter(prior_centroids.float().clone())
+        else:
+            module.u_prior_means = nn.Parameter(torch.randn(resolved_k, n_latent_u))
         module.u_prior_scales = nn.Parameter(
             torch.full((resolved_k, n_latent_u), float(u_prior_scale))
         )
@@ -601,6 +615,8 @@ class EncoderXU_MultiVI(nn.Module):
         n_hidden: int = 128,
         n_layers: int = 1,
         activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
+        protein_encoder_mode: str = "log1p",
+        protein_encoder_proj_dim: int | None = None,
     ):
         super().__init__()
         self.activation = activation
@@ -609,14 +625,35 @@ class EncoderXU_MultiVI(nn.Module):
         self.n_cats_per_cov = list(n_cats_per_cov or [])
         self.encode_covariates = bool(encode_covariates)
         self.n_input_proteins = int(n_input_proteins)
-        n_input = n_input + n_input_proteins + _covariate_n_input(
+
+        valid_modes = {"log1p", "layernorm", "project"}
+        if protein_encoder_mode not in valid_modes:
+            raise ValueError(
+                f"protein_encoder_mode must be one of {valid_modes}, got {protein_encoder_mode!r}"
+            )
+        self.protein_encoder_mode = protein_encoder_mode
+
+        # Effective protein contribution to fc1 input width
+        prot_dim = 0
+        if n_input_proteins > 0:
+            if protein_encoder_mode == "layernorm":
+                self.protein_layernorm = nn.LayerNorm(n_input_proteins)
+                prot_dim = n_input_proteins
+            elif protein_encoder_mode == "project":
+                proj_dim = protein_encoder_proj_dim or max(1, n_input_proteins // 4)
+                self.protein_proj = nn.Linear(n_input_proteins, proj_dim)
+                prot_dim = proj_dim
+            else:  # "log1p"
+                prot_dim = n_input_proteins
+
+        n_input_fc1 = n_input + prot_dim + _covariate_n_input(
             self.n_batch,
             self.n_continuous_cov,
             self.n_cats_per_cov,
             self.encode_covariates,
         )
 
-        self.fc1 = nn.Linear(n_input, n_hidden)
+        self.fc1 = nn.Linear(n_input_fc1, n_hidden)
         self.cond_norm1 = ConditionalNormalization(n_hidden, n_sample)
         self.fc2 = nn.Linear(n_hidden, n_hidden)
         self.cond_norm2 = ConditionalNormalization(n_hidden, n_sample)
@@ -655,7 +692,14 @@ class EncoderXU_MultiVI(nn.Module):
             Distribution over ``u`` with parameters of shape ``(batch, n_latent)``.
         """
         if self.n_input_proteins > 0 and y_protein is not None:
-            u0 = torch.cat([u0, torch.log1p(y_protein)], dim=-1)
+            mode = getattr(self, "protein_encoder_mode", "log1p")
+            if mode == "layernorm":
+                prot_feat = self.protein_layernorm(torch.log1p(y_protein))
+            elif mode == "project":
+                prot_feat = self.protein_proj(torch.log1p(y_protein))
+            else:  # "log1p"
+                prot_feat = torch.log1p(y_protein)
+            u0 = torch.cat([u0, prot_feat], dim=-1)
         x = _append_covariates(
             u0,
             batch_index=batch_index,

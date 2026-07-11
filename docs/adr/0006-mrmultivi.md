@@ -96,9 +96,11 @@ mean of `u`, not `z`.  For `give_z=True, give_mean=True`, the method re-runs `En
 - **ATAC differential expression is explicitly unsupported**: `differential_expression` rejects
   ATAC-containing models with `NotImplementedError`; ATAC effects should use a future
   `differential_accessibility` API instead of mixing semantics.
-- **Decoded RNA/protein differential expression is not implemented yet**: `differential_abundance`
-  and outlier/admissibility APIs operate over `u`, but DE remains separate from ATAC and decoder
-  LFC semantics.
+- **Decoded RNA/protein LFC**: `differential_expression` now supports `store_lfc=True` for
+  RNA-only or RNA+protein bimodal models. Returns `lfc`, `lfc_std`, optional `pde` (when `delta`
+  is provided), and optional `baseline_expression`. Feature coordinates are labelled `"gene"` /
+  `"protein"` (D-022). ATAC-containing models still reject `store_lfc` with `NotImplementedError`.
+  `use_vmap=False` is the default; LayerNorm in MULTIVAE makes `use_vmap=True` safe as an opt-in.
 
 ---
 

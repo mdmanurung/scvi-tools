@@ -62,6 +62,27 @@ class MrMultiVI(MULTIVI):
         ``0.0`` → ``p(eps) = N(0, 1)``.
     learn_z_u_prior_scale
         Whether ``pz_scale`` is a learnable parameter.
+    kl_u_weight
+        Static scalar weight applied to ``KL(q_u ‖ p_u)`` before the global
+        ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
+    kl_z_weight
+        Static scalar weight applied to ``KL(q_z ‖ p_z)`` before the global
+        ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
+    protein_in_encoder
+        Whether to concatenate raw ``log1p``-protein counts onto MULTIVAE's
+        mixed latent ``u0`` before the u-encoder.  **Default ``False``** is the
+        correct setting: ``u`` is the *sample-unaware* representation by design,
+        and raw protein carries strong donor/panel/batch signal that disrupts the
+        u/z decomposition and empirically degrades batch-integration metrics.
+        Set to ``True`` only as an experimental ablation.
+    init_prior_from_data
+        If ``True`` and ``u_prior="vamp"``, run k-means on a random subsample
+        (≤10 000 cells) of the raw encoder input and use the centroids to
+        initialise VampPrior pseudo-inputs near the data manifold.  For
+        :class:`MrMultiVI` the pseudo-inputs live in MULTIVAE's continuous
+        latent space, which cannot be approximated from raw data at init time,
+        so this flag is accepted but has no effect — use :class:`MrTotalVI`
+        if data-driven prior init is required.
     **model_kwargs
         Additional keyword arguments forwarded to :class:`~._module.MrMultiVAE`
         (and transitively to :class:`~scvi.module._multivae.MULTIVAE`).
@@ -92,6 +113,9 @@ class MrMultiVI(MULTIVI):
         qu_kwargs: dict | None = None,
         use_map: bool = True,
         scale_observations: bool = False,
+        kl_u_weight: float = 1.0,
+        kl_z_weight: float = 1.0,
+        init_prior_from_data: bool = False,
         **model_kwargs,
     ) -> None:
         if model_kwargs.get("latent_distribution", "normal") != "normal":
@@ -119,6 +143,8 @@ class MrMultiVI(MULTIVI):
             protein_in_encoder=protein_in_encoder,
             qz_kwargs=qz_kwargs,
             qu_kwargs=qu_kwargs,
+            kl_u_weight=kl_u_weight,
+            kl_z_weight=kl_z_weight,
             **model_kwargs,
         )
 
@@ -139,6 +165,11 @@ class MrMultiVI(MULTIVI):
             )
         n_obs_per_sample = torch.tensor(counts.values, dtype=torch.float32)
 
+        # MultiVI VampPrior pseudo-inputs live in MULTIVAE's continuous latent space,
+        # which can't be approximated from raw data at init time. Data-driven init
+        # is accepted syntactically but silently deferred (prior_centroids=None).
+        _ = init_prior_from_data  # acknowledged but not used; see MrTotalVI for implementation
+
         self.module._setup_hierarchy(
             n_sample=n_sample,
             n_latent_sample=n_latent_sample,
@@ -148,6 +179,7 @@ class MrMultiVI(MULTIVI):
             scale_observations=scale_observations,
             n_obs_per_sample=n_obs_per_sample,
             n_labels=self.summary_stats.get("n_labels", 0),
+            prior_centroids=None,
         )
 
         self._sample_key = sample_key

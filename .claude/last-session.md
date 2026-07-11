@@ -1,61 +1,72 @@
-# Last Session Summary — 2026-07-10 (session 23)
+# Last Session — Session 31 (2026-07-11)
 
-## 1. What was accomplished
+## Session goal
+Implement all 4 approved correctness + config improvements for MrTotalVI / MrMultiVI (Changes B–E from the plan `what-is-the-status-snuggly-robin.md`).
 
-**Publication-readiness evaluation of MrTotalVI and MrMultiVI (mr* models only).**
-Scope: engineering correctness, mathematical correctness, biological evidence. Deliverable: full remediation roadmap + execution of P0–P2.
+## What was done
 
-### Evaluation findings (see plan for full detail)
-- Engineering: good structure, clean subclassing, test coverage — but nothing was committed, `_stats.py` was untracked, API docs missing
-- Math: ELBO correct (no double-counting); one gated hazard: `pz_scale` σ→0 collapse when `learn_z_u_prior_scale=True and use_map=True`
-- Biology: **zero evidence** — no training harness, `results/` empty, no baseline comparisons exist
+### Change E — `n_obs_per_sample` buffer persistence (L-052 closed)
 
-### Remediation completed (P0–P2)
+- `mrtotalvi/_module.py:241` and `mrmultivi/_module.py:256`: flipped `persistent=False` → `persistent=True`
+- Existing `UserWarning` guard in `loss()` retained as belt-and-suspenders
+- Test: `test_n_obs_per_sample_in_state_dict` in both test files — verifies `state_dict()` contains the buffer and `load_state_dict` round-trip restores it
 
-**P0 — Commit hygiene** (commit `6c11639d`):
-- Atomic commit of all 6 model/test files + 2 ADRs + `_stats.py` (was UNTRACKED) + `mr_multimodal.md` (was UNTRACKED)
-- Registered `MrTotalVI`, `MrMultiVI`, `MrTotalVAE`, `MrMultiVAE` in `docs/api/user.md` and `docs/api/developer.md`
+### Change C — Separate β weights for `kl_u` and `kl_z`
 
-**P1.1 — pz_scale degeneracy guard** (commit `e0ff9255`):
-- Both `_module.py` files: `peps = Normal(0.0, torch.exp(self.pz_scale.clamp(min=-4.0)))` at point of use
-- Fixed 2 save-load test device failures: added `.cpu()` to both sides of `torch.allclose` in both test files
-- Added 2 new regression tests: `test_learnable_prior_scale_clamp` (MrTotalVI) and `test_mrmultivi_learnable_prior_scale_clamp`
-- **50/50 tests now pass** (was 46/50 before session)
+- Added `kl_u_weight: float = 1.0` and `kl_z_weight: float = 1.0` to both module constructors (`MrTotalVAE`, `MrMultiVAE`) and model constructors
+- Applied as `kl_u_weight * kl_u + kl_z_weight * kl_z` in both `loss()` methods
+- Defaults (1.0, 1.0) reproduce prior behaviour exactly
+- Threaded explicitly through `super().__init__()` calls (not absorbed into `**model_kwargs`)
+- Tests: `test_kl_weights_stored_and_non_default_differ` in both test files
 
-**P1.3 + P2 — Docs/disclosures** (commit `b2d9e254`):
-- Added `## v1 Limitations` section to `docs/user_guide/models/mr_multimodal.md`
-- Covers: DE stubs, ArchesMixin not implemented, default objective is MAP (not strict ELBO), kl_u single-sample MC, MrMultiVI mixed-posterior variance
+### Change D — Data-driven VampPrior / MoG prior initialization
 
-**B8 doc fix** (commit `50a82bf0`):
-- Updated cytoanvi.md B8 row to "lineage-coherence / fewer cross-lineage errors" framing (correct per L-046)
+- `_components.py` `init_u_prior`: added `prior_centroids: torch.Tensor | None = None` parameter; VampPrior and MoG branches use centroids when provided and shape matches K
+- `mrtotalvi/_module.py` and `mrmultivi/_module.py` `_setup_hierarchy`: added `prior_centroids` parameter, passed to `init_u_prior`
+- `MrTotalVI.__init__`: added `init_prior_from_data: bool = False`; when True + `u_prior="vamp"`, runs k-means on ≤10k gene+protein cells, applies softplus-inverse, passes as `prior_centroids`
+- `MrMultiVI.__init__`: same flag, silently deferred (MultiVI VampPrior pseudo-inputs are in MULTIVAE continuous latent space, not accessible at init time)
+- Test: `test_init_prior_from_data_vamprior` in TotalVI test file — verifies finite pseudo-inputs with norms > 0.5 (away from origin)
+- L-071 added documenting the MultiVI limitation
 
-## 2. Files changed this session
+### Change B — protein→u-encoder path
 
-| Commit | Files |
-|--------|-------|
-| `6c11639d` | `mrtotalvi/_module.py`, `_model.py`, `_stats.py` (new), `_components.py`; `mrmultivi/_module.py`, `_model.py`; both test files; ADRs 0005/0006; `mr_multimodal.md` (new); `docs/api/user.md`, `docs/api/developer.md` |
-| `e0ff9255` | `mrtotalvi/_module.py`, `mrmultivi/_module.py` (clamp); both test files (device fix + new clamp tests) |
-| `b2d9e254` | `docs/user_guide/models/mr_multimodal.md` (v1 limitations section) |
-| `50a82bf0` | `docs/user_guide/models/cytoanvi.md` (B8 HCE framing) |
+**B1 — confirmed defaults + added docstrings:**
+- `protein_in_encoder=False` already the default in both model and module
+- Added explicit Parameter documentation in both class docstrings explaining WHY (u must be sample-unaware; raw protein carries donor/batch/panel signal)
+- Also documented `kl_u_weight`, `kl_z_weight`, and `init_prior_from_data` in class docstrings
+- Test: `test_protein_in_encoder_default_false` in MultiVI test file
 
-## 3. Critical context for next session
+**B2 — experimental `protein_encoder_mode` spike:**
+- `EncoderXU_MultiVI.__init__` in `_components.py`: added `protein_encoder_mode: str = "log1p"` and `protein_encoder_proj_dim: int | None = None`
+- Modes: `"log1p"` (current behaviour), `"layernorm"` (adds `nn.LayerNorm`), `"project"` (adds `nn.Linear` reducing dim)
+- `"project"` mode changes `fc1.in_features` — uses `proj_dim` not full `n_input_proteins`
+- Flows via `qu_kwargs` — no new first-class model params needed
+- Tests: `test_protein_encoder_mode_layernorm` (trains to finite ELBO), `test_protein_encoder_mode_project` (verifies dim reduction wired correctly)
 
-- **P3 (empirical validation) is the publication blocker.** There is no training harness for mr* models anywhere — the dispatch in `run_integration_sweep.py` has branches for scvi/totalvi/multivi/multigrate only. `.scratch/mr-schisto-benchmark/results/` is empty. The benchmark runner only loads precomputed latents, never trains.
-- **P3.1** — write `run_mr_multimodal_benchmark.py` producer: `setup_anndata`/`setup_mudata`, train, write `*_latent.tsv.gz` in the format the existing consumer expects. Add mr* branches to `run_integration_sweep.py`.
-- **P3.2** — fix baseline harness crash: `KeyError: 'batch not found in adata.obs.'` in `run_integration_sweep.py:179` — mudata≥0.4 `batch` propagation issue in MultiVI baseline. Without this, there's nothing to compare against.
-- **pz_scale direction**: the degeneracy is σ→0 (clamp min), NOT σ→∞ (clamp max). See D-016 and L-054.
-- **save-load device pattern**: after `Model.load(path)`, all buffers/params land on CPU. Always `.cpu()` both sides before `torch.allclose`.
-- **PYTHONPATH**: site-packages `scvi/` at sys.path[5] shadows editable install at sys.path[6]. Use `PYTHONPATH=/exports/para-lipg-hpc/mdmanurung/scvi-tools/src python ...` for anything mr*-related.
-- Plan file at: `/home/mdmanurung/.claude/plans/evaluate-publication-readiness-of-snappy-treasure.md`
+### Living-repo protocol updates
 
-## 4. What's pending
+- L-052: marked CLOSED, updated with final fix description
+- L-071: added — MultiVI VampPrior data-driven init limitation
+- D-030: separate kl_u/kl_z weights design decision
+- D-031: data-driven VampPrior init design decision (TotalVI only)
+- D-032: protein_encoder_mode via qu_kwargs design decision
 
-- P3 — empirical validation (largest block, publication gate): training harness, baseline crash fix, head-to-head benchmark, ≥3 seeds, at least one defensible win vs TotalVI/MultiVI/MrVI
-- P4 — reproducibility polish: seed determinism, `.scratch/` cleanup, synthetic MuData smoke test
-- Living docs + `.scratch/cytoanvi-benchmark/` changes: committed this session (via this living-docs commit)
+## Test results
 
-## 5. Test status
+89/89 tests pass (`tests/external/mrtotalvi/` + `tests/external/mrmultivi/`, 8 new tests added)
 
-**50/50 mr* tests pass** as of commit `e0ff9255`:
-- `tests/external/mrtotalvi/test_mrtotalvi.py`: 27 tests (25 original + 2 new clamp tests)
-- `tests/external/mrmultivi/test_mrmultivi.py`: 23 tests (21 original + 2 new clamp tests)
+## State at session end
+
+All 4 changes (B–E) are complete and tested. The plan (`what-is-the-status-snuggly-robin.md`) is fully executed.
+
+**Deferred (separate plan):** semi-supervised auxiliary classifier (old improvement #1). Critical: eval must mask eval cells as unlabeled during training to avoid label leakage in the held-out-F1 metric.
+
+## Key file locations
+
+- `src/scvi/external/mrtotalvi/_module.py` — Changes E, C, D
+- `src/scvi/external/mrmultivi/_module.py` — Changes E, C, D
+- `src/scvi/external/mrtotalvi/_model.py` — Changes C, D, B1 docstrings
+- `src/scvi/external/mrmultivi/_model.py` — Changes C, D, B1 docstrings
+- `src/scvi/external/mrtotalvi/_components.py` — Change D (`init_u_prior`), Change B2 (`EncoderXU_MultiVI`)
+- `tests/external/mrtotalvi/test_mrtotalvi.py` — 3 new tests (E, C, D)
+- `tests/external/mrmultivi/test_mrmultivi.py` — 5 new tests (E, C, B1, B2×2)

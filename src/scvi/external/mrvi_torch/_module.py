@@ -669,7 +669,7 @@ class TorchMRVAE(BaseModuleClass):
         kl_z = 0.0
         if self.z_u_prior:
             eps = inference_outputs["eps"]
-            peps = dist.Normal(0, torch.exp(self.pz_scale))
+            peps = dist.Normal(0, torch.exp(self.pz_scale.clamp(min=-4.0)))
             kl_z = -peps.log_prob(eps).sum(-1)
 
         kl_local = kl_u + kl_z

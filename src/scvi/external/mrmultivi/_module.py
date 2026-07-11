@@ -97,6 +97,8 @@ class MrMultiVAE(MULTIVAE):
         qu_kwargs: dict | None = None,
         use_map: bool = True,
         scale_observations: bool = False,
+        kl_u_weight: float = 1.0,
+        kl_z_weight: float = 1.0,
         **kwargs,
     ) -> None:
         if kwargs.get("latent_distribution", "normal") != "normal":
@@ -133,6 +135,11 @@ class MrMultiVAE(MULTIVAE):
         self.qu_kwargs = qu_kwargs or {}
         self._use_map = use_map
         self._scale_observations = scale_observations
+        # Per-term KL weights: static scalars applied as kl_u_weight*kl_u + kl_z_weight*kl_z
+        # before the global kl_weight annealing. Defaults (1.0, 1.0) reproduce prior behavior.
+        # A separate per-term annealing schedule would require training-plan changes.
+        self.kl_u_weight = float(kl_u_weight)
+        self.kl_z_weight = float(kl_z_weight)
         self.n_continuous_cov = int(n_continuous_cov)
         self.n_cats_per_cov = list(n_cats_per_cov or [])
         self.encode_covariates = bool(encode_covariates)
@@ -164,6 +171,7 @@ class MrMultiVAE(MULTIVAE):
         scale_observations: bool | None = None,
         n_obs_per_sample: torch.Tensor | None = None,
         n_labels: int | None = None,
+        prior_centroids: torch.Tensor | None = None,
     ) -> None:
         """Build or replace the u→z hierarchy after MULTIVAE is initialised.
 
@@ -184,6 +192,9 @@ class MrMultiVAE(MULTIVAE):
         n_obs_per_sample
             Integer tensor of shape ``(n_sample,)`` with per-donor cell counts.
             Required (and used only) when ``scale_observations=True``.
+        prior_centroids
+            Optional ``(K, dim)`` tensor of cluster centroids for data-driven prior
+            initialization. See :func:`init_u_prior` for semantics.
         """
         if n_latent_sample is None:
             n_latent_sample = self._n_latent_sample
@@ -241,6 +252,7 @@ class MrMultiVAE(MULTIVAE):
             u_prior_label_weight=self.u_prior_label_weight,
             u_prior_type=getattr(self, "u_prior_type", "mog"),
             u_vamp_pseudo_dim=self.n_latent + n_protein_in,
+            prior_centroids=prior_centroids,
         )
 
         if learn_z_u_prior_scale:
@@ -251,9 +263,9 @@ class MrMultiVAE(MULTIVAE):
                 torch.full((self.n_latent,), float(z_u_prior_scale)),
             )
 
-        # Per-sample cell counts for observation reweighting (non-persistent: recomputed at load)
+        # Per-sample cell counts for observation reweighting (persistent so load_state_dict restores it)
         if scale_observations and n_obs_per_sample is not None:
-            self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=False)
+            self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=True)
         else:
             self.n_obs_per_sample = None
 
@@ -580,9 +592,9 @@ class MrMultiVAE(MULTIVAE):
         else:
             kl_z = torch.zeros_like(kl_u)
 
-        # kl_divergence_z now = kl_u + kl_z
+        # kl_divergence_z now = kl_u_weight*kl_u + kl_z_weight*kl_z
         kl_local = dict(loss_out.kl_local)
-        kl_local["kl_divergence_z"] = kl_u + kl_z
+        kl_local["kl_divergence_z"] = self.kl_u_weight * kl_u + self.kl_z_weight * kl_z
 
         if self._scale_observations and self.n_obs_per_sample is not None:
             # Weight each cell's ELBO by 1/n_cells_in_that_sample.

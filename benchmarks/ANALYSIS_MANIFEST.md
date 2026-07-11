@@ -44,6 +44,67 @@ The **CytoVI-kNN baseline** uses the same CytoVI encoder that generated the Leid
 |------|--------|
 | Vignette smoke | passing |
 
+## MrTotalVI / MrMultiVI benchmarks (`schisto CITE-seq`)
+
+Empirical validation on the schistosomiasis CITE-seq dataset (human, 97,954 cells; 6 batches,
+29 cell types; capped at 50,000 cells for scoring). All models trained at `n_latent=20`,
+`max_epochs` per `train_model.py` defaults, 10,000 HVGs. **Single seed (SEED=0) only** — treat
+as preliminary; multi-seed needed for publication. Runner:
+`.scratch/mr-schisto-benchmark/run_mr_multimodal_benchmark.py`, latents in
+`schisto_citeseq/analysis/integration/mr_multimodal_publication/outputs/`.
+
+### scIB integration scores (human, seed 0 — see F-015)
+
+| Model | Bio conservation | Batch correction | **Total** |
+|-------|-----------------|-----------------|-----------|
+| Unintegrated | 0.632 | 0.521 | 0.588 |
+| TotalVI | 0.576 | **0.684** | **0.619** |
+| MrTotalVI_u | 0.577 | 0.640 | 0.602 |
+| MrTotalVI_z | 0.599 | 0.620 | 0.607 |
+| MultiVI | 0.585 | 0.555 | 0.573 |
+| **MrMultiVI_u** | 0.594 | 0.663 | **0.622** ← best overall |
+| MrMultiVI_z | 0.592 | 0.655 | 0.617 |
+
+### kNN label transfer (held-out 20%, k=15, seed 0 — see F-015)
+
+| Model | Accuracy | Macro-F1 |
+|-------|----------|----------|
+| Unintegrated | **0.863** | **0.666** ← best (integration hurts kNN) |
+| TotalVI | 0.823 | 0.586 |
+| MrTotalVI_u | 0.826 | 0.583 |
+| MrTotalVI_z | 0.834 | 0.582 |
+| MultiVI | 0.816 | 0.564 |
+| MrMultiVI_u | 0.809 | 0.562 |
+| MrMultiVI_z | 0.809 | 0.584 |
+
+### Interpretation
+
+**MrMultiVI vs MultiVI:** ✅ Clear scIB win — +0.049 total, +0.108 batch correction. MR
+hierarchical donor latent substantially improves batch mixing; bio conservation also marginally
+better. Label transfer neutral/slight negative (−0.007 acc; F1 similar or +0.020 for z).
+
+**MrTotalVI vs TotalVI:** ❌ No scIB win — MrTotalVI_z −0.012 / MrTotalVI_u −0.017 total vs
+TotalVI. TotalVI batch correction (0.684) notably better than MrTotalVI_u (0.640) or _z (0.620).
+MrTotalVI_z slightly better on label transfer accuracy (+0.011) with similar F1.
+
+**Unintegrated dominates label transfer (all models):** Integration uniformly hurts kNN label
+transfer on this dataset. Probable cause: 6/29 cell types (DC1, DC2, HSC_erythroid, RBC,
+B_non-switched_memory, B_switched_memory) are single-batch or too small — kBET skips them.
+Integration mixes batches but disrupts the local cluster structure those rare types need for kNN.
+The kNN metric is misleading here; scIB total score is the appropriate headline.
+
+**Status:** human complete (job 25210722, 2026-07-11, seed 0). Macaque pending (no latents yet).
+Multi-seed repeats needed before publication.
+
+**DA/DE parity with MRVI (2026-07-11, COMPLETE):** Full remediation B1–B5 landed.
+- `store_lfc=True` now returns decoded gene/protein `lfc`, `lfc_std`, `pde` (when `delta`
+  provided), and optional `baseline_expression` for both MrTotalVI and MrMultiVI.
+- Protein background is deterministic on the LFC contrast path (D-021; `rate_back=exp(back_alpha)`).
+- Feature coords split as `"gene"` / `"protein"` at the model level (D-022).
+- Both models default `use_vmap=False`; MrTotalVI uses BatchNorm (vmap-incompatible), D-023.
+- 5/5 MrTotalVI LFC tests + 6/6 MrMultiVI LFC tests pass; backward-compat tests pass.
+- ADR-0005/0006 and `mr_multimodal.md` updated; L-061 added for BatchNorm×vmap gotcha.
+
 ## Common utilities (`benchmarks/common/`)
 
 - `training.py` — shared training loop with checkpoint/resume

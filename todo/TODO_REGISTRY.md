@@ -52,3 +52,8 @@ Tracks future work items, ideas, and planned improvements.
 | B5 DIAGNOSTIC RUNNING: kNN-distance OOD in CytoANVI's OWN latent (jobs 25149032/33/34). Will add cytoanvi_knn_mean_auroc to publication_summary.json. Re-aggregate after completion to resolve TTA-vs-latent question (F-013 pending) | high | in_progress | analysis | 2026-07-05 | mdmanurung | — |
 | COARSE-Leiden B3/B5 PREPARED (L-041 speed lever): 6 scripts phase3{a,b}_{b3,b5}coarse_*.slurm w/ __RES__ placeholder; calibration job 25145242 picks resolution ~12 clusters (~3-4x faster training + more interpretable). NOT submitted — run after current jobs finish | medium | open | analysis | 2026-07-04 | mdmanurung | — |
 | B3 RERUN COMPLETE: jobs 25145151/52/53 (seeds 0/1/2). RESULT: p1 macro-F1 0.828±0.015 ✅, p2 concordance 0.671±0.008 ❌ (gate ≥0.80 NOT met — concordance not accuracy). Panel-2 ground-truth labels still unavailable (see BLOCKER row) | high | done | analysis | 2026-07-04 | mdmanurung | — |
+| LFC B1: implement `compute_h_from_x_eps` in MrTotalVAE + MrMultiVAE modules | high | done | infrastructure | 2026-07-11 | mdmanurung | — |
+| LFC B2: remove NotImplementedError from `_stats.py`, extend `_construct_design_matrix`, port MRVI LFC block | high | done | infrastructure | 2026-07-11 | mdmanurung | — |
+| LFC B3: add LFC kwargs + xarray assembly to `mrtotalvi/_model.py` and `mrmultivi/_model.py` wrappers | high | done | infrastructure | 2026-07-11 | mdmanurung | — |
+| LFC B4: add store_lfc tests (shape/coord/finiteness, pde∈[0,1], D2 determinism, backward-compat) | high | done | testing | 2026-07-11 | mdmanurung | — |
+| LFC B5: update ADR-0005/0006 + mr_multimodal.md to remove "not implemented" + record D-020–D-023 | medium | done | documentation | 2026-07-11 | mdmanurung | — |

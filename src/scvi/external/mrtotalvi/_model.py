@@ -402,6 +402,9 @@ class MrTotalVI(TOTALVI):
         donor_key: str | None = None,
         delta: float | None = 0.3,
         lambd: float = 0.0,
+        store_baseline: bool = False,
+        eps_lfc: float = 1e-6,
+        use_vmap: bool = False,
         **filter_samples_kwargs,
     ) -> xr.Dataset:
         """MrVI-style latent-space differential expression.
@@ -430,18 +433,29 @@ class MrTotalVI(TOTALVI):
             Weight out outlier cell-sample pairs via aggregated-posterior
             admissibility scores (see :meth:`get_outlier_cell_sample_pairs`).
         store_lfc
-            Not implemented; raises ``NotImplementedError``.
+            If ``True``, compute gene/protein log2-fold-changes (LFC) and store
+            ``lfc``, ``lfc_std``, and optionally ``pde`` / ``baseline_expression``
+            in the returned dataset.  Feature axis is split into ``gene`` and
+            ``protein`` coordinates by this wrapper.
         donor_key
             Column in ``adata.obs`` identifying the donor.  Adds donor dummy
             columns as nuisance covariates (repeated-measures approximation).
         delta
-            Reserved for future effect-size thresholding.
+            Effect-size threshold for PDE (``P(|lfc| >= delta)``).  Used only
+            when ``store_lfc=True``.  Pass ``None`` to skip PDE.
         lambd
             L2 regularisation for ``X^T M X`` inversion.
+        store_baseline
+            When ``store_lfc=True``, also store the batch-marginalized baseline
+            expression (null decode) as ``baseline_expression``.
+        eps_lfc
+            Small offset added before log2 to avoid log(0).  Default ``1e-6``.
+        use_vmap
+            Reserved; currently ignored (loop path is always used).
         **filter_samples_kwargs
             Forwarded to :meth:`get_outlier_cell_sample_pairs`.
         """
-        return _differential_expression(
+        ds = _differential_expression(
             self,
             adata=adata,
             sample_cov_keys=list(sample_cov_keys) if sample_cov_keys else [],
@@ -455,8 +469,20 @@ class MrTotalVI(TOTALVI):
             donor_key=donor_key,
             delta=delta,
             lambd=lambd,
+            store_baseline=store_baseline,
+            eps_lfc=eps_lfc,
+            use_vmap=use_vmap,
             **filter_samples_kwargs,
         )
+        if store_lfc and "feature" in ds.coords:
+            n_genes = self.summary_stats.n_vars
+            ds = ds.assign_coords(
+                feature=(
+                    ["gene"] * n_genes
+                    + ["protein"] * (ds.sizes["feature"] - n_genes)
+                )
+            )
+        return ds
 
     # ------------------------------------------------------------------
     # Latent representation

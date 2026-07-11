@@ -278,7 +278,11 @@ def _construct_design_matrix(
     n_fixed = xmat_fixed.shape[1]
 
     if donor_key is not None:
-        cov = sample_info[donor_key]
+        # donor_key may equal the DataFrame's index name (when donor_key == model.sample_key).
+        if donor_key == sample_info.index.name:
+            cov = sample_info.index.to_series()
+        else:
+            cov = sample_info[donor_key]
         if hasattr(cov, "cat"):
             cov = cov.cat.remove_unused_categories()
         donor_dummies = pd.get_dummies(cov, drop_first=True)
@@ -312,6 +316,9 @@ def _differential_expression(
     donor_key: str | None = None,
     delta: float | None = 0.3,
     lambd: float = 0.0,
+    store_baseline: bool = False,
+    eps_lfc: float = 1e-6,
+    use_vmap: bool = False,
     **filter_samples_kwargs,
 ) -> xr.Dataset:
     """MrVI-style latent-space differential expression for Mr multimodal models.
@@ -341,14 +348,30 @@ def _differential_expression(
     filter_inadmissible_samples
         Weight out outlier cell-sample pairs via aggregated-posterior scores.
     store_lfc
-        Not implemented; always raises ``NotImplementedError``.
+        If ``True``, compute and store gene/protein log2-fold-changes (LFC) in
+        the returned dataset.  Requires ``model.module`` to implement
+        ``compute_h_from_x_eps``.  LFC is batch-marginalized by weighting over
+        unique batch values observed in each mini-batch.
     donor_key
         Column in ``adata.obs`` identifying the donor.  Adds donor dummy
         columns as nuisance covariates; only fixed-effect betas are returned.
     delta
-        Reserved for future effect-size thresholding; currently unused.
+        Effect-size threshold for the posterior-DE probability (PDE):
+        ``pde = P(|lfc| >= delta)``.  Only used when ``store_lfc=True``.
+        Set to ``None`` to skip PDE computation.
     lambd
         L2 regularisation added to ``X^T M X`` before inversion.
+    store_baseline
+        When ``store_lfc=True``, also store the batch-marginalized baseline
+        expression ``h(x, eps_mean)`` (the null decode) as
+        ``baseline_expression`` in the returned dataset.
+    eps_lfc
+        Small constant added to expression values before taking log2 to avoid
+        log(0).  Default ``1e-6``.
+    use_vmap
+        Currently ignored (reserved for future opt-in vmap acceleration).
+        The LFC path always uses explicit Python loops, which are safe with
+        BatchNorm-based decoders.
     **filter_samples_kwargs
         Forwarded to :func:`get_outlier_cell_sample_pairs`.
     """
@@ -358,9 +381,10 @@ def _differential_expression(
 
     from scvi import REGISTRY_KEYS as RK
 
-    if store_lfc:
+    if store_lfc and not hasattr(model.module, "compute_h_from_x_eps"):
         raise NotImplementedError(
-            "store_lfc is not yet implemented for MrTotalVI/MrMultiVI."
+            "store_lfc requires model.module.compute_h_from_x_eps, "
+            "which is not implemented for this module."
         )
     if not sample_cov_keys:
         raise ValueError("sample_cov_keys must contain at least one sample-level covariate.")
@@ -404,10 +428,14 @@ def _differential_expression(
     else:
         admissible_samples = np.ones((adata.n_obs, n_sample_kept), dtype=np.float32)
 
-    # Design matrix from sample-level metadata
+    # Design matrix from sample-level metadata.
+    # Exclude donor_key from the column list when it equals model.sample_key — that
+    # column will become the index after set_index(), so selecting it twice would
+    # produce duplicate columns and a tuple MultiIndex.
     cov_cols = list(sample_cov_keys) + ([donor_key] if donor_key else [])
+    cov_cols_for_select = [c for c in cov_cols if c != model.sample_key]
     sample_info = (
-        adata.obs[[model.sample_key] + cov_cols]
+        adata.obs[[model.sample_key] + cov_cols_for_select]
         .drop_duplicates(subset=model.sample_key)
         .set_index(model.sample_key)
         .loc[sample_order_kept]
@@ -438,6 +466,11 @@ def _differential_expression(
     effect_size_list: list[np.ndarray] = []
     pvalue_list: list[np.ndarray] = []
     all_cell_names: list[str] = []
+
+    lfc_list: list[np.ndarray] = []
+    lfc_std_list: list[np.ndarray] = []
+    pde_list: list[np.ndarray] | None = [] if (store_lfc and delta is not None) else None
+    baseline_list: list[np.ndarray] | None = [] if (store_lfc and store_baseline) else None
 
     was_training = model.module.training
     model.module.eval()
@@ -523,6 +556,101 @@ def _differential_expression(
                 beta_list.append(betas_rescaled[:, :n_fixed, :].cpu().numpy())
                 effect_size_list.append(ts[:, :n_fixed].cpu().numpy())
                 pvalue_list.append(pvals[:, :n_fixed].cpu().numpy())
+
+                # ---- gene/protein LFC block ----
+                if store_lfc:
+                    # betas_eps: per-draw betas in original eps space
+                    # shape (mc, n_cells, n_fixed, n_latent)
+                    betas_eps = (betas * eps_std)[:, :, :n_fixed, :]
+
+                    # null eps position: mean over MC draws and sample dim
+                    # eps_mean: (mc, n_cells, 1, n_latent) → average to (n_cells, n_latent)
+                    eps_mean_cell = eps_mean.mean(0).squeeze(1)  # (n_cells, n_latent)
+
+                    # Build kwargs for compute_h_from_x_eps from inference inputs;
+                    # batch_index is overridden per counterfactual batch below.
+                    h_kwargs = dict(inf_inputs)
+                    # _get_inference_input does not return extra_eps or cf_sample,
+                    # so h_kwargs can be passed directly to compute_h_from_x_eps.
+
+                    # Batch-weighted LFC: marginalize over unique batch values.
+                    batch_index_obs = inf_inputs["batch_index"]  # (n_cells, 1)
+                    unique_batches = batch_index_obs.unique()
+                    batch_counts = torch.stack(
+                        [(batch_index_obs == b).sum().float() for b in unique_batches]
+                    )
+                    batch_weights = batch_counts / batch_counts.sum()
+
+                    # Accumulators (initialized lazily on first batch value)
+                    lfc_wsum: torch.Tensor | None = None   # (n_fixed, n_cells, n_features)
+                    lfc_var_wsum: torch.Tensor | None = None
+                    pde_wsum: torch.Tensor | None = None
+                    baseline_wsum: torch.Tensor | None = None
+
+                    for b_idx, b_val in enumerate(unique_batches):
+                        w_b = batch_weights[b_idx]
+                        batch_cf = torch.full_like(batch_index_obs, b_val.item())
+                        h_kwargs_b = dict(h_kwargs)
+                        h_kwargs_b["batch_index"] = batch_cf
+
+                        # Null decode: eps = eps_mean_cell (no covariate shift)
+                        x_0_b = model.module.compute_h_from_x_eps(
+                            extra_eps=eps_mean_cell, **h_kwargs_b
+                        )  # (n_cells, n_features)
+                        log_x0 = torch.log2(x_0_b + eps_lfc)  # (n_cells, n_features)
+
+                        if lfc_wsum is None:
+                            n_features_lfc = x_0_b.shape[-1]
+                            lfc_wsum = torch.zeros(
+                                n_fixed, n_cells, n_features_lfc, device=device
+                            )
+                            lfc_var_wsum = torch.zeros_like(lfc_wsum)
+                            if delta is not None:
+                                pde_wsum = torch.zeros_like(lfc_wsum)
+                            if store_baseline:
+                                baseline_wsum = torch.zeros(
+                                    n_cells, n_features_lfc, device=device
+                                )
+
+                        if store_baseline:
+                            baseline_wsum += w_b * x_0_b
+
+                        # Contrast decode per covariate × MC draw
+                        # lfc_mc_cov: (n_fixed, mc, n_cells, n_features)
+                        lfc_mc_cov_list = []
+                        for k in range(n_fixed):
+                            lfc_mc_k = []
+                            for mc_idx in range(mc_samples):
+                                extra = (
+                                    betas_eps[mc_idx, :, k, :] + eps_mean_cell
+                                )  # (n_cells, n_latent)
+                                x_1 = model.module.compute_h_from_x_eps(
+                                    extra_eps=extra, **h_kwargs_b
+                                )  # (n_cells, n_features)
+                                lfc_mc_k.append(
+                                    torch.log2(x_1 + eps_lfc) - log_x0
+                                )
+                            lfc_mc_cov_list.append(
+                                torch.stack(lfc_mc_k, 0)
+                            )  # (mc, n_cells, n_features)
+                        lfc_mc_cov = torch.stack(
+                            lfc_mc_cov_list, 0
+                        )  # (n_fixed, mc, n_cells, n_features)
+
+                        lfc_wsum += w_b * lfc_mc_cov.mean(1)
+                        lfc_var_wsum += w_b * lfc_mc_cov.var(1)
+                        if delta is not None:
+                            pde_wsum += w_b * (lfc_mc_cov.abs() >= delta).float().mean(1)
+
+                    # lfc_wsum: (n_fixed, n_cells, n_features) → permute to (n_cells, n_fixed, n_features)
+                    lfc_list.append(lfc_wsum.permute(1, 0, 2).cpu().numpy())
+                    lfc_std_list.append(
+                        torch.sqrt(lfc_var_wsum).permute(1, 0, 2).cpu().numpy()
+                    )
+                    if delta is not None:
+                        pde_list.append(pde_wsum.permute(1, 0, 2).cpu().numpy())
+                    if store_baseline:
+                        baseline_list.append(baseline_wsum.cpu().numpy())
     finally:
         model.module.train(was_training)
 
@@ -531,19 +659,32 @@ def _differential_expression(
     pvalue = np.concatenate(pvalue_list, 0)
     padj = false_discovery_control(pvalue.flatten(), method="bh").reshape(pvalue.shape)
 
-    return xr.Dataset(
-        {
-            "beta": (["cell_name", "covariate", "latent_dim"], beta),
-            "effect_size": (["cell_name", "covariate"], effect_size),
-            "pvalue": (["cell_name", "covariate"], pvalue),
-            "padj": (["cell_name", "covariate"], padj),
-        },
-        coords={
-            "cell_name": np.asarray(all_cell_names),
-            "covariate": Xmat_names[:n_fixed],
-            "latent_dim": np.arange(beta.shape[-1]),
-        },
-    )
+    data_vars: dict = {
+        "beta": (["cell_name", "covariate", "latent_dim"], beta),
+        "effect_size": (["cell_name", "covariate"], effect_size),
+        "pvalue": (["cell_name", "covariate"], pvalue),
+        "padj": (["cell_name", "covariate"], padj),
+    }
+    coords: dict = {
+        "cell_name": np.asarray(all_cell_names),
+        "covariate": Xmat_names[:n_fixed],
+        "latent_dim": np.arange(beta.shape[-1]),
+    }
+
+    if store_lfc:
+        lfc = np.concatenate(lfc_list, 0)          # (n_cells_total, n_fixed, n_features)
+        lfc_std = np.concatenate(lfc_std_list, 0)
+        data_vars["lfc"] = (["cell_name", "covariate", "feature"], lfc)
+        data_vars["lfc_std"] = (["cell_name", "covariate", "feature"], lfc_std)
+        coords["feature"] = np.arange(lfc.shape[-1])
+        if pde_list is not None:
+            pde = np.concatenate(pde_list, 0)
+            data_vars["pde"] = (["cell_name", "covariate", "feature"], pde)
+        if baseline_list is not None:
+            baseline = np.concatenate(baseline_list, 0)
+            data_vars["baseline_expression"] = (["cell_name", "feature"], baseline)
+
+    return xr.Dataset(data_vars, coords=coords)
 
 
 def get_outlier_cell_sample_pairs(

@@ -45,7 +45,8 @@ class MrTotalVAE(TOTALVAE):
 
     Two-level KL loss:
 
-    * ``kl_u = KL(q_u \\| N(0,1))`` — from the sample-conditioned u-encoder.
+    * ``kl_u = KL(q_u \\| p_u)`` — from the sample-conditioned u-encoder, where ``p_u``
+      is by default a learned mixture-of-Gaussians prior (``u_prior_mixture=True``).
     * ``kl_z = -\\log p(\\varepsilon) = -\\log N(0, \\exp(\\text{pz\\_scale}))`` — eps residual.
 
     Parameters
@@ -200,7 +201,7 @@ class MrTotalVAE(TOTALVAE):
             n_batch=self.n_batch,
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
-            encode_covariates=False,
+            encode_covariates=self.encode_covariates,
             **self.qu_kwargs,
         )
 
@@ -317,12 +318,16 @@ class MrTotalVAE(TOTALVAE):
             # Hierarchy not yet built (n_sample=0 placeholder). Return TotalVI outputs.
             return out
 
-        # u-encoder: sample-conditioned only; batch covariates are excluded so u stays
-        # sample-uninformed (comparable across donors/batches).
+        # u-encoder: sample-conditioned; pass batch/covariate info only when
+        # encode_covariates=True (default).  When False the encoder stays fully
+        # batch-uninformed, making u comparable across donors and batches.
         qu = self.qu(
             x,
             y,
             sample_index,
+            batch_index=batch_index if self.encode_covariates else None,
+            cont_covs=cont_covs if self.encode_covariates else None,
+            cat_covs=cat_covs if self.encode_covariates else None,
         )  # Normal: params (batch, n_latent_u)
         if n_samples > 1:
             u = qu.rsample((n_samples,))  # (n_samples, batch, n_latent)
@@ -402,6 +407,11 @@ class MrTotalVAE(TOTALVAE):
             per_batch_efficiency,
         )
 
+        # NOTE: This kl_div_z is a *preliminary* placeholder using the pre-hierarchical
+        # KL(q_z, N(0,1)).  Both this value and the `loss` computed below are discarded
+        # by the calling loss() method, which recomputes them using kl_u + kl_z after
+        # the two-level KL is available.  It is kept here to satisfy LossOutput's
+        # interface contract (kl_local["kl_div_z"] must be present).
         kl_div_z = kl_divergence(qz, Normal(0, 1)).sum(dim=1)
         if not self.use_observed_lib_size:
             n_batch = self.library_log_means.shape[1]
@@ -487,8 +497,9 @@ class MrTotalVAE(TOTALVAE):
     ) -> LossOutput:
         """Extend TotalVI's loss with the second-level KL for the sample residual.
 
-        TotalVI's existing ``kl_div_z = KL(q_u \\| N(0,1))`` is already
-        ``kl_u`` verbatim (the encoder distribution is unchanged).  This
+        TotalVI's existing ``kl_div_z`` term is repurposed as ``kl_u =
+        KL(q_u \\| p_u)`` where ``p_u`` is the configured prior (default: a
+        learned mixture-of-Gaussians, see :attr:`u_prior_mixture`).  This
         method adds:
 
         .. math::
@@ -581,3 +592,119 @@ class MrTotalVAE(TOTALVAE):
             kl_local=kl_local,
             extra_metrics=loss_out.extra_metrics,
         )
+
+    @torch.inference_mode()
+    def compute_h_from_x_eps(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        sample_index: torch.Tensor,
+        batch_index: torch.Tensor,
+        extra_eps: torch.Tensor,
+        label: torch.Tensor | None = None,
+        panel_index: torch.Tensor | None = None,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
+        cf_sample: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return ``concat([px_scale, py_scale_det])`` at ``z = z_base + extra_eps``.
+
+        This is the decoder hook consumed by the LFC block in
+        :func:`~scvi.external.mrtotalvi._stats.differential_expression` when
+        ``store_lfc=True``.  It mirrors MRVI's ``compute_h_from_x_eps`` but
+        handles the TotalVI multimodal output (RNA + protein) and uses a
+        deterministic protein background reconstruction (D-021) so that the
+        x_1/x_0 contrast differs only via ``extra_eps``, not via independent
+        background draws.
+
+        Parameters
+        ----------
+        x
+            RNA count matrix, shape ``(batch, n_genes)``.
+        y
+            Protein count matrix, shape ``(batch, n_proteins)``.
+        sample_index
+            Integer donor index, shape ``(batch, 1)`` or ``(batch,)``.
+        batch_index
+            Batch integer index for the counterfactual decode, shape
+            ``(batch, 1)``.  Can differ from the cell's own batch to obtain
+            batch-averaged LFC.
+        extra_eps
+            Counterfactual eps shift, shape ``(batch, n_latent)``.
+            Set to the regression beta vector for the active covariate when
+            computing x_1; set to the null (zeros or ``eps_mean``) for x_0.
+        label
+            Cell-type label tensor.  Defaults to zeros when ``None``.
+        panel_index
+            Protein panel index.  Defaults to ``batch_index`` when ``None``.
+        cont_covs
+            Continuous covariate tensor (passed through to inference).
+        cat_covs
+            Categorical covariate tensor (passed through to inference).
+        cf_sample
+            Counterfactual sample override for the eps encoder.  ``None``
+            uses ``sample_index`` (real donor).
+
+        Returns
+        -------
+        :class:`torch.Tensor`
+            Shape ``(batch, n_genes + n_proteins)``.  RNA columns first,
+            protein columns second.  The ``gene``/``protein`` coordinate
+            split is applied at the model level (B3) when assembling the
+            xarray output.
+        """
+        n_cells = x.shape[0]
+        if label is None:
+            label = torch.zeros(n_cells, 1, dtype=torch.long, device=x.device)
+        if panel_index is None:
+            panel_index = batch_index
+
+        # Run inference (single MC draw; the MC loop lives in _stats.py).
+        out = self._regular_inference(
+            x,
+            y,
+            batch_index=batch_index,
+            panel_index=panel_index,
+            label=label,
+            n_samples=1,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+            sample_index=sample_index,
+            cf_sample=cf_sample,
+        )
+
+        z_base = out["z_base"]      # (batch, n_latent)
+        z = z_base + extra_eps      # counterfactual latent
+        library_gene = out["library_gene"]  # (batch, 1)
+
+        gen_out = self.generative(
+            z=z,
+            library_gene=library_gene,
+            batch_index=batch_index,
+            label=label,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+        )
+
+        px_ = gen_out["px_"]
+        py_ = gen_out["py_"]
+
+        # RNA: softmax scale is deterministic given z.
+        px_scale = px_["scale"]  # (batch, n_genes)
+
+        # Protein: deterministic background reconstruction (D-021).
+        # py_["scale"] is stochastic because DecoderTOTALVI calls
+        # Normal(back_alpha, back_beta).rsample() internally.  Using that
+        # stochastic draw in both x_1 and x_0 introduces independent
+        # background noise that does NOT cancel in the LFC.  Fix: use the
+        # log-mean back_alpha directly (exp of the Gaussian mean) as a
+        # deterministic background stand-in.
+        rate_back_det = torch.exp(py_["back_alpha"])          # (batch, n_proteins)
+        rate_fore_det = rate_back_det * py_["fore_scale"]     # fore_scale is deterministic
+        # py_["mixing"] is a raw logit; sigmoid → mixing probability.
+        protein_mixing_det = torch.sigmoid(py_["mixing"])
+        py_scale_det = F.normalize(
+            (1.0 - protein_mixing_det) * rate_fore_det, p=1, dim=-1
+        )  # (batch, n_proteins)
+
+        return torch.cat([px_scale, py_scale_det], dim=-1)   # (batch, n_genes + n_proteins)

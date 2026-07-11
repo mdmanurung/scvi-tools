@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Normal, kl_divergence
 
 from scvi import REGISTRY_KEYS
@@ -48,8 +49,10 @@ class MrMultiVAE(MULTIVAE):
 
     Two-level KL loss:
 
-    * ``kl_u = KL(q_u \\| N(0,1))`` — from the sample-conditioned u-encoder
-      (replaces MULTIVAE's ``kl_divergence_z`` via ``qz_m``/``qz_v`` override).
+    * ``kl_u = KL(q_u \\| p_u)`` — from the sample-conditioned u-encoder, where
+      ``p_u`` is by default a learned mixture-of-Gaussians prior
+      (``u_prior_mixture=True``).  Replaces MULTIVAE's ``kl_divergence_z`` via
+      the ``qz_m``/``qz_v`` override.
     * ``kl_z = -\\log p(\\varepsilon)`` — new term added here.
 
     Parameters
@@ -200,7 +203,7 @@ class MrMultiVAE(MULTIVAE):
             n_batch=self.n_batch,
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
-            encode_covariates=False,
+            encode_covariates=self.encode_covariates,
             **self.qu_kwargs,
         )
 
@@ -248,6 +251,27 @@ class MrMultiVAE(MULTIVAE):
         base = super()._get_inference_input(tensors)
         base["sample_index"] = tensors[REGISTRY_KEYS.SAMPLE_KEY]
         return base
+
+    def _get_generative_input(self, tensors, inference_outputs, transform_batch=None):
+        """Pass the hierarchical ``z = z_base + eps`` to the decoder.
+
+        Overrides MULTIVAE's parent method to make it explicit that ``z``
+        here is the hierarchical donor-aware representation, not MULTIVAE's
+        plain posterior sample.
+
+        Critical: always passes ``use_z_mean=False`` so that downstream
+        counterfactual calls (e.g. :meth:`compute_h_from_x_eps`) correctly
+        route through ``z`` rather than the ``qz_m`` shortcut — using
+        ``qz_m`` would ignore the counterfactual ``eps`` and produce
+        identically-zero log-fold-changes.
+        """
+        d = super()._get_generative_input(tensors, inference_outputs, transform_batch)
+        # Ensure z is the full hierarchical representation (set by inference()).
+        # The parent already reads inference_outputs["z"], but we make this
+        # dependency explicit and guard against accidental use_z_mean=True.
+        if "z" in inference_outputs:
+            d["z"] = inference_outputs["z"]
+        return d
 
     # ------------------------------------------------------------------
     # Inference: u → (z_base, eps) → z
@@ -309,9 +333,17 @@ class MrMultiVAE(MULTIVAE):
         # sampled MULTIVAE posterior unregularized after qz_m/qz_v are replaced below.
         u0 = outputs["qz_m"]  # (batch, n_latent)
 
-        # u-encoder: sample-conditioned only; batch covariates excluded so u stays
-        # sample-uninformed (comparable across donors/batches).
-        qu = self.qu(u0, sample_index)
+        # u-encoder: sample-conditioned; pass batch/covariate info only when
+        # encode_covariates=True (opt-in; default False for MrMultiVI).  When False
+        # the encoder stays fully batch-uninformed, making u comparable across
+        # donors and batches.
+        qu = self.qu(
+            u0,
+            sample_index,
+            batch_index=batch_index if self.encode_covariates else None,
+            cont_covs=cont_covs if self.encode_covariates else None,
+            cat_covs=cat_covs if self.encode_covariates else None,
+        )
         if n_samples > 1:
             u = qu.rsample((n_samples,))
         else:
@@ -409,6 +441,11 @@ class MrMultiVAE(MULTIVAE):
 
         qz_m = inference_outputs["qz_m"]
         qz_v = inference_outputs["qz_v"]
+        # NOTE: This kl_div_z is a *preliminary* placeholder using the pre-hierarchical
+        # KL(q_u, N(0,1)) via the replaced qz_m/qz_v.  Both this value and the `loss`
+        # computed below are discarded by the calling loss() method, which recomputes
+        # them using kl_u + kl_z after the two-level KL is available.  It is kept here
+        # to satisfy LossOutput's interface contract.
         kl_div_z = kl_divergence(Normal(qz_m, torch.sqrt(qz_v)), Normal(0, 1)).sum(dim=1)
         kl_div_paired = self._compute_mod_penalty(
             (inference_outputs["qzm_expr"], inference_outputs["qzv_expr"]),
@@ -458,8 +495,9 @@ class MrMultiVAE(MULTIVAE):
     ) -> LossOutput:
         """Extend MULTIVAE's loss with the second-level KL for the sample residual.
 
-        MULTIVAE's ``kl_divergence_z = KL(q_u \\| N(0,1))`` is already
-        ``kl_u`` verbatim (the encoder distribution is unchanged).  This
+        MULTIVAE's ``kl_divergence_z`` term is repurposed as ``kl_u =
+        KL(q_u \\| p_u)`` where ``p_u`` is the configured prior (default: a
+        learned mixture-of-Gaussians, see :attr:`u_prior_mixture`).  This
         method adds:
 
         .. math::
@@ -545,3 +583,123 @@ class MrMultiVAE(MULTIVAE):
             kl_local=kl_local,
             extra_metrics=loss_out.extra_metrics,
         )
+
+    @torch.inference_mode()
+    def compute_h_from_x_eps(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        sample_index: torch.Tensor,
+        batch_index: torch.Tensor,
+        extra_eps: torch.Tensor,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
+        label: torch.Tensor | None = None,
+        cell_idx: torch.Tensor | None = None,
+        size_factor: torch.Tensor | None = None,
+        cf_sample: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return ``concat([px_scale, py_scale_det])`` at ``z = z_base + extra_eps``.
+
+        This is the decoder hook consumed by the LFC block in
+        :func:`~scvi.external.mrtotalvi._stats.differential_expression` when
+        ``store_lfc=True``.  It mirrors the analogous hook in
+        :class:`~scvi.external.mrtotalvi.MrTotalVAE` but handles the
+        MULTIVAE generative signature (``z``, ``qz_m``, ``libsize_expr``) and
+        skips the protein path when ``n_input_proteins == 0``.
+
+        Parameters
+        ----------
+        x
+            Expression count matrix, shape ``(batch, n_genes)``.
+        y
+            Protein count matrix, shape ``(batch, n_proteins)``.  Pass a
+            zero-filled tensor when no proteins are present.
+        sample_index
+            Integer donor index, shape ``(batch, 1)`` or ``(batch,)``.
+        batch_index
+            Batch integer index for the counterfactual decode, shape
+            ``(batch, 1)``.
+        extra_eps
+            Counterfactual eps shift, shape ``(batch, n_latent)``.
+        cont_covs
+            Continuous covariate tensor.
+        cat_covs
+            Categorical covariate tensor.
+        label
+            Cell-type label tensor.  Defaults to zeros when ``None``.
+        cell_idx
+            Cell index tensor (passed through to MULTIVAE inference).
+            Defaults to ``arange(n_cells)`` when ``None``.
+        size_factor
+            Optional size factor tensor.
+        cf_sample
+            Counterfactual sample override for the eps encoder.
+
+        Returns
+        -------
+        :class:`torch.Tensor`
+            Shape ``(batch, n_genes)`` when no proteins, or
+            ``(batch, n_genes + n_proteins)`` when proteins are present.
+            The ``gene``/``protein`` coordinate split is applied at the
+            model level (B3) when assembling the xarray output.
+        """
+        n_cells = x.shape[0]
+        if label is None:
+            label = torch.zeros(n_cells, 1, dtype=torch.long, device=x.device)
+        if cell_idx is None:
+            cell_idx = torch.arange(n_cells, device=x.device)
+
+        # Run inference (single MC draw; the MC loop lives in _stats.py).
+        out = self.inference(
+            x,
+            y,
+            batch_index,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+            label=label,
+            cell_idx=cell_idx,
+            size_factor=size_factor,
+            n_samples=1,
+            sample_index=sample_index,
+            cf_sample=cf_sample,
+        )
+
+        z_base = out["z_base"]           # (batch, n_latent)
+        z = z_base + extra_eps           # counterfactual latent
+        qz_m = out["qz_m"]               # (batch, n_latent) — deterministic u mean
+        libsize_expr = out["libsize_expr"]
+
+        gen_out = self.generative(
+            z=z,
+            qz_m=qz_m,
+            batch_index=batch_index,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+            libsize_expr=libsize_expr,
+            use_z_mean=False,
+            label=label,
+        )
+
+        # RNA: px_scale is deterministic (softmax over the z-dependent NB decoder).
+        # Note: MULTIVAE's generative returns px_scale at the top level, not inside px_.
+        px_scale = gen_out["px_scale"]   # (batch, n_genes)
+
+        if self.n_input_proteins == 0:
+            return px_scale
+
+        # Protein: deterministic background reconstruction (D-021).
+        # DecoderADT calls Normal(back_alpha, back_beta).rsample() internally, so
+        # py_["scale"] is stochastic.  Using that draw in both x_1 and x_0 introduces
+        # independent background noise that does NOT cancel in the LFC.  Fix: use the
+        # log-mean back_alpha directly as a deterministic background stand-in.
+        py_ = gen_out["py_"]
+        rate_back_det = torch.exp(py_["back_alpha"])          # (batch, n_proteins)
+        rate_fore_det = rate_back_det * py_["fore_scale"]     # fore_scale is deterministic
+        # py_["mixing"] is a raw logit; sigmoid → mixing probability.
+        protein_mixing_det = torch.sigmoid(py_["mixing"])
+        py_scale_det = F.normalize(
+            (1.0 - protein_mixing_det) * rate_fore_det, p=1, dim=-1
+        )  # (batch, n_proteins)
+
+        return torch.cat([px_scale, py_scale_det], dim=-1)   # (batch, n_genes + n_proteins)

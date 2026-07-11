@@ -189,7 +189,7 @@ def test_mrmultivi_hierarchy_uses_mixed_posterior_mean(mdata_basic):
             super().__init__()
             self.last_input = None
 
-        def forward(self, u0, sample_index):
+        def forward(self, u0, sample_index, **kwargs):
             self.last_input = u0.detach().clone()
             return Normal(u0, torch.ones_like(u0))
 
@@ -687,6 +687,154 @@ def test_mrmultivi_differential_expression_rna_protein():
     assert np.all(np.isfinite(de["beta"].values))
     assert np.all((de["pvalue"].values >= 0) & (de["pvalue"].values <= 1))
     assert np.all((de["padj"].values >= 0) & (de["padj"].values <= 1))
+
+
+# ---------------------------------------------------------------------------
+# store_lfc tests — gene/protein LFC path
+# ---------------------------------------------------------------------------
+
+
+def _bi_model_and_mdata():
+    """RNA+protein bimodal MrMultiVI (no ATAC) with a binary condition."""
+    from mudata import MuData
+
+    mdata_full = synthetic_iid(return_mudata=True)
+    n_cells = mdata_full.n_obs
+    mdata_full.obs["donor"] = [f"donor_{i % N_DONORS}" for i in range(n_cells)]
+    mdata_bi = MuData({
+        "rna": mdata_full.mod["rna"].copy(),
+        "protein_expression": mdata_full.mod["protein_expression"].copy(),
+    })
+    mdata_bi.obs["donor"] = mdata_full.obs["donor"].values
+    mdata_bi.obs["batch"] = mdata_full.obs["batch"].values
+    mdata_bi.obs["condition"] = np.where(
+        mdata_bi.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+    MrMultiVI.setup_mudata(
+        mdata_bi,
+        sample_key="donor",
+        batch_key="batch",
+        modalities={"rna_layer": "rna", "protein_layer": "protein_expression"},
+    )
+    model = MrMultiVI(mdata_bi, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    return model, mdata_bi
+
+
+def test_mrmultivi_store_lfc_shapes_finite():
+    """store_lfc=True returns lfc + lfc_std with correct shapes and finite values."""
+    model, mdata = _bi_model_and_mdata()
+    n_cells = mdata.n_obs
+    n_genes = mdata.mod["rna"].n_vars
+    n_proteins = mdata.mod["protein_expression"].n_vars
+    n_features = n_genes + n_proteins
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+        delta=None,
+    )
+
+    assert "lfc" in de.data_vars
+    assert "lfc_std" in de.data_vars
+    assert "pde" not in de.data_vars
+    assert de["lfc"].dims == ("cell_name", "covariate", "feature")
+    assert de["lfc"].shape == (n_cells, 1, n_features)
+    assert de["lfc_std"].shape == (n_cells, 1, n_features)
+    assert np.all(np.isfinite(de["lfc"].values))
+    assert np.all(np.isfinite(de["lfc_std"].values))
+    assert np.all(de["lfc_std"].values >= 0)
+
+
+def test_mrmultivi_store_lfc_feature_coords():
+    """store_lfc=True annotates the feature axis with gene/protein labels."""
+    model, mdata = _bi_model_and_mdata()
+    n_genes = mdata.mod["rna"].n_vars
+    n_proteins = mdata.mod["protein_expression"].n_vars
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+    )
+
+    feature_coords = de.coords["feature"].values.tolist()
+    assert feature_coords[:n_genes] == ["gene"] * n_genes
+    assert feature_coords[n_genes:] == ["protein"] * n_proteins
+
+
+def test_mrmultivi_store_lfc_pde_in_range():
+    """pde values are in [0, 1] when delta is set."""
+    model, mdata = _bi_model_and_mdata()
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+        delta=0.3,
+    )
+
+    assert "pde" in de.data_vars
+    pde = de["pde"].values
+    assert np.all(pde >= 0.0) and np.all(pde <= 1.0)
+    assert np.all(np.isfinite(pde))
+
+
+def test_mrmultivi_store_lfc_baseline():
+    """store_baseline=True adds a finite baseline_expression variable."""
+    model, mdata = _bi_model_and_mdata()
+    n_cells = mdata.n_obs
+    n_features = mdata.mod["rna"].n_vars + mdata.mod["protein_expression"].n_vars
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+        store_baseline=True,
+    )
+
+    assert "baseline_expression" in de.data_vars
+    bl = de["baseline_expression"].values
+    assert bl.shape == (n_cells, n_features)
+    assert np.all(np.isfinite(bl))
+    assert np.all(bl >= 0)
+
+
+def test_mrmultivi_store_lfc_backward_compat():
+    """store_lfc=False produces the same output as before (backward compat)."""
+    model, mdata = _bi_model_and_mdata()
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=False,
+    )
+
+    assert "lfc" not in de.data_vars
+    assert "pde" not in de.data_vars
+    assert "baseline_expression" not in de.data_vars
+    assert set(de.data_vars) == {"beta", "effect_size", "pvalue", "padj"}
+
+
+def test_mrmultivi_atac_rejects_lfc():
+    """store_lfc=True on an ATAC-containing model still raises via the ATAC guard."""
+    mdata = _make_mdata()
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT)
+
+    with pytest.raises(NotImplementedError, match="ATAC"):
+        model.differential_expression(store_lfc=True, sample_cov_keys=["batch"])
 
 
 # ---------------------------------------------------------------------------

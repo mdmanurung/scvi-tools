@@ -621,6 +621,129 @@ def test_mrtotalvi_de_donor_key_warning(adata_basic):
 
 
 # ---------------------------------------------------------------------------
+# store_lfc tests — gene/protein LFC path
+# ---------------------------------------------------------------------------
+
+
+def _de_lfc_model(adata):
+    """Helper: train a tiny MrTotalVI and tag obs with a binary condition."""
+    adata = adata.copy()
+    adata.obs["condition"] = np.where(
+        adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    return model, adata
+
+
+def test_mrtotalvi_store_lfc_shapes_finite(adata_basic):
+    """store_lfc=True returns lfc + lfc_std with correct shapes and finite values."""
+    model, adata = _de_lfc_model(adata_basic)
+    n_cells = adata.n_obs
+    n_genes = adata.n_vars
+    n_proteins = adata.obsm["protein_expression"].shape[1]
+    n_features = n_genes + n_proteins
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+        delta=None,
+    )
+
+    assert "lfc" in de.data_vars
+    assert "lfc_std" in de.data_vars
+    assert "pde" not in de.data_vars
+    assert de["lfc"].dims == ("cell_name", "covariate", "feature")
+    assert de["lfc"].shape == (n_cells, 1, n_features)
+    assert de["lfc_std"].shape == (n_cells, 1, n_features)
+    assert np.all(np.isfinite(de["lfc"].values))
+    assert np.all(np.isfinite(de["lfc_std"].values))
+    assert np.all(de["lfc_std"].values >= 0)
+
+
+def test_mrtotalvi_store_lfc_feature_coords(adata_basic):
+    """store_lfc=True annotates the feature axis with gene/protein labels."""
+    model, adata = _de_lfc_model(adata_basic)
+    n_genes = adata.n_vars
+    n_proteins = adata.obsm["protein_expression"].shape[1]
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+    )
+
+    feature_coords = de.coords["feature"].values.tolist()
+    assert feature_coords[:n_genes] == ["gene"] * n_genes
+    assert feature_coords[n_genes:] == ["protein"] * n_proteins
+
+
+def test_mrtotalvi_store_lfc_pde_in_range(adata_basic):
+    """pde values are in [0, 1] when delta is set."""
+    model, adata = _de_lfc_model(adata_basic)
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+        delta=0.3,
+    )
+
+    assert "pde" in de.data_vars
+    pde = de["pde"].values
+    assert np.all(pde >= 0.0) and np.all(pde <= 1.0)
+    assert np.all(np.isfinite(pde))
+
+
+def test_mrtotalvi_store_lfc_baseline(adata_basic):
+    """store_baseline=True adds a finite baseline_expression variable."""
+    model, adata = _de_lfc_model(adata_basic)
+    n_cells = adata.n_obs
+    n_features = adata.n_vars + adata.obsm["protein_expression"].shape[1]
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=True,
+        store_baseline=True,
+    )
+
+    assert "baseline_expression" in de.data_vars
+    bl = de["baseline_expression"].values
+    assert bl.shape == (n_cells, n_features)
+    assert np.all(np.isfinite(bl))
+    assert np.all(bl >= 0)
+
+
+def test_mrtotalvi_store_lfc_backward_compat(adata_basic):
+    """store_lfc=False produces the same output as before (backward compat)."""
+    model, adata = _de_lfc_model(adata_basic)
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=2,
+        batch_size=32,
+        store_lfc=False,
+    )
+
+    assert "lfc" not in de.data_vars
+    assert "pde" not in de.data_vars
+    assert "baseline_expression" not in de.data_vars
+    assert set(de.data_vars) == {"beta", "effect_size", "pvalue", "padj"}
+
+
+# ---------------------------------------------------------------------------
 # (b) Reconstruction not regressed vs stock TotalVI
 # ---------------------------------------------------------------------------
 

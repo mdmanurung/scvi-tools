@@ -384,3 +384,83 @@ Record unexpected findings, gotchas, and edge cases. Entries feed the crystalliz
 **mitigation_type**: structural
 **structural_mitigation_candidate**: test_scale_observations_missing_sample
 **Body**: `adata.obs["_scvi_sample"].value_counts().sort_index()` omits any sample index that has zero cells in the current `adata`. If the model was registered with `n_sample` donors but the current adata is a subset, the resulting tensor has length < `n_sample`. Indexing with a missing sample index raises `IndexError` at training time. Fix: use `.reindex(range(n_sample), fill_value=0).sort_index()` (after `value_counts()`) to ensure the tensor always has length `n_sample`. Also need a downstream guard: a `fill_value=0` entry causes division by zero in the `per_cell / prefactors` computation — raise a `ValueError` for zero-count donors before training begins.
+
+### L-056 — [2026-07-11] `_differential_expression`: sqrtm loop (~128 cells × n_cov^3) is fast enough to not need vmap
+**Category**: performance
+**Tags**: mrtotalvi, mrmultivi, differential_expression, scipy, sqrtm
+**Body**: `scipy.linalg.sqrtm` is called per cell in each data batch. For batch_size=128 and n_cov≤10 this is ~128 calls each O(n_cov^3) ≈ negligible (microseconds per call). Total overhead across 1000 cells is ~5 ms. No vectorized sqrtm for PyTorch tensors exists without autograd; the CPU loop via scipy is correct and fast enough.
+
+### L-057 — [2026-07-11] `torch.vmap(torch.linalg.pinv)` works inside `torch.inference_mode()` — no error
+**Category**: gotcha
+**Tags**: mrtotalvi, mrmultivi, torch.vmap, inference_mode
+**Body**: `torch.vmap(torch.linalg.pinv)` called inside `with torch.inference_mode()` works without error on PyTorch ≥2.0. `inference_mode` disables autograd tracking but does not prevent functorch transforms. Verified on CUDA (L40S) + PyTorch 2.x.
+
+### L-058 — [2026-07-11] `false_discovery_control` requires `scipy>=1.10`; already available in codex env
+**Category**: infra
+**Tags**: mrtotalvi, mrmultivi, differential_expression, scipy, BH
+**Body**: `scipy.stats.false_discovery_control` was introduced in scipy 1.10.0 (2023). The codex conda environment has scipy ≥ 1.10 already. If porting to a different environment, verify scipy version before using this function; fallback is `statsmodels.stats.multitest.multipletests(method="fdr_bh")`.
+
+---
+
+### L-059 — [2026-07-11] `py_["scale"]` in DecoderTOTALVI is stochastic via `rsample()`
+**Category**: gotcha
+**Tags**: mrtotalvi, mrmultivi, differential_expression, protein_lfc, stochastic_background
+**Body**: `DecoderTOTALVI.forward` computes `rate_back = exp(Normal(back_alpha, back_beta).rsample())`
+(confirmed `_base_components.py:~942`). This propagates through `rate_fore = rate_back * fore_scale`
+to `py_["scale"] = normalize((1 - protein_mixing) * rate_fore, p=1, dim=-1)`. Two separate
+forward calls (x_1, x_0 in the LFC contrast) draw **independent** background noise — the
+difference does NOT simplify to a biological signal. The `rsample()` is inside the inherited
+class and cannot be disabled via a kwarg. Fix: reconstruct `py_["scale"]` from `exp(back_alpha)`
+on the contrast path in `compute_h_from_x_eps` (D-021). Verified from source; no MRVI
+reference (MRVI is RNA-only). Test: null-covariate protein `lfc_std ≈ 0` confirms determinism.
+
+---
+
+### L-060 — [2026-07-11] MrTotalVI/MrMultiVI `qz` returns 3-tuple, not MRVI's 2-tuple
+**Category**: gotcha
+**Tags**: mrtotalvi, mrmultivi, differential_expression, qz, inference
+**Body**: MRVI's `EncoderUZ.forward` returns `(z_base, eps)` 2-tuple. Both mr* derivatives
+return `(z_base, eps, eps_dist)` 3-tuple — the extra `eps_dist` carries the Normal
+distribution for analytic KL when `use_map=False` (D-015). All callers must unpack all
+three values. Note: `mrmultivi/_module.py:281` has a 2-tuple unpack **inside a docstring
+code-block** (not real code); the actual line `:330` is the 3-tuple assignment. Callers
+who only need `z_base` and `eps` can use `z_base, eps, _ = self.qz(...)`.
+
+---
+
+### L-061 — [2026-07-11] `torch.vmap` breaks on `nn.BatchNorm` — use explicit loop for MrTotalVI LFC
+**Category**: gotcha
+**Tags**: mrtotalvi, vmap, batch_norm, differential_expression, lfc
+**mitigation_type**: structural
+**structural_mitigation_candidate**: `use_vmap=False` default in `differential_expression`
+**Body**: `torch.vmap` (functorch) cannot be applied over models with `nn.BatchNorm` layers
+because BatchNorm's running statistics are updated as a side effect and the layer tracks
+a scalar mean/var over the *batch* dimension, which vmap maps to the *function* dimension.
+Calling `vmap` over a BatchNorm-containing module raises a runtime error (or silently corrupts
+statistics depending on PyTorch version). MrTotalVI's TotalVI decoder defaults
+`use_batch_norm="both"` (encoder + decoder; see `_totalvae.py:146`). Mitigation: default
+`use_vmap=False` in both models; the existing per-donor explicit loop is correct and fast
+enough at the scales tested (D-023). MrMultiVI uses LayerNorm in MULTIVAE decoder, so
+`use_vmap=True` is architecturally safe there but remains off by default for consistency.
+
+---
+
+### L-062 — [2026-07-11] donor_key==sample_key creates duplicate column → tuple MultiIndex in design matrix
+**Category**: bug
+**Tags**: mrtotalvi, mrmultivi, differential_expression, design_matrix, donor_key
+**mitigation_type**: code_fix
+**Body**: In `_stats.py._differential_expression`, the design matrix is built by selecting
+`adata.obs[[model.sample_key] + cov_cols]`. When `donor_key == model.sample_key`, the same
+column appears twice in the select list, producing a DataFrame with a tuple MultiIndex on
+columns instead of a flat string Index. Downstream `.set_index()` and `.loc[]` calls then
+raise `KeyError` or silently select wrong columns. Fix: filter `cov_cols_for_select = [c
+for c in cov_cols if c != model.sample_key]` before the select. Same fix needed in
+`_construct_design_matrix` when resolving the donor covariate: guard with
+`if donor_key == sample_info.index.name: cov = sample_info.index.to_series()`.
+
+### L-063 — [2026-07-11] VampPrior + encode_covariates=True: must pass batch_idx=zeros to _append_covariates
+**Category**: bug
+**Tags**: vamprior, encode-covariates, mrtotalvi, batch-index
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_vamprior_trains_finite_elbo (guards forward pass through qu)
+**Body**: `MrTotalVI` defaults `encode_covariates=True`. `EncoderXU_TotalVI._append_covariates` raises `ValueError: batch_index is required when encode_covariates=True.` if `batch_index=None` is passed. `_vamp_component_dist` initially called `self.qu(x_p, y_p, sample_idx)` without `batch_index`, triggering this error during training. Fix: pass `batch_index=torch.zeros(K, 1, ...)` when `self.encode_covariates` is True. MrMultiVI is unaffected (defaults `encode_covariates=False`).

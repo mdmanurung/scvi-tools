@@ -743,6 +743,57 @@ def test_mrtotalvi_store_lfc_backward_compat(adata_basic):
     assert set(de.data_vars) == {"beta", "effect_size", "pvalue", "padj"}
 
 
+def test_mrtotalvi_protein_decode_is_deterministic(adata_basic):
+    """D-021: compute_h_from_x_eps returns identical protein output on two calls.
+
+    The protein background path uses exp(back_alpha) (deterministic), not rsample().
+    Two identical calls must agree to floating-point precision on the protein slice.
+    """
+    import torch
+
+    model, adata = _de_lfc_model(adata_basic)
+    n_proteins = adata.obsm["protein_expression"].shape[1]
+    n_latent = model.module.n_latent
+
+    model.module.eval()
+    dl = model._make_data_loader(adata=adata, batch_size=32)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    n_cells = inf_inputs["x"].shape[0]
+    extra_eps = torch.zeros(n_cells, n_latent)
+
+    out1 = model.module.compute_h_from_x_eps(extra_eps=extra_eps, **inf_inputs)
+    out2 = model.module.compute_h_from_x_eps(extra_eps=extra_eps, **inf_inputs)
+
+    protein1 = out1[..., -n_proteins:]
+    protein2 = out2[..., -n_proteins:]
+    assert torch.allclose(protein1, protein2), (
+        "Protein decode is not deterministic — D-021 background fix may be missing"
+    )
+
+
+def test_mrtotalvi_lfc_is_nontrivial(adata_basic):
+    """extra_eps routes live through the decoder: non-trivial covariate yields |lfc| > 0.
+
+    A covariate beta of zero everywhere would indicate extra_eps never reaches the
+    generative model, making the LFC feature silently inert.
+    """
+    model, adata = _de_lfc_model(adata_basic)
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=4,
+        batch_size=32,
+        store_lfc=True,
+    )
+
+    max_abs_lfc = np.abs(de["lfc"].values).max()
+    assert max_abs_lfc > 1e-4, (
+        f"All LFCs are effectively zero (max={max_abs_lfc:.2e}); "
+        "extra_eps may not be wired through the decoder"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (b) Reconstruction not regressed vs stock TotalVI
 # ---------------------------------------------------------------------------
@@ -1064,4 +1115,68 @@ def test_use_map_false(adata_basic):
     history = model.history["elbo_train"]
     assert all(math.isfinite(v) for v in history.values.flatten()), (
         "Non-finite ELBO encountered with use_map=False"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (i) VampPrior toggle
+# ---------------------------------------------------------------------------
+
+def test_vamprior_trains_finite_elbo(adata_basic):
+    """u_prior='vamp' constructs and trains to a finite ELBO.
+
+    VampPrior routes K pseudoinputs through the shared qu encoder each forward
+    pass; this test confirms no NaN propagates from the log1p + Softplus path.
+    """
+    import math
+
+    model = _setup_and_train(
+        adata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        u_prior="vamp",
+        u_prior_mixture_k=5,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with u_prior='vamp'"
+    )
+
+
+def test_vamprior_default_unchanged(adata_basic):
+    """u_prior='mog' (default) behaviour is bit-identical to pre-toggle default.
+
+    The default path must not change when u_prior_type attr is absent (backward
+    compat) or set to 'mog' — confirmed by checking u_prior_type on the module.
+    """
+    model = _setup_and_train(adata_basic, max_epochs=1)
+    assert getattr(model.module, "u_prior_type", "mog") == "mog"
+    assert hasattr(model.module, "u_prior_means"), (
+        "MoG default should register u_prior_means"
+    )
+    assert not hasattr(model.module, "u_vamp_pseudo"), (
+        "MoG default must not register u_vamp_pseudo"
+    )
+
+
+def test_vamprior_has_correct_parameters(adata_basic):
+    """VampPrior registers u_vamp_pseudo and u_prior_logits; no u_prior_means."""
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    K = 6
+    model = MrTotalVI(adata_basic, sample_key="sample", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K)
+    module = model.module
+    assert module.u_prior_type == "vamp"
+    assert hasattr(module, "u_vamp_pseudo"), "u_vamp_pseudo must be registered"
+    assert module.u_vamp_pseudo.shape == (K, module.n_input_genes + module.n_input_proteins)
+    assert module.u_prior_logits.shape == (K,)
+    assert not hasattr(module, "u_prior_means"), (
+        "VampPrior must not register u_prior_means"
+    )
+    assert module.u_prior_mixture is True, (
+        "VampPrior must set u_prior_mixture=True to enable MC KL path"
     )

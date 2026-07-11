@@ -125,6 +125,24 @@ Record non-obvious choices made during development. One entry per decision. Refe
 **Consequences**: `EncoderXU_TotalVI` and `EncoderXU_MultiVI` share architectural structure (both live in `mrtotalvi/_components.py`) but differ in input preprocessing. Future MultiVI-style models (ATAC-only, etc.) should follow the same pattern: no log1p when input is a latent, log1p when input is raw counts.
 **Status**: active
 
+### D-017 — [2026-07-11] MrVI-style DE: sample u once per MC draw, hold fixed across donors
+**Context**: MrVI's original DE implementation uses `torch.vmap(inference_fn, randomness="different")` which draws a fresh `u ~ q(u)` for *each* counterfactual donor substitution. This means `eps_d` for donor d uses a different u draw than `eps_{d'}`.
+**Decision**: In `_differential_expression`, sample `u` once per MC draw and call `module.qz(u, cf_d)` for each kept donor with that *same* u held fixed. This is the strict counterfactual semantics: "given this cell's latent state u, what would its donor-specific residual be in each donor?" For large mc_samples both approaches converge to the same marginal, but our approach is computationally cheaper (n_donor qz calls per mc draw, not n_donor×mc_samples inference calls).
+**Consequences**: `eps_d` and `eps_{d'}` are not iid across d — they share the same u draw. Effect on inference is negligible at mc_samples≥50 by CLT.
+**Status**: active
+
+### D-018 — [2026-07-11] donor_key in DA: within-donor centering of log_probs
+**Context**: For multi-donor multi-condition experiments, the aggregated-posterior log_prob DA test conflates donor effects with condition effects. Donors vary in baseline cell composition.
+**Decision**: When `donor_key` is provided to `differential_abundance`, subtract the per-donor mean log_prob across that donor's samples (within-donor centering) before the covariate aggregation step. This blocks out donor as a fixed effect and leaves only within-donor condition contrasts.
+**Consequences**: Only valid when each donor spans ≥2 samples (e.g., multiple conditions or time points per donor). Warns if single-sample donors are present (skip centering for them). DA log_probs after centering have mean ≈ 0 per donor, and the condition_log_probs reflect condition contrasts within donors.
+**Status**: active
+
+### D-019 — [2026-07-11] Wald stat df = n_admissible_samples_per_cell (not n_latent)
+**Context**: Old `differential_expression` in MrTotalVI used `df=n_latent` (number of latent dimensions) for the chi2 test. MrVI torch uses the number of samples as the degrees of freedom.
+**Decision**: `ts[n, k]` is the sum over latent dims of `betas_norm[mc, n, k, d]^2` averaged over mc draws. Under H0 this is a weighted sum of squared standard normals. The effective df is `n_admissible_samples_per_cell` (the rank of the WLS system), not n_latent. We use `Chi2(df=admiss.sum(1).clamp(min=1))` per cell. This matches MrVI's convention.
+**Consequences**: Cells with fewer admissible samples get lower df, more conservative p-values. Correct for sparse layouts.
+**Status**: active
+
 ### D-016 — [2026-07-10] pz_scale: clamp lower bound at min=-4.0 to prevent kl_z→−∞
 **Context**: When `learn_z_u_prior_scale=True` (non-default), `pz_scale` is an unclamped `nn.Parameter` that feeds `peps = Normal(0, exp(pz_scale))` in both `_module.py` loss paths. Under `use_map=True`, `kl_z = -Normal(0, exp(pz_scale)).log_prob(eps)`. If both flags are non-default together, the optimizer can drive `pz_scale→−∞` (σ→0) jointly with `eps→0`, sending `kl_z→−∞` and the ELBO unbounded above — a degeneracy collapse.
 **Decision**: Apply `.clamp(min=-4.0)` at the point of use: `peps = Normal(0.0, torch.exp(self.pz_scale.clamp(min=-4.0)))` in both `mrtotalvi/_module.py` and `mrmultivi/_module.py`. The floor `exp(-4) ≈ 0.018` is narrow enough to allow learning without permitting the degenerate σ→0 collapse. The clamp is NOT stored back to the parameter (non-projected); it is applied only during the forward pass.
@@ -138,3 +156,92 @@ Record non-obvious choices made during development. One entry per decision. Refe
 **Rationale**: Correct ELBO for stochastic eps requires `KL(q||p) = H[q(eps)] + cross-entropy(q||p)`. Omitting H[q] causes the model to over-penalize eps variance → `eps_log_scale → -∞` → posterior collapse on the second-level latent. The analytic KL between two Gaussians is cheap and exact.
 **Consequences**: `use_map=False` now trains correctly. All callers of `qz()` unpack 3-tuple. The `eps_dist` key is stored in inference outputs alongside `eps`. Commit 059fe952.
 **Status**: active (supersedes the [2026-07-08 revisit] note)
+
+---
+
+### D-020 — [2026-07-11] Protein contrast quantity for MrTotalVI LFC: `py_["scale"]`
+**Context**: When implementing decoded protein LFC for `MrTotalVI.differential_expression`,
+the question arose: which decoded quantity should serve as the protein "expression" in
+the fold-change contrast? MRVI uses `px.mean / library` (RNA only; no protein reference).
+**Decision**: Use `py_["scale"]` (background-adjusted, L1-normalized foreground mean;
+`_base_components.py:962`). RNA contrast uses `px_["scale"]` (softmax-normalized rate,
+MRVI-`h` analog).
+**Rationale**: `py_["scale"]` is TotalVI's own documented DE convention
+(`DecoderTOTALVI` docstring `:874-881`: "foreground mean adjusted for background
+probability and scaled to reside in simplex"). Using a different quantity would
+diverge from the conventions users of TotalVI already know.
+**Consequences**: `compute_h_from_x_eps` returns `concat(px_scale, py_scale)`;
+feature axis is split into `gene`/`protein` coords at output. For MrMultiVI with no
+protein layer, only `px_scale` is returned.
+**Status**: active
+
+---
+
+### D-021 — [2026-07-11] Deterministic protein background on the LFC contrast path
+**Context**: `DecoderTOTALVI.forward` computes `rate_back = exp(Normal(back_alpha,
+back_beta).rsample())` (`_base_components.py:~942`), which feeds `rate_fore → py_["scale"]`.
+With two separate forward passes (x_1 vs x_0 contrast), independent background samples
+would add noise that does NOT cancel → protein LFC = biological signal + background noise.
+**Decision**: On the contrast path inside `compute_h_from_x_eps`, reconstruct `py_["scale"]`
+using the deterministic `back_alpha` mean (`rate_back = exp(back_alpha)`) instead of
+sampling. Leave the training/ELBO `generative` path unchanged (stochastic background is
+correct for the NB likelihood).
+**Rationale**: The contrast should differ only via `extra_eps`; otherwise two
+counterfactual states differ in background noise, not in biology. `rsample()` is inside
+the inherited `DecoderTOTALVI.forward` — this is not a flag but requires a decoder
+override or a post-forward reconstruction.
+**Consequences**: `compute_h_from_x_eps` overrides the generative path on the contrast
+path only. Must verify with the D2 determinism test: null-covariate protein `lfc_std ≈ 0`.
+**Status**: active
+
+---
+
+### D-022 — [2026-07-11] Feature layout: concat(px_scale, py_scale) with coord split
+**Context**: `compute_h_from_x_eps` needs to return a single tensor for the LFC
+contrast; downstream code splits into `gene`/`protein` xarray coordinates.
+**Decision**: Return `concat(px_scale, py_scale, dim=-1)` from the hook. In `_stats.py`
+(B2) and the model wrappers (B3), split at `n_genes` into `gene`/`protein` feature coords.
+MrMultiVI with no protein layer returns only `px_scale`; ATAC features are excluded.
+**Rationale**: Mirrors MRVI's single-tensor return (`px.mean/library`) while extending
+to multimodal output. Keeping a single tensor simplifies the einsum-based LFC computation.
+**Consequences**: MrTotalVI output xarray gains `feature` dim with `gene_*`/`protein_*`
+coord values. MrMultiVI output is `gene_*` only (RNA) unless protein layer present.
+**Status**: active
+
+---
+
+### D-023 — [2026-07-11] vmap default: use_vmap=False for both models; opt-in for MrMultiVI
+**Context**: MRVI uses `torch.vmap` to parallelize per-cell decoder calls in the LFC
+path. MrTotalVI's TOTALVAE decoder defaults `use_batch_norm="both"` (`_totalvae.py:146`),
+which is vmap-incompatible (BatchNorm uses running stats). MrMultiVI's MULTIVAE decoder
+defaults `use_layer_norm="both"` (`_multivae.py:296-297`), which is vmap-safe.
+**Decision**: Default `use_vmap=False` (explicit per-cell loop) for **both** models on
+the LFC path, matching the existing eps-loop style (`_stats.py:460-471`). Expose
+`use_vmap=True` as opt-in for MrMultiVI only.
+**Rationale**: Defaulting both to False avoids BatchNorm errors on a first landing and
+matches the existing loop style. MrMultiVI users can opt in once the path is validated.
+**Consequences**: LFC computation is O(n_cells) per donor step but avoids BatchNorm
+vmap errors. MrTotalVI users should not pass `use_vmap=True`.
+**Status**: active
+
+---
+
+### D-024 — [2026-07-11] encode_covariates: pass batch/cont/cat kwargs to qu() unconditionally
+**Context**: `_setup_hierarchy()` in both MrTotalVAE and MrMultiVAE was hardcoded to
+`encode_covariates=False`, so covariate information never reached the u-encoder even
+when users configured `encode_covariates=True` at model construction.
+**Decision**: Change `_setup_hierarchy()` to use `self.encode_covariates`. Pass
+`batch_index, cont_covs, cat_covs` as kwargs to `qu(...)` unconditionally — the encoder
+ignores them when `encode_covariates=False`; they're used only when True. This avoids an
+extra conditional branch in inference.
+**Consequences**: `RecordingQu` test mock needed `**kwargs` to absorb these kw args
+(else `unexpected keyword argument 'batch_index'`). Future test mocks for qu() should
+accept **kwargs.
+**Status**: active
+
+### D-025 — [2026-07-11] VampPrior reference-prior design: sample_idx=0, Softplus-constrained pseudoinputs
+**Context**: Adding a learnable VampPrior option to MrTotalVI/MrMultiVI. Prior pseudoinputs must pass through the actual `qu` encoder. Two design choices: (1) what sample index to use for the prior, and (2) whether to constrain pseudoinputs.
+**Decision**: Use `sample_idx=zeros(K,1)` (reference donor 0) and Softplus-constrain TotalVI pseudoinputs. MrMultiVI pseudoinputs (in latent space) are unconstrained.
+**Rationale**: The prior should be batch/sample-invariant; fixing to donor 0 excludes donor identity from the prior while letting the K learnable pseudoinput vectors absorb full manifold variation. Softplus ensures log1p inside EncoderXU_TotalVI stays well-defined (raw counts are ≥ 0). MrMultiVI's `qu` takes continuous MULTIVAE latent as input (no log1p), so no constraint is needed.
+**Consequences**: VampPrior prior is weakly conditioned on the reference batch embedding when `encode_covariates=True`; this is intentional (reference prior, not a batch-free prior). Future work: could marginalize over batches.
+**Status**: active

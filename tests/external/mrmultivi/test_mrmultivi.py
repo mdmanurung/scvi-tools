@@ -837,6 +837,57 @@ def test_mrmultivi_atac_rejects_lfc():
         model.differential_expression(store_lfc=True, sample_cov_keys=["batch"])
 
 
+def test_mrmultivi_protein_decode_is_deterministic():
+    """D-021: compute_h_from_x_eps returns identical protein output on two calls.
+
+    The protein background path uses exp(back_alpha) (deterministic), not rsample().
+    Two identical calls must agree to floating-point precision on the protein slice.
+    """
+    import torch
+
+    model, mdata = _bi_model_and_mdata()
+    n_proteins = mdata.mod["protein_expression"].n_vars
+    n_latent = model.module.n_latent
+
+    model.module.eval()
+    dl = model._make_data_loader(adata=mdata, batch_size=32)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    n_cells = inf_inputs["x"].shape[0]
+    extra_eps = torch.zeros(n_cells, n_latent)
+
+    out1 = model.module.compute_h_from_x_eps(extra_eps=extra_eps, **inf_inputs)
+    out2 = model.module.compute_h_from_x_eps(extra_eps=extra_eps, **inf_inputs)
+
+    protein1 = out1[..., -n_proteins:]
+    protein2 = out2[..., -n_proteins:]
+    assert torch.allclose(protein1, protein2), (
+        "Protein decode is not deterministic — D-021 background fix may be missing"
+    )
+
+
+def test_mrmultivi_lfc_is_nontrivial():
+    """extra_eps routes live through the decoder: non-trivial covariate yields |lfc| > 0.
+
+    A covariate beta of zero everywhere would indicate extra_eps never reaches the
+    generative model, making the LFC feature silently inert.
+    """
+    model, mdata = _bi_model_and_mdata()
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=4,
+        batch_size=32,
+        store_lfc=True,
+    )
+
+    max_abs_lfc = np.abs(de["lfc"].values).max()
+    assert max_abs_lfc > 1e-4, (
+        f"All LFCs are effectively zero (max={max_abs_lfc:.2e}); "
+        "extra_eps may not be wired through the decoder"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (b) Reconstruction not regressed vs stock MULTIVI
 # ---------------------------------------------------------------------------
@@ -1090,4 +1141,64 @@ def test_use_map_false(mdata_basic):
     history = model.history["elbo_train"]
     assert all(math.isfinite(v) for v in history.values.flatten()), (
         "Non-finite ELBO encountered with use_map=False"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (l) VampPrior toggle
+# ---------------------------------------------------------------------------
+
+def test_vamprior_trains_finite_elbo(mdata_basic):
+    """u_prior='vamp' constructs and trains to a finite ELBO.
+
+    VampPrior routes K pseudoinputs (in MULTIVAE's continuous latent space)
+    through the shared qu encoder each forward pass.
+    """
+    import math
+
+    model = _setup_and_train(
+        mdata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        u_prior="vamp",
+        u_prior_mixture_k=5,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with u_prior='vamp'"
+    )
+
+
+def test_vamprior_default_unchanged(mdata_basic):
+    """u_prior='mog' (default) does not register u_vamp_pseudo."""
+    model = _setup_and_train(mdata_basic, max_epochs=1)
+    assert getattr(model.module, "u_prior_type", "mog") == "mog"
+    assert hasattr(model.module, "u_prior_means"), (
+        "MoG default should register u_prior_means"
+    )
+    assert not hasattr(model.module, "u_vamp_pseudo"), (
+        "MoG default must not register u_vamp_pseudo"
+    )
+
+
+def test_vamprior_has_correct_parameters(mdata_basic):
+    """VampPrior registers u_vamp_pseudo (in latent space) and u_prior_logits."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    K = 6
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K)
+    module = model.module
+    assert module.u_prior_type == "vamp"
+    assert hasattr(module, "u_vamp_pseudo"), "u_vamp_pseudo must be registered"
+    assert module.u_vamp_pseudo.shape == (K, module.n_latent)
+    assert module.u_prior_logits.shape == (K,)
+    assert not hasattr(module, "u_prior_means"), (
+        "VampPrior must not register u_prior_means"
+    )
+    assert module.u_prior_mixture is True, (
+        "VampPrior must set u_prior_mixture=True to enable MC KL path"
     )

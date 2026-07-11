@@ -212,24 +212,47 @@ def init_u_prior(
     u_prior_mixture: bool = True,
     u_prior_mixture_k: int = 20,
     u_prior_label_weight: float = 10.0,
+    u_prior_type: str = "mog",
+    u_vamp_pseudo_dim: int | None = None,
 ) -> None:
     """Register the MrVI-style prior over ``u`` on ``module``.
 
     The parameters are kept directly on the parent module so state dicts and
     debugging match TorchMRVI's naming.
+
+    Parameters
+    ----------
+    u_prior_type
+        ``"mog"`` (default) for a learned mixture-of-Gaussians, ``"vamp"`` for
+        a VampPrior where ``K`` pseudoinputs in the encoder input space are
+        mapped through the **shared** ``module.qu`` to obtain component
+        distributions, or ``"standard"`` for an isotropic Gaussian.
+    u_vamp_pseudo_dim
+        Width of each VampPrior pseudoinput vector (required when
+        ``u_prior_type="vamp"``).
     """
-    for name in ("u_prior_logits", "u_prior_means", "u_prior_scales", "u_prior_scale"):
+    for name in ("u_prior_logits", "u_prior_means", "u_prior_scales", "u_prior_scale", "u_vamp_pseudo"):
         if hasattr(module, name):
             delattr(module, name)
 
     module.n_latent_u = int(n_latent_u)
     module.n_labels = int(n_labels or 0)
-    module.u_prior_mixture = bool(u_prior_mixture)
     module.u_prior_mixture_k = int(u_prior_mixture_k)
     module.u_prior_label_weight = float(u_prior_label_weight)
+    module.u_prior_type = u_prior_type
 
-    if module.u_prior_mixture:
-        resolved_k = module.n_labels if module.n_labels > 1 else module.u_prior_mixture_k
+    if u_prior_type == "vamp":
+        if u_vamp_pseudo_dim is None:
+            raise ValueError("u_vamp_pseudo_dim is required when u_prior_type='vamp'")
+        resolved_k = module.n_labels if module.n_labels > 1 else u_prior_mixture_k
+        module.resolved_u_prior_mixture_k = int(resolved_k)
+        module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
+        # Small-scale init; Softplus applied in _vamp_component_dist keeps TotalVI input ≥ 0.
+        module.u_vamp_pseudo = nn.Parameter(torch.randn(resolved_k, u_vamp_pseudo_dim) * 0.01)
+        module.u_prior_mixture = True  # enables MC KL path in kl_u
+    elif u_prior_mixture:
+        module.u_prior_mixture = True
+        resolved_k = module.n_labels if module.n_labels > 1 else u_prior_mixture_k
         module.resolved_u_prior_mixture_k = int(resolved_k)
         module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
         module.u_prior_means = nn.Parameter(torch.randn(resolved_k, n_latent_u))
@@ -237,6 +260,7 @@ def init_u_prior(
             torch.full((resolved_k, n_latent_u), float(u_prior_scale))
         )
     else:
+        module.u_prior_mixture = False
         module.resolved_u_prior_mixture_k = 0
         module.register_buffer("u_prior_scale", torch.tensor(float(u_prior_scale)))
 
@@ -247,6 +271,15 @@ def build_u_prior(
     label_index: torch.Tensor | None = None,
 ) -> Normal | MixtureSameFamily:
     """Construct the prior distribution over ``u`` for the current minibatch."""
+    if getattr(module, "u_prior_type", "mog") == "vamp":
+        # VampPrior: route K pseudoinputs through the shared qu encoder.
+        # _vamp_component_dist() is implemented per-module to handle the
+        # TotalVI vs MultiVI input-space difference.
+        comp_dist = module._vamp_component_dist()  # Normal(K, n_latent_u)
+        cats = Categorical(logits=module.u_prior_logits)
+        components = Independent(comp_dist, 1)
+        return MixtureSameFamily(cats, components)
+
     if module.u_prior_mixture:
         logits = module.u_prior_logits
         if (

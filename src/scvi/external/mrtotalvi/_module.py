@@ -90,6 +90,7 @@ class MrTotalVAE(TOTALVAE):
         u_prior_mixture: bool = True,
         u_prior_mixture_k: int = 20,
         u_prior_label_weight: float = 10.0,
+        u_prior: str = "mog",
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,
@@ -121,6 +122,7 @@ class MrTotalVAE(TOTALVAE):
         self.u_prior_mixture = bool(u_prior_mixture)
         self.u_prior_mixture_k = int(u_prior_mixture_k)
         self.u_prior_label_weight = float(u_prior_label_weight)
+        self.u_prior_type = u_prior
         self.qz_kwargs = qz_kwargs or {}
         self.qu_kwargs = qu_kwargs or {}
         self._use_map = use_map
@@ -222,6 +224,8 @@ class MrTotalVAE(TOTALVAE):
             u_prior_mixture=self.u_prior_mixture,
             u_prior_mixture_k=self.u_prior_mixture_k,
             u_prior_label_weight=self.u_prior_label_weight,
+            u_prior_type=getattr(self, "u_prior_type", "mog"),
+            u_vamp_pseudo_dim=self.n_input_genes + self.n_input_proteins,
         )
 
         if learn_z_u_prior_scale:
@@ -237,6 +241,23 @@ class MrTotalVAE(TOTALVAE):
             self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=False)
         else:
             self.n_obs_per_sample = None
+
+    def _vamp_component_dist(self) -> Normal:
+        """Run VampPrior pseudoinputs through qu to get K component distributions.
+
+        Pseudoinputs are in raw (rna+protein) input space; Softplus constrains
+        them to ≥ 0 so that log1p inside EncoderXU_TotalVI stays well-defined.
+        Reference donor (index 0) is used — the learnable pseudoinputs absorb
+        the manifold variation; sample conditioning is deliberately excluded
+        from the prior.
+        """
+        K = self.resolved_u_prior_mixture_k
+        pseudo = F.softplus(self.u_vamp_pseudo)  # (K, n_input_genes + n_input_proteins)
+        x_p = pseudo[:, : self.n_input_genes]
+        y_p = pseudo[:, self.n_input_genes :]
+        sample_idx = torch.zeros(K, 1, device=pseudo.device, dtype=torch.long)
+        batch_idx = torch.zeros(K, 1, device=pseudo.device, dtype=torch.long) if self.encode_covariates else None
+        return self.qu(x_p, y_p, sample_idx, batch_index=batch_idx)
 
     # ------------------------------------------------------------------
     # DataLoader → inference plumbing
@@ -673,7 +694,12 @@ class MrTotalVAE(TOTALVAE):
             cf_sample=cf_sample,
         )
 
-        z_base = out["z_base"]      # (batch, n_latent)
+        # Use the posterior MEAN of u for a deterministic z_base (mirrors MRVI).
+        # out["z_base"] was computed from qu.rsample(), which changes each call.
+        # Recomputing from qu.mean gives a fixed anchor for the LFC contrast.
+        qu = out["qu"]
+        sample_index_cf = sample_index if cf_sample is None else cf_sample
+        z_base, _, _ = self.qz(qu.mean, sample_index_cf)  # deterministic
         z = z_base + extra_eps      # counterfactual latent
         library_gene = out["library_gene"]  # (batch, 1)
 

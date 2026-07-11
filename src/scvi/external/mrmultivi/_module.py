@@ -91,6 +91,7 @@ class MrMultiVAE(MULTIVAE):
         u_prior_mixture: bool = True,
         u_prior_mixture_k: int = 20,
         u_prior_label_weight: float = 10.0,
+        u_prior: str = "mog",
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,
@@ -126,6 +127,7 @@ class MrMultiVAE(MULTIVAE):
         self.u_prior_mixture = bool(u_prior_mixture)
         self.u_prior_mixture_k = int(u_prior_mixture_k)
         self.u_prior_label_weight = float(u_prior_label_weight)
+        self.u_prior_type = u_prior
         self.qz_kwargs = qz_kwargs or {}
         self.qu_kwargs = qu_kwargs or {}
         self._use_map = use_map
@@ -224,6 +226,8 @@ class MrMultiVAE(MULTIVAE):
             u_prior_mixture=self.u_prior_mixture,
             u_prior_mixture_k=self.u_prior_mixture_k,
             u_prior_label_weight=self.u_prior_label_weight,
+            u_prior_type=getattr(self, "u_prior_type", "mog"),
+            u_vamp_pseudo_dim=self.n_latent,
         )
 
         if learn_z_u_prior_scale:
@@ -239,6 +243,17 @@ class MrMultiVAE(MULTIVAE):
             self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=False)
         else:
             self.n_obs_per_sample = None
+
+    def _vamp_component_dist(self) -> Normal:
+        """Run VampPrior pseudoinputs through qu to get K component distributions.
+
+        Pseudoinputs are in MULTIVAE's continuous latent space (the u0 = qz_m
+        space), so no positivity constraint is needed.  Reference donor (index 0)
+        is used — sample conditioning is excluded from the prior by design.
+        """
+        K = self.resolved_u_prior_mixture_k
+        sample_idx = torch.zeros(K, 1, device=self.u_vamp_pseudo.device, dtype=torch.long)
+        return self.qu(self.u_vamp_pseudo, sample_idx)
 
     # ------------------------------------------------------------------
     # DataLoader → inference plumbing
@@ -665,7 +680,12 @@ class MrMultiVAE(MULTIVAE):
             cf_sample=cf_sample,
         )
 
-        z_base = out["z_base"]           # (batch, n_latent)
+        # Use the posterior MEAN of u for a deterministic z_base (mirrors MRVI).
+        # out["z_base"] was computed from qu.rsample(), which changes each call.
+        # Recomputing from qu.mean gives a fixed anchor for the LFC contrast.
+        qu = out["qu"]
+        sample_index_cf = sample_index if cf_sample is None else cf_sample
+        z_base, _, _ = self.qz(qu.mean, sample_index_cf)  # deterministic
         z = z_base + extra_eps           # counterfactual latent
         qz_m = out["qz_m"]               # (batch, n_latent) — deterministic u mean
         libsize_expr = out["libsize_expr"]

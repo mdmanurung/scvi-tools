@@ -190,6 +190,8 @@ class MrTotalVAE(TOTALVAE):
         )
 
         # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, multimodal input
+        # u is the sample-uninformed cell-state representation: never condition on batch.
+        # Batch conditioning belongs in the parent TotalVAE z-encoder and decoder only.
         self.qu = EncoderXU_TotalVI(
             n_input_genes=self.n_input_genes,
             n_input_proteins=self.n_input_proteins,
@@ -198,7 +200,7 @@ class MrTotalVAE(TOTALVAE):
             n_batch=self.n_batch,
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
-            encode_covariates=self.encode_covariates,
+            encode_covariates=False,
             **self.qu_kwargs,
         )
 
@@ -315,14 +317,12 @@ class MrTotalVAE(TOTALVAE):
             # Hierarchy not yet built (n_sample=0 placeholder). Return TotalVI outputs.
             return out
 
-        # Sample-conditioned u-encoder: uses real sample_index (not cf_sample)
+        # u-encoder: sample-conditioned only; batch covariates are excluded so u stays
+        # sample-uninformed (comparable across donors/batches).
         qu = self.qu(
             x,
             y,
             sample_index,
-            batch_index=batch_index,
-            cont_covs=cont_covs,
-            cat_covs=cat_covs,
         )  # Normal: params (batch, n_latent_u)
         if n_samples > 1:
             u = qu.rsample((n_samples,))  # (n_samples, batch, n_latent)

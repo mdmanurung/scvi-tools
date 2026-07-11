@@ -18,6 +18,7 @@ from scvi.utils import setup_anndata_dsp
 
 from ._module import MrTotalVAE
 from ._stats import (
+    _differential_expression,
     differential_abundance as _differential_abundance,
     get_aggregated_posterior as _get_aggregated_posterior,
     get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
@@ -332,9 +333,30 @@ class MrTotalVI(TOTALVI):
         sample_subset: list[str] | None = None,
         compute_log_enrichment: bool = False,
         omit_original_sample: bool = True,
+        donor_key: str | None = None,
         batch_size: int = 128,
     ) -> xr.Dataset:
-        """Compute MrVI-style differential abundance log probabilities over ``u``."""
+        """Compute MrVI-style differential abundance log probabilities over ``u``.
+
+        Parameters
+        ----------
+        adata
+            AnnData to compute DA on.  Defaults to the training data.
+        sample_cov_keys
+            Sample-level covariate column names for grouping.
+        sample_subset
+            Restrict to these sample names only.
+        compute_log_enrichment
+            If ``True``, also compute log enrichment vs. the complementary group.
+        omit_original_sample
+            Exclude a cell's own sample when computing the aggregated log-prob.
+        donor_key
+            Column in ``adata.obs`` identifying the donor.  When set, per-donor
+            log_probs are mean-centred before covariate aggregation, blocking the
+            donor effect for repeated-measures designs.
+        batch_size
+            Dataloader batch size.
+        """
         return _differential_abundance(
             self,
             adata=adata,
@@ -343,6 +365,7 @@ class MrTotalVI(TOTALVI):
             sample_subset=sample_subset,
             compute_log_enrichment=compute_log_enrichment,
             omit_original_sample=omit_original_sample,
+            donor_key=donor_key,
             batch_size=batch_size,
         )
 
@@ -369,82 +392,70 @@ class MrTotalVI(TOTALVI):
         self,
         adata: AnnData | None = None,
         sample_cov_keys: list[str] | None = None,
+        sample_subset: list[str] | None = None,
         indices: npt.ArrayLike | None = None,
         batch_size: int = 128,
         normalize_design_matrix: bool = True,
+        mc_samples: int = 50,
+        filter_inadmissible_samples: bool = False,
         store_lfc: bool = False,
-        **kwargs,
+        donor_key: str | None = None,
+        delta: float | None = 0.3,
+        lambd: float = 0.0,
+        **filter_samples_kwargs,
     ) -> xr.Dataset:
-        """Fit a cell-specific linear model over counterfactual ``z`` shifts.
+        """MrVI-style latent-space differential expression.
 
-        Returns latent-space ``beta``, ``effect_size``, and ``pvalue`` variables.
-        Decoded RNA/protein LFC storage is intentionally rejected until the
-        TotalVI decoder contrast semantics are finalized.
+        Fits a per-cell weighted least-squares linear model on the sample-
+        specific residual ``eps_d = z_d - z_base`` (the donor latent shift),
+        following Boyeau et al. (2023).
+
+        Parameters
+        ----------
+        adata
+            AnnData to compute DE on.  Defaults to the training data.
+        sample_cov_keys
+            Sample-level covariate column names in ``adata.obs``.
+        sample_subset
+            Restrict DE to these sample names only.
+        indices
+            Cell indices to process (default: all cells).
+        batch_size
+            Dataloader batch size.
+        normalize_design_matrix
+            Min-max normalize each covariate column to [0, 1].
+        mc_samples
+            Monte-Carlo draws from ``q(u)``; ``1`` uses the posterior mean.
+        filter_inadmissible_samples
+            Weight out outlier cell-sample pairs via aggregated-posterior
+            admissibility scores (see :meth:`get_outlier_cell_sample_pairs`).
+        store_lfc
+            Not implemented; raises ``NotImplementedError``.
+        donor_key
+            Column in ``adata.obs`` identifying the donor.  Adds donor dummy
+            columns as nuisance covariates (repeated-measures approximation).
+        delta
+            Reserved for future effect-size thresholding.
+        lambd
+            L2 regularisation for ``X^T M X`` inversion.
+        **filter_samples_kwargs
+            Forwarded to :meth:`get_outlier_cell_sample_pairs`.
         """
-        if kwargs:
-            raise NotImplementedError(
-                f"Unsupported MrTotalVI differential_expression options: {sorted(kwargs)}"
-            )
-        if store_lfc:
-            raise NotImplementedError(
-                "MrTotalVI decoded RNA/protein LFC storage is not implemented yet."
-            )
-        if not sample_cov_keys:
-            raise ValueError("sample_cov_keys must contain at least one sample-level covariate.")
-
-        from scipy.stats import chi2
-        import pandas as pd
-
-        self._check_if_trained(warn=False)
-        adata = self._validate_anndata(adata)
-        reps = self.get_local_sample_representation(
+        return _differential_expression(
+            self,
             adata=adata,
+            sample_cov_keys=list(sample_cov_keys) if sample_cov_keys else [],
+            sample_subset=sample_subset,
             indices=indices,
             batch_size=batch_size,
-            use_mean=True,
-        )
-        sample_names = reps.coords["sample"].to_numpy()
-        sample_info = (
-            adata.obs[[self.sample_key, *sample_cov_keys]]
-            .drop_duplicates(subset=self.sample_key)
-            .set_index(self.sample_key)
-            .loc[sample_names]
-        )
-        design = pd.get_dummies(sample_info[sample_cov_keys], dtype=float)
-        design_names = design.columns.to_numpy(dtype=str)
-        x = design.to_numpy(dtype=float)
-        if normalize_design_matrix:
-            scale = x.std(axis=0, ddof=0)
-            scale[scale == 0] = 1.0
-            x = (x - x.mean(axis=0)) / scale
-
-        x_aug = np.concatenate([np.ones((x.shape[0], 1)), x], axis=1)
-        xtx_inv = np.linalg.pinv(x_aug.T @ x_aug)
-        pinv = xtx_inv @ x_aug.T
-        y = reps.values
-        coef = np.einsum("ps,csl->cpl", pinv, y)
-        beta = coef[:, 1:, :]
-        fitted = np.einsum("sp,cpl->csl", x_aug, coef)
-        resid = y - fitted
-        dof = max(x_aug.shape[0] - x_aug.shape[1], 1)
-        sigma2 = (resid**2).sum(axis=1) / dof
-        se = np.sqrt(sigma2[:, None, :] * np.diag(xtx_inv)[1:][None, :, None] + 1e-8)
-        wald = ((beta / se) ** 2).sum(axis=-1)
-
-        return xr.Dataset(
-            {
-                "beta": (["cell_name", "covariate", "latent_dim"], beta),
-                "effect_size": (
-                    ["cell_name", "covariate"],
-                    np.sqrt((beta**2).sum(axis=-1)),
-                ),
-                "pvalue": (["cell_name", "covariate"], chi2.sf(wald, df=beta.shape[-1])),
-            },
-            coords={
-                "cell_name": reps.coords["cell_name"].to_numpy(),
-                "covariate": design_names,
-                "latent_dim": np.arange(beta.shape[-1]),
-            },
+            normalize_design_matrix=normalize_design_matrix,
+            mc_samples=mc_samples,
+            filter_inadmissible_samples=filter_inadmissible_samples,
+            store_lfc=store_lfc,
+            donor_key=donor_key,
+            delta=delta,
+            lambd=lambd,
+            **filter_samples_kwargs,
         )
 
     # ------------------------------------------------------------------

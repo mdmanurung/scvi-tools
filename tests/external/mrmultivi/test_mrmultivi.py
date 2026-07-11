@@ -649,6 +649,46 @@ def test_mrmultivi_atac_differential_expression_is_explicitly_unsupported(mdata_
         model.differential_expression()
 
 
+def test_mrmultivi_differential_expression_rna_protein():
+    """MrVI-style DE works on RNA+protein (no ATAC): correct shapes, finite, valid p-vals."""
+    from mudata import MuData
+
+    mdata_full = synthetic_iid(return_mudata=True)
+    n_cells = mdata_full.n_obs
+    mdata_full.obs["donor"] = [f"donor_{i % N_DONORS}" for i in range(n_cells)]
+
+    # Bimodal: RNA + protein only (no ATAC → n_regions=0, bypasses ATAC guard)
+    mdata_bi = MuData({
+        "rna": mdata_full.mod["rna"].copy(),
+        "protein_expression": mdata_full.mod["protein_expression"].copy(),
+    })
+    mdata_bi.obs["donor"] = mdata_full.obs["donor"].values
+    mdata_bi.obs["batch"] = mdata_full.obs["batch"].values
+    mdata_bi.obs["condition"] = np.where(
+        mdata_bi.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+
+    MrMultiVI.setup_mudata(
+        mdata_bi,
+        sample_key="donor",
+        batch_key="batch",
+        modalities={"rna_layer": "rna", "protein_layer": "protein_expression"},
+    )
+    model = MrMultiVI(mdata_bi, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"], mc_samples=2, batch_size=32
+    )
+
+    assert set(de.data_vars) >= {"beta", "effect_size", "pvalue", "padj"}
+    assert de["beta"].dims == ("cell_name", "covariate", "latent_dim")
+    assert de["beta"].shape == (n_cells, 1, N_LATENT)
+    assert np.all(np.isfinite(de["beta"].values))
+    assert np.all((de["pvalue"].values >= 0) & (de["pvalue"].values <= 1))
+    assert np.all((de["padj"].values >= 0) & (de["padj"].values <= 1))
+
+
 # ---------------------------------------------------------------------------
 # (b) Reconstruction not regressed vs stock MULTIVI
 # ---------------------------------------------------------------------------

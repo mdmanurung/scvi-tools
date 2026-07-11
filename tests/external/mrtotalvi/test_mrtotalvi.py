@@ -541,9 +541,11 @@ def test_mrtotalvi_u_space_statistical_apis(adata_basic):
 
 
 def test_mrtotalvi_differential_expression_returns_latent_statistics(adata_basic):
-    """MrTotalVI DE exposes beta, effect_size, and pvalue over local z shifts."""
+    """MrVI-style DE returns correct shapes, finite values, and valid p-values."""
     adata = adata_basic.copy()
-    adata.obs["condition"] = np.where(adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b")
+    adata.obs["condition"] = np.where(
+        adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
     MrTotalVI.setup_anndata(
         adata,
         protein_expression_obsm_key="protein_expression",
@@ -551,13 +553,71 @@ def test_mrtotalvi_differential_expression_returns_latent_statistics(adata_basic
         batch_key="batch",
     )
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
-    model.is_trained_ = True
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
-    de = model.differential_expression(sample_cov_keys=["condition"], batch_size=32)
+    de = model.differential_expression(
+        sample_cov_keys=["condition"], mc_samples=2, batch_size=32
+    )
 
-    assert {"beta", "effect_size", "pvalue"} <= set(de.data_vars)
+    n_cells = adata.n_obs
+    assert set(de.data_vars) >= {"beta", "effect_size", "pvalue", "padj"}
     assert de["beta"].dims == ("cell_name", "covariate", "latent_dim")
-    assert de["effect_size"].shape == de["pvalue"].shape
+    assert de["beta"].shape == (n_cells, 1, N_LATENT)
+    assert de["effect_size"].shape == (n_cells, 1)
+    assert de["pvalue"].shape == (n_cells, 1)
+    assert de["padj"].shape == (n_cells, 1)
+    assert np.all(np.isfinite(de["beta"].values))
+    assert np.all((de["pvalue"].values >= 0) & (de["pvalue"].values <= 1))
+    assert np.all((de["padj"].values >= 0) & (de["padj"].values <= 1))
+    assert de.coords["covariate"].values.tolist() == ["condition_b"]
+
+
+def test_mrtotalvi_de_mc_samples_1_fast_path(adata_basic):
+    """mc_samples=1 uses qu.loc (posterior mean) and runs without error."""
+    adata = adata_basic.copy()
+    adata.obs["condition"] = np.where(
+        adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"], mc_samples=1, batch_size=32
+    )
+    assert np.all(np.isfinite(de["beta"].values))
+    assert np.all((de["pvalue"].values >= 0) & (de["pvalue"].values <= 1))
+
+
+def test_mrtotalvi_de_donor_key_warning(adata_basic):
+    """donor_key triggers a UserWarning about potential collinearity."""
+    adata = adata_basic.copy()
+    adata.obs["condition"] = np.where(
+        adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    with pytest.warns(UserWarning, match="donor_key"):
+        de = model.differential_expression(
+            sample_cov_keys=["condition"],
+            donor_key="sample",
+            mc_samples=2,
+            batch_size=32,
+        )
+    assert de["beta"].dims == ("cell_name", "covariate", "latent_dim")
+    assert np.all(np.isfinite(de["beta"].values))
 
 
 # ---------------------------------------------------------------------------

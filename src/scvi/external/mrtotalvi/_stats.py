@@ -92,6 +92,7 @@ def differential_abundance(
     sample_subset: list[str] | None = None,
     compute_log_enrichment: bool = False,
     omit_original_sample: bool = True,
+    donor_key: str | None = None,
     batch_size: int = 128,
 ) -> xr.Dataset:
     """Compute MrVI-style differential abundance log probabilities over ``u``."""
@@ -128,6 +129,23 @@ def differential_abundance(
         log_probs.append(np.concatenate(sample_log_probs, axis=0))
 
     log_probs = np.concatenate(log_probs, axis=1)
+
+    if donor_key is not None:
+        # Within-donor centering: subtract the per-donor mean across that donor's
+        # samples so that donor blocks are absorbed before covariate aggregation.
+        sample_info_da = (
+            adata.obs[[sample_key, donor_key]]
+            .drop_duplicates(subset=sample_key)
+            .set_index(sample_key)
+        )
+        for donor_id in sample_info_da[donor_key].unique():
+            donor_samples = sample_info_da.index[sample_info_da[donor_key] == donor_id].tolist()
+            col_idx = [i for i, s in enumerate(sample_values) if s in set(donor_samples)]
+            if len(col_idx) < 2:
+                continue
+            donor_mean = log_probs[:, col_idx].mean(axis=1, keepdims=True)
+            log_probs[:, col_idx] -= donor_mean
+
     coords = {"cell_name": adata.obs_names.to_numpy(), "sample": np.asarray(sample_values)}
     data_vars = {"log_probs": (["cell_name", "sample"], log_probs)}
     log_probs_ds = xr.Dataset(data_vars, coords=coords)
@@ -199,6 +217,333 @@ def differential_abundance(
             data_vars[f"{key}_log_enrichs"] = (["cell_name", enrich_dim], arr)
 
     return xr.Dataset(data_vars, coords=coords)
+
+
+def _construct_design_matrix(
+    sample_info,
+    sample_cov_keys: list[str],
+    normalize_design_matrix: bool = True,
+    donor_key: str | None = None,
+) -> tuple:
+    """Build a float design matrix from sample-level metadata.
+
+    Parameters
+    ----------
+    sample_info
+        DataFrame indexed by sample name; must contain all ``sample_cov_keys``
+        (and ``donor_key`` if provided).
+    sample_cov_keys
+        Column names for fixed-effect covariates.
+    normalize_design_matrix
+        Min-max normalize each fixed-effect column to [0, 1].
+    donor_key
+        Optional column to add donor dummy columns after the fixed effects as
+        nuisance covariates (not normalized, not reported in output betas).
+
+    Returns
+    -------
+    Xmat : ``torch.FloatTensor`` of shape ``(n_samples, n_covariates)``
+    covariate_names : ``np.ndarray`` of covariate names
+    n_fixed : int — number of reported fixed-effect columns
+    """
+    import pandas as pd
+
+    parts: list[np.ndarray] = []
+    names: list[str] = []
+
+    for key in sample_cov_keys:
+        cov = sample_info[key]
+        if cov.dtype == object or hasattr(cov, "cat"):
+            if hasattr(cov, "cat"):
+                cov = cov.cat.remove_unused_categories()
+            dummies = pd.get_dummies(cov, drop_first=True)
+            parts.append(dummies.values.astype(np.float32))
+            names.extend([f"{key}_{c}" for c in dummies.columns])
+        else:
+            parts.append(cov.values[:, None].astype(np.float32))
+            names.append(key)
+
+    if parts:
+        xmat_fixed = np.concatenate(parts, axis=1)
+    else:
+        xmat_fixed = np.zeros((len(sample_info), 0), np.float32)
+    names_fixed = np.array(names, dtype=str)
+
+    if normalize_design_matrix and xmat_fixed.shape[1] > 0:
+        xmin = xmat_fixed.min(axis=0)
+        xmax = xmat_fixed.max(axis=0)
+        scale = np.where(xmax - xmin > 1e-6, xmax - xmin, 1.0)
+        xmat_fixed = (xmat_fixed - xmin) / scale
+
+    n_fixed = xmat_fixed.shape[1]
+
+    if donor_key is not None:
+        cov = sample_info[donor_key]
+        if hasattr(cov, "cat"):
+            cov = cov.cat.remove_unused_categories()
+        donor_dummies = pd.get_dummies(cov, drop_first=True)
+        donor_mat = donor_dummies.values.astype(np.float32)
+        donor_names = np.array([f"{donor_key}_{c}" for c in donor_dummies.columns], dtype=str)
+        if n_fixed > 0:
+            xmat = np.concatenate([xmat_fixed, donor_mat], axis=1)
+            names_all = np.concatenate([names_fixed, donor_names])
+        else:
+            xmat = donor_mat
+            names_all = donor_names
+    else:
+        xmat = xmat_fixed
+        names_all = names_fixed
+
+    return torch.tensor(xmat, dtype=torch.float32), names_all, n_fixed
+
+
+def _differential_expression(
+    model,
+    *,
+    adata=None,
+    sample_cov_keys: list[str],
+    sample_subset: list[str] | None = None,
+    indices=None,
+    batch_size: int = 128,
+    normalize_design_matrix: bool = True,
+    mc_samples: int = 50,
+    filter_inadmissible_samples: bool = False,
+    store_lfc: bool = False,
+    donor_key: str | None = None,
+    delta: float | None = 0.3,
+    lambd: float = 0.0,
+    **filter_samples_kwargs,
+) -> xr.Dataset:
+    """MrVI-style latent-space differential expression for Mr multimodal models.
+
+    Fits a cell-specific weighted least-squares linear model on the sample-
+    specific residual ``eps_d = z_d - z_base`` (the donor latent shift),
+    following the approach of MrVI (Boyeau et al., 2023).
+
+    Parameters
+    ----------
+    model
+        A trained ``MrTotalVI`` or ``MrMultiVI`` instance.
+    adata
+        AnnData/MuData to compute DE on.  Defaults to the training data.
+    sample_cov_keys
+        Sample-level covariate column names in ``adata.obs``.
+    sample_subset
+        Restrict DE to these sample names only.
+    indices
+        Cell indices (default: all cells).
+    batch_size
+        Dataloader batch size.
+    normalize_design_matrix
+        Min-max normalize each covariate column to [0, 1].
+    mc_samples
+        Monte-Carlo draws from ``q(u)``.  ``1`` uses the posterior mean.
+    filter_inadmissible_samples
+        Weight out outlier cell-sample pairs via aggregated-posterior scores.
+    store_lfc
+        Not implemented; always raises ``NotImplementedError``.
+    donor_key
+        Column in ``adata.obs`` identifying the donor.  Adds donor dummy
+        columns as nuisance covariates; only fixed-effect betas are returned.
+    delta
+        Reserved for future effect-size thresholding; currently unused.
+    lambd
+        L2 regularisation added to ``X^T M X`` before inversion.
+    **filter_samples_kwargs
+        Forwarded to :func:`get_outlier_cell_sample_pairs`.
+    """
+    import scipy.linalg
+    import torch.distributions as tdist
+    from scipy.stats import false_discovery_control
+
+    from scvi import REGISTRY_KEYS as RK
+
+    if store_lfc:
+        raise NotImplementedError(
+            "store_lfc is not yet implemented for MrTotalVI/MrMultiVI."
+        )
+    if not sample_cov_keys:
+        raise ValueError("sample_cov_keys must contain at least one sample-level covariate.")
+    if donor_key is not None:
+        warnings.warn(
+            "donor_key adds donor dummies as nuisance covariates.  This is only valid "
+            "when each donor spans multiple levels of the sample_cov_keys covariates "
+            "(e.g. multiple time points).  If each donor maps to exactly one condition "
+            "the design is collinear and fixed-effect betas will be unreliable.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    model._check_if_trained(warn=False)
+    adata = model._validate_anndata(adata)
+
+    n_sample = model.summary_stats.n_sample
+    sample_mask = (
+        np.isin(model.sample_order, list(sample_subset))
+        if sample_subset is not None
+        else np.ones(n_sample, dtype=bool)
+    )
+    sample_order_kept = model.sample_order[sample_mask]
+    sample_indices_kept = np.where(sample_mask)[0].tolist()
+    n_sample_kept = len(sample_indices_kept)
+
+    # Admissibility mask: (n_cells_total, n_sample_kept)
+    if filter_inadmissible_samples:
+        sample_key = model.sample_key
+        outliers = get_outlier_cell_sample_pairs(
+            model,
+            adata=adata,
+            sample_key=sample_key,
+            **filter_samples_kwargs,
+        )
+        admissible_samples = (
+            outliers["is_admissible"]
+            .sel(sample=sample_order_kept)
+            .values.astype(np.float32)
+        )
+    else:
+        admissible_samples = np.ones((adata.n_obs, n_sample_kept), dtype=np.float32)
+
+    # Design matrix from sample-level metadata
+    cov_cols = list(sample_cov_keys) + ([donor_key] if donor_key else [])
+    sample_info = (
+        adata.obs[[model.sample_key] + cov_cols]
+        .drop_duplicates(subset=model.sample_key)
+        .set_index(model.sample_key)
+        .loc[sample_order_kept]
+    )
+    Xmat, Xmat_names, n_fixed = _construct_design_matrix(
+        sample_info,
+        list(sample_cov_keys),
+        normalize_design_matrix=normalize_design_matrix,
+        donor_key=donor_key,
+    )
+    n_covariates = Xmat.shape[1]
+    device = model.device
+    Xmat = Xmat.to(device)
+
+    def _sqrtm_batch(xtmx: torch.Tensor) -> torch.Tensor:
+        return torch.stack(
+            [
+                torch.from_numpy(
+                    scipy.linalg.sqrtm(m.cpu().numpy()).real.astype(np.float32)
+                ).to(device)
+                for m in xtmx
+            ]
+        )
+
+    scdl = model._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+
+    beta_list: list[np.ndarray] = []
+    effect_size_list: list[np.ndarray] = []
+    pvalue_list: list[np.ndarray] = []
+    all_cell_names: list[str] = []
+
+    was_training = model.module.training
+    model.module.eval()
+    try:
+        with torch.inference_mode():
+            for tensors in tqdm(scdl, desc="MrVI-style DE"):
+                cell_idx = tensors[RK.INDICES_KEY].long().flatten().cpu().numpy()
+                n_cells = len(cell_idx)
+                all_cell_names.extend(adata.obs_names[cell_idx].tolist())
+
+                inf_inputs = model.module._get_inference_input(tensors)
+                base_out = model.module.inference(**inf_inputs)
+                qu = base_out.get("qu")
+                if qu is None:
+                    raise RuntimeError(
+                        "model.module.inference() did not return 'qu'; "
+                        "cannot compute MC eps samples."
+                    )
+
+                def _eps_from_u(u: torch.Tensor) -> torch.Tensor:
+                    # For each kept sample d, compute eps_d = qz(u, d)[1].
+                    # u is held fixed across donors: counterfactual substitution.
+                    eps_list = []
+                    for d_idx in sample_indices_kept:
+                        cf = torch.full(
+                            (n_cells, 1), d_idx, dtype=torch.long, device=u.device
+                        )
+                        _, eps_d, _ = model.module.qz(u, cf)
+                        eps_list.append(eps_d)
+                    # (n_cells, n_sample_kept, n_latent)
+                    return torch.stack(eps_list, dim=1)
+
+                if mc_samples == 1:
+                    eps_batch = _eps_from_u(qu.loc).unsqueeze(0)
+                else:
+                    eps_batch = torch.stack(
+                        [_eps_from_u(qu.rsample()) for _ in range(mc_samples)], dim=0
+                    )
+                # eps_batch: (mc, n_cells, n_sample_kept, n_latent)
+
+                # Admissibility for this batch
+                admiss = torch.from_numpy(admissible_samples[cell_idx]).to(device)
+                # (n_cells, n_sample_kept)
+                n_per_cell = admiss.sum(1)  # (n_cells,)
+
+                # X^T M X per cell: einsum over sample dimension s
+                # Xmat: (n_sample_kept, n_cov)  →  s,k
+                # admiss: (n_cells, n_sample_kept)  →  n,s
+                xtmx = (
+                    torch.einsum("sk,ns,sl->nkl", Xmat, admiss, Xmat)
+                    + lambd * torch.eye(n_covariates, device=device).unsqueeze(0)
+                )  # (n_cells, n_cov, n_cov)
+                prefactor = _sqrtm_batch(xtmx)  # (n_cells, n_cov, n_cov)
+                inv_ = torch.vmap(torch.linalg.pinv)(xtmx)  # (n_cells, n_cov, n_cov)
+                # Amat = (X^T M X)^{-1} X^T M  →  (n_cells, n_cov, n_sample_kept)
+                Amat = torch.einsum("nkj,sj,ns->nks", inv_, Xmat, admiss)
+
+                # Standardise eps across sample dimension (dim=2)
+                eps_mean = eps_batch.mean(dim=2, keepdim=True)
+                eps_std = eps_batch.std(dim=2, keepdim=True)
+                eps_norm = (eps_batch - eps_mean) / (eps_std + 1e-6)
+                # (mc, n_cells, n_sample_kept, n_latent)
+
+                # OLS per cell per MC draw
+                # Amat: (n_cells, n_cov, n_sample)  →  n,k,s
+                # eps_norm: (mc, n_cells, n_sample, n_latent)  →  a,n,s,d
+                # betas: (mc, n_cells, n_cov, n_latent)
+                betas = torch.einsum("nks,ansd->ankd", Amat, eps_norm)
+
+                # Wald: prefactor: (n_cells, n_cov, n_cov)  →  n,l,k
+                # betas_norm: (mc, n_cells, n_cov, n_latent)  →  a,n,l,d
+                betas_norm = torch.einsum("nlk,ankd->anld", prefactor, betas)
+                # ts: mean over mc, sum over latent → (n_cells, n_cov)
+                ts = (betas_norm**2).sum(-1).mean(0)
+
+                # Chi2 p-values with df = n_admissible_per_cell
+                df = n_per_cell.clamp(min=1).float().unsqueeze(-1).expand_as(ts)
+                pvals = 1.0 - tdist.Chi2(df).cdf(ts)  # (n_cells, n_cov)
+
+                # Un-standardise betas and average over MC draws
+                betas_rescaled = (betas * eps_std).mean(0)  # (n_cells, n_cov, n_latent)
+
+                beta_list.append(betas_rescaled[:, :n_fixed, :].cpu().numpy())
+                effect_size_list.append(ts[:, :n_fixed].cpu().numpy())
+                pvalue_list.append(pvals[:, :n_fixed].cpu().numpy())
+    finally:
+        model.module.train(was_training)
+
+    beta = np.concatenate(beta_list, 0)
+    effect_size = np.concatenate(effect_size_list, 0)
+    pvalue = np.concatenate(pvalue_list, 0)
+    padj = false_discovery_control(pvalue.flatten(), method="bh").reshape(pvalue.shape)
+
+    return xr.Dataset(
+        {
+            "beta": (["cell_name", "covariate", "latent_dim"], beta),
+            "effect_size": (["cell_name", "covariate"], effect_size),
+            "pvalue": (["cell_name", "covariate"], pvalue),
+            "padj": (["cell_name", "covariate"], padj),
+        },
+        coords={
+            "cell_name": np.asarray(all_cell_names),
+            "covariate": Xmat_names[:n_fixed],
+            "latent_dim": np.arange(beta.shape[-1]),
+        },
+    )
 
 
 def get_outlier_cell_sample_pairs(

@@ -19,6 +19,7 @@ from scvi.model._multivi import MULTIVI
 from scvi.utils import setup_anndata_dsp
 
 from ..mrtotalvi._stats import (
+    _differential_expression,
     differential_abundance as _differential_abundance,
     get_aggregated_posterior as _get_aggregated_posterior,
     get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
@@ -370,9 +371,30 @@ class MrMultiVI(MULTIVI):
         sample_subset: list[str] | None = None,
         compute_log_enrichment: bool = False,
         omit_original_sample: bool = True,
+        donor_key: str | None = None,
         batch_size: int = 128,
     ) -> xr.Dataset:
-        """Compute MrVI-style differential abundance log probabilities over ``u``."""
+        """Compute MrVI-style differential abundance log probabilities over ``u``.
+
+        Parameters
+        ----------
+        adata
+            MuData to compute DA on.  Defaults to the training data.
+        sample_cov_keys
+            Sample-level covariate column names for grouping.
+        sample_subset
+            Restrict to these sample names only.
+        compute_log_enrichment
+            If ``True``, also compute log enrichment vs. the complementary group.
+        omit_original_sample
+            Exclude a cell's own sample when computing the aggregated log-prob.
+        donor_key
+            Column in ``mdata.obs`` identifying the donor.  When set, per-donor
+            log_probs are mean-centred before covariate aggregation, blocking the
+            donor effect for repeated-measures designs.
+        batch_size
+            Dataloader batch size.
+        """
         return _differential_abundance(
             self,
             adata=adata,
@@ -381,6 +403,7 @@ class MrMultiVI(MULTIVI):
             sample_subset=sample_subset,
             compute_log_enrichment=compute_log_enrichment,
             omit_original_sample=omit_original_sample,
+            donor_key=donor_key,
             batch_size=batch_size,
         )
 
@@ -403,17 +426,80 @@ class MrMultiVI(MULTIVI):
             batch_size=batch_size,
         )
 
-    def differential_expression(self, *args, **kwargs) -> xr.Dataset:
-        """Reject ambiguous DE semantics when ATAC is present."""
+    def differential_expression(
+        self,
+        adata=None,
+        sample_cov_keys: list[str] | None = None,
+        sample_subset: list[str] | None = None,
+        indices=None,
+        batch_size: int = 128,
+        normalize_design_matrix: bool = True,
+        mc_samples: int = 50,
+        filter_inadmissible_samples: bool = False,
+        store_lfc: bool = False,
+        donor_key: str | None = None,
+        delta: float | None = 0.3,
+        lambd: float = 0.0,
+        **filter_samples_kwargs,
+    ) -> xr.Dataset:
+        """MrVI-style latent-space differential expression.
+
+        Fits a per-cell weighted least-squares linear model on the sample-
+        specific residual ``eps_d = z_d - z_base`` (the donor latent shift),
+        following Boyeau et al. (2023).
+
+        Parameters
+        ----------
+        adata
+            MuData to compute DE on.  Defaults to the training data.
+        sample_cov_keys
+            Sample-level covariate column names in ``mdata.obs``.
+        sample_subset
+            Restrict DE to these sample names only.
+        indices
+            Cell indices to process (default: all cells).
+        batch_size
+            Dataloader batch size.
+        normalize_design_matrix
+            Min-max normalize each covariate column to [0, 1].
+        mc_samples
+            Monte-Carlo draws from ``q(u)``; ``1`` uses the posterior mean.
+        filter_inadmissible_samples
+            Weight out outlier cell-sample pairs via aggregated-posterior
+            admissibility scores.
+        store_lfc
+            Not implemented; raises ``NotImplementedError``.
+        donor_key
+            Column in ``mdata.obs`` identifying the donor.  Adds donor dummy
+            columns as nuisance covariates (repeated-measures approximation).
+        delta
+            Reserved for future effect-size thresholding.
+        lambd
+            L2 regularisation for ``X^T M X`` inversion.
+        **filter_samples_kwargs
+            Forwarded to :meth:`get_outlier_cell_sample_pairs`.
+        """
         if getattr(self, "n_regions", 0) > 0:
             raise NotImplementedError(
                 "MrMultiVI differential_expression is only defined for RNA/protein "
                 "outputs. ATAC-containing models should use a future "
                 "differential_accessibility API instead."
             )
-        raise NotImplementedError(
-            "MrMultiVI differential_expression for RNA/protein-only models is not "
-            "implemented in this pass."
+        return _differential_expression(
+            self,
+            adata=adata,
+            sample_cov_keys=list(sample_cov_keys) if sample_cov_keys else [],
+            sample_subset=sample_subset,
+            indices=indices,
+            batch_size=batch_size,
+            normalize_design_matrix=normalize_design_matrix,
+            mc_samples=mc_samples,
+            filter_inadmissible_samples=filter_inadmissible_samples,
+            store_lfc=store_lfc,
+            donor_key=donor_key,
+            delta=delta,
+            lambd=lambd,
+            **filter_samples_kwargs,
         )
 
     def differential_accessibility(self, *args, **kwargs) -> xr.Dataset:

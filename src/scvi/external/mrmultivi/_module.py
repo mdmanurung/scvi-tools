@@ -191,6 +191,8 @@ class MrMultiVAE(MULTIVAE):
         )
 
         # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, takes MULTIVAE mixed latent
+        # u is the sample-uninformed cell-state representation: never condition on batch.
+        # Batch conditioning belongs in the parent MultiVAE z-encoder and decoder only.
         self.qu = EncoderXU_MultiVI(
             n_input=self.n_latent,
             n_latent=n_latent_u,
@@ -198,7 +200,7 @@ class MrMultiVAE(MULTIVAE):
             n_batch=self.n_batch,
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
-            encode_covariates=self.encode_covariates,
+            encode_covariates=False,
             **self.qu_kwargs,
         )
 
@@ -307,15 +309,9 @@ class MrMultiVAE(MULTIVAE):
         # sampled MULTIVAE posterior unregularized after qz_m/qz_v are replaced below.
         u0 = outputs["qz_m"]  # (batch, n_latent)
 
-        # Sample-conditioned u-encoder: qu(u0, real_sample) → Normal(mu_u, sigma_u)
-        qu_kwargs = {}
-        if self.encode_covariates:
-            qu_kwargs = {
-                "batch_index": batch_index,
-                "cont_covs": cont_covs,
-                "cat_covs": cat_covs,
-            }
-        qu = self.qu(u0, sample_index, **qu_kwargs)
+        # u-encoder: sample-conditioned only; batch covariates excluded so u stays
+        # sample-uninformed (comparable across donors/batches).
+        qu = self.qu(u0, sample_index)
         if n_samples > 1:
             u = qu.rsample((n_samples,))
         else:

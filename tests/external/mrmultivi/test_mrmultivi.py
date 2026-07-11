@@ -1202,3 +1202,119 @@ def test_vamprior_has_correct_parameters(mdata_basic):
     assert module.u_prior_mixture is True, (
         "VampPrior must set u_prior_mixture=True to enable MC KL path"
     )
+
+
+# ---------------------------------------------------------------------------
+# (m) protein_in_encoder toggle
+# ---------------------------------------------------------------------------
+
+
+def test_protein_in_encoder_trains_finite_elbo(mdata_basic):
+    """protein_in_encoder=True trains to a finite ELBO."""
+    import math
+
+    model = _setup_and_train(
+        mdata_basic,
+        max_epochs=MAX_EPOCHS_QUICK,
+        protein_in_encoder=True,
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO encountered with protein_in_encoder=True"
+    )
+
+
+def test_protein_in_encoder_default_unchanged(mdata_basic):
+    """protein_in_encoder=False (default) does not widen fc1 or register extra params."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+    module = model.module
+    assert not module.protein_in_encoder
+    assert module.qu.n_input_proteins == 0
+    # fc1 input width must be exactly n_latent (no covariate conditioning, no protein)
+    assert module.qu.fc1.in_features == N_LATENT, (
+        f"Default fc1.in_features={module.qu.fc1.in_features}, expected {N_LATENT}"
+    )
+
+
+def test_protein_in_encoder_parameter_shapes(mdata_basic):
+    """protein_in_encoder=True widens fc1 by n_input_proteins."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                      protein_in_encoder=True)
+    module = model.module
+    n_proteins = module.n_input_proteins
+    assert n_proteins > 0, "synthetic_iid MuData must contain protein data"
+    assert module.qu.n_input_proteins == n_proteins
+    assert module.qu.fc1.in_features == N_LATENT + n_proteins, (
+        f"fc1.in_features={module.qu.fc1.in_features}, "
+        f"expected {N_LATENT + n_proteins}"
+    )
+
+
+def test_protein_in_encoder_save_load(tmp_path):
+    """protein_in_encoder=True survives a save/load cycle (fc1 shape preserved)."""
+    import torch
+
+    mdata = _make_mdata()
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT,
+                      protein_in_encoder=True)
+
+    save_path = tmp_path / "mrmultivi_pie"
+    model.save(save_path, overwrite=True)
+    loaded = MrMultiVI.load(save_path, adata=mdata)
+
+    assert loaded.module.protein_in_encoder is True
+    assert loaded.module.qu.n_input_proteins == model.module.n_input_proteins
+    assert loaded.module.qu.fc1.in_features == model.module.qu.fc1.in_features
+    assert torch.allclose(
+        loaded.module.qu.fc1.weight.cpu(),
+        model.module.qu.fc1.weight.cpu(),
+    )
+
+
+def test_protein_in_encoder_with_vamprior(mdata_basic):
+    """protein_in_encoder=True + u_prior='vamp' trains to finite ELBO and has correct pseudo shape."""
+    import math
+
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    K = 5
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                      protein_in_encoder=True, u_prior="vamp", u_prior_mixture_k=K)
+    model.train(
+        max_epochs=MAX_EPOCHS_QUICK,
+        accelerator="cpu",
+        plan_kwargs={"lr": 1e-3},
+        check_val_every_n_epoch=MAX_EPOCHS_QUICK,
+    )
+    module = model.module
+    n_proteins = module.n_input_proteins
+    assert module.u_vamp_pseudo.shape == (K, N_LATENT + n_proteins), (
+        f"u_vamp_pseudo.shape={module.u_vamp_pseudo.shape}, "
+        f"expected ({K}, {N_LATENT + n_proteins})"
+    )
+    history = model.history["elbo_train"]
+    assert all(math.isfinite(v) for v in history.values.flatten()), (
+        "Non-finite ELBO with protein_in_encoder=True + u_prior='vamp'"
+    )

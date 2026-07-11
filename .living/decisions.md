@@ -245,3 +245,10 @@ accept **kwargs.
 **Rationale**: The prior should be batch/sample-invariant; fixing to donor 0 excludes donor identity from the prior while letting the K learnable pseudoinput vectors absorb full manifold variation. Softplus ensures log1p inside EncoderXU_TotalVI stays well-defined (raw counts are ≥ 0). MrMultiVI's `qu` takes continuous MULTIVAE latent as input (no log1p), so no constraint is needed.
 **Consequences**: VampPrior prior is weakly conditioned on the reference batch embedding when `encode_covariates=True`; this is intentional (reference prior, not a batch-free prior). Future work: could marginalize over batches.
 **Status**: active
+
+### D-026 — [2026-07-11] MrMultiVI protein_in_encoder: log1p(y) cat'd to u0 before qu, protein pseudo Softplus-constrained
+**Context**: MrMultiVI's `qu` previously received only `u0` (MULTIVAE mixed latent), so protein never reached the sample-conditioned encoder. MrTotalVI feeds raw protein directly via `log1p` inside `EncoderXU_TotalVI`. Closing the parity gap.
+**Decision**: Add `protein_in_encoder: bool = False` toggle. When True, `EncoderXU_MultiVI.forward` cats `log1p(y_protein)` to `u0` before `fc1`. In `_vamp_component_dist`, the protein slice of `u_vamp_pseudo` is Softplus-constrained before being passed (so `log1p(Softplus(x)) ≥ 0`). The u0 slice is unconstrained.
+**Rationale**: Mirrors MrTotalVI's exact pattern. Using `log1p` is numerically stable for protein counts. Softplus-constraining only the protein pseudo-columns keeps the u0 pseudo-columns free to roam latent space. Default off so no existing behaviour changes.
+**Consequences**: When `protein_in_encoder=True`, `fc1.in_features = n_latent + n_input_proteins` (wider). Save/load is safe because `protein_in_encoder` is in `init_params_`. The vamp + protein combo is covered by test_protein_in_encoder_with_vamprior.
+**Status**: active

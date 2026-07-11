@@ -464,3 +464,8 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **mitigation_type**: structural
 **structural_mitigation_candidate**: test_vamprior_trains_finite_elbo (guards forward pass through qu)
 **Body**: `MrTotalVI` defaults `encode_covariates=True`. `EncoderXU_TotalVI._append_covariates` raises `ValueError: batch_index is required when encode_covariates=True.` if `batch_index=None` is passed. `_vamp_component_dist` initially called `self.qu(x_p, y_p, sample_idx)` without `batch_index`, triggering this error during training. Fix: pass `batch_index=torch.zeros(K, 1, ...)` when `self.encode_covariates` is True. MrMultiVI is unaffected (defaults `encode_covariates=False`).
+
+### L-064 — [2026-07-11] MrMultiVI protein_in_encoder: VampPrior pseudoinputs must split at n_latent
+**Category**: design
+**Tags**: protein-in-encoder, vamprior, mrmultivi, pseudoinputs
+**Body**: When both `protein_in_encoder=True` and `u_prior="vamp"` are active, `u_vamp_pseudo` has shape `(K, n_latent + n_input_proteins)`. In `_vamp_component_dist`, the tensor must be split: `u0_pseudo = pseudo[:, :n_latent]` (unconstrained, continuous latent space) and `y_pseudo = F.softplus(pseudo[:, n_latent:])` (positive, fed as log1p-transformed pseudo-counts). Using Softplus on the whole pseudo-tensor would incorrectly constrain u0 to be positive. The split index is `self.n_latent`, not `module.qu.n_input_proteins`.

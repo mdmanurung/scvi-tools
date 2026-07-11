@@ -92,6 +92,7 @@ class MrMultiVAE(MULTIVAE):
         u_prior_mixture_k: int = 20,
         u_prior_label_weight: float = 10.0,
         u_prior: str = "mog",
+        protein_in_encoder: bool = False,
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,
@@ -135,6 +136,16 @@ class MrMultiVAE(MULTIVAE):
         self.n_continuous_cov = int(n_continuous_cov)
         self.n_cats_per_cov = list(n_cats_per_cov or [])
         self.encode_covariates = bool(encode_covariates)
+        self.protein_in_encoder = bool(protein_in_encoder)
+
+        if protein_in_encoder and n_input_proteins == 0:
+            import warnings
+            warnings.warn(
+                "protein_in_encoder=True has no effect when n_input_proteins=0. "
+                "Register protein data or set protein_in_encoder=False.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         if n_sample > 0:
             self._setup_hierarchy(n_sample, n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale)
@@ -198,6 +209,7 @@ class MrMultiVAE(MULTIVAE):
         # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, takes MULTIVAE mixed latent
         # u is the sample-uninformed cell-state representation: never condition on batch.
         # Batch conditioning belongs in the parent MultiVAE z-encoder and decoder only.
+        n_protein_in = self.n_input_proteins if getattr(self, "protein_in_encoder", False) else 0
         self.qu = EncoderXU_MultiVI(
             n_input=self.n_latent,
             n_latent=n_latent_u,
@@ -206,6 +218,7 @@ class MrMultiVAE(MULTIVAE):
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
             encode_covariates=self.encode_covariates,
+            n_input_proteins=n_protein_in,
             **self.qu_kwargs,
         )
 
@@ -227,7 +240,7 @@ class MrMultiVAE(MULTIVAE):
             u_prior_mixture_k=self.u_prior_mixture_k,
             u_prior_label_weight=self.u_prior_label_weight,
             u_prior_type=getattr(self, "u_prior_type", "mog"),
-            u_vamp_pseudo_dim=self.n_latent,
+            u_vamp_pseudo_dim=self.n_latent + n_protein_in,
         )
 
         if learn_z_u_prior_scale:
@@ -248,11 +261,19 @@ class MrMultiVAE(MULTIVAE):
         """Run VampPrior pseudoinputs through qu to get K component distributions.
 
         Pseudoinputs are in MULTIVAE's continuous latent space (the u0 = qz_m
-        space), so no positivity constraint is needed.  Reference donor (index 0)
+        space), so no positivity constraint is needed for the u0 portion.
+        When ``protein_in_encoder=True``, the last ``n_input_proteins`` columns
+        of the pseudoinput are Softplus-constrained before being passed as
+        ``log1p``-transformed protein pseudo-counts.  Reference donor (index 0)
         is used — sample conditioning is excluded from the prior by design.
         """
         K = self.resolved_u_prior_mixture_k
         sample_idx = torch.zeros(K, 1, device=self.u_vamp_pseudo.device, dtype=torch.long)
+        if getattr(self, "protein_in_encoder", False) and self.n_input_proteins > 0:
+            pseudo = self.u_vamp_pseudo  # (K, n_latent + n_input_proteins)
+            u0_pseudo = pseudo[:, : self.n_latent]
+            y_pseudo = F.softplus(pseudo[:, self.n_latent :])
+            return self.qu(u0_pseudo, sample_idx, y_protein=y_pseudo)
         return self.qu(self.u_vamp_pseudo, sample_idx)
 
     # ------------------------------------------------------------------
@@ -352,12 +373,14 @@ class MrMultiVAE(MULTIVAE):
         # encode_covariates=True (opt-in; default False for MrMultiVI).  When False
         # the encoder stays fully batch-uninformed, making u comparable across
         # donors and batches.
+        y_protein = y if (getattr(self, "protein_in_encoder", False) and self.n_input_proteins > 0) else None
         qu = self.qu(
             u0,
             sample_index,
             batch_index=batch_index if self.encode_covariates else None,
             cont_covs=cont_covs if self.encode_covariates else None,
             cat_covs=cat_covs if self.encode_covariates else None,
+            y_protein=y_protein,
         )
         if n_samples > 1:
             u = qu.rsample((n_samples,))

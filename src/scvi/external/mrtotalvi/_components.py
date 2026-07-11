@@ -597,6 +597,7 @@ class EncoderXU_MultiVI(nn.Module):
         n_continuous_cov: int = 0,
         n_cats_per_cov: Iterable[int] | None = None,
         encode_covariates: bool = False,
+        n_input_proteins: int = 0,
         n_hidden: int = 128,
         n_layers: int = 1,
         activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
@@ -607,7 +608,8 @@ class EncoderXU_MultiVI(nn.Module):
         self.n_continuous_cov = int(n_continuous_cov)
         self.n_cats_per_cov = list(n_cats_per_cov or [])
         self.encode_covariates = bool(encode_covariates)
-        n_input = n_input + _covariate_n_input(
+        self.n_input_proteins = int(n_input_proteins)
+        n_input = n_input + n_input_proteins + _covariate_n_input(
             self.n_batch,
             self.n_continuous_cov,
             self.n_cats_per_cov,
@@ -632,6 +634,7 @@ class EncoderXU_MultiVI(nn.Module):
         batch_index: torch.Tensor | None = None,
         cont_covs: torch.Tensor | None = None,
         cat_covs: torch.Tensor | None = None,
+        y_protein: torch.Tensor | None = None,
     ) -> Normal:
         """Compute the sample-conditioned u distribution.
 
@@ -641,12 +644,18 @@ class EncoderXU_MultiVI(nn.Module):
             MULTIVAE mixed latent, shape ``(batch, n_input)``.
         sample_covariate
             Integer donor index, shape ``(batch,)`` or ``(batch, 1)``.
+        y_protein
+            Raw protein counts, shape ``(batch, n_input_proteins)``.
+            When provided and ``n_input_proteins > 0``, concatenated as
+            ``log1p(y_protein)`` to ``u0`` before the first linear layer.
 
         Returns
         -------
         :class:`~torch.distributions.Normal`
             Distribution over ``u`` with parameters of shape ``(batch, n_latent)``.
         """
+        if self.n_input_proteins > 0 and y_protein is not None:
+            u0 = torch.cat([u0, torch.log1p(y_protein)], dim=-1)
         x = _append_covariates(
             u0,
             batch_index=batch_index,

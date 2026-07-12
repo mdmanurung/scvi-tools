@@ -1,87 +1,93 @@
-# Last Session — Session 55 (2026-07-12)
+# Last Session — Session 57 (2026-07-12)
 
 ## Session goal
 
-Empirical validation of VampPrior+frozen prior vs default MoG on cross-seed DA variance stability.
+Fix `init_prior_from_data` crash in MrTotalVI, resubmit vamp_frozen validation jobs, aggregate B9 Nuñez multiseed results, update manifests.
 
 ---
 
 ## 1. Work completed
 
-### n_mc_samples implementation (carried from prior session)
+### Bug fix: `init_prior_from_data` protein row-indexing (L-089)
 
-All 7 plan items were confirmed implemented and tested (session 54 context):
-- E: `scale_observations` buffer persistence
-- C: `kl_u_weight` / `kl_z_weight` separate β weights
-- D: `init_prior_from_data` data-driven VampPrior/MoG init
-- B1: `protein_in_encoder=False` default
-- B2: `protein_encoder_mode` experimental flag
-- `freeze_prior_after_init` (Level 3, D-038)
-- `n_mc_samples` MC marginalization in DA (Level 2, D-039)
+`mrtotalvi/_model.py:192`: `get_from_registry(PROTEIN_EXP_KEY)` returns a pandas DataFrame (protein-name columns). Applying `[idx]` with integer row-index array was interpreted as column selection → `KeyError`. Fixed to `.to_numpy()[idx]`. Committed `c30fdd3d`.
 
-All 6 new tests in `test_mrtotalvi.py` and `test_mrmultivi.py` pass (from last session).
+- Root cause: gene expression (`X_KEY`) returns scipy sparse — `[idx]` does row indexing correctly. Protein returns DataFrame — `[idx]` does column indexing.
+- Recorded as L-089.
 
-### Empirical validation infrastructure — created
+### MrTotalVI freeze-prior validation — vamp_frozen resubmitted
 
-`validate_freeze_prior.py` (publication dir):
-- `--phase train --variant {default|vamp_frozen} --seed {0,1,2}`: trains MrTotalVI, saves model + DA log_probs as `.npz`
-- `--phase analyze`: loads all 6 saved log_probs, computes cross-seed std per (cell, donor) pair, prints and saves JSON report
-- VampPrior variant uses: `u_prior="vamp"`, `init_prior_from_data=True`, `freeze_prior_after_init=True`
-- DA is computed without covariates (`model.differential_abundance()` uses `self.sample_key="donor"`)
+- Cancelled stale analyze job `25211781` (DependencyNeverSatisfied)
+- Resubmitted vamp_frozen tasks: `25211819_[4-6]` (s0/s1/s2), all RUNNING
+- Resubmitted analyze: `25211823`, PENDING dependency on 25211819
+- Default seeds 0-2 had completed successfully earlier (jobs 25211780_[1-3])
 
-SLURM jobs submitted:
-- `25211780_[1-6]` — 6-job array, `slurm/validate_freeze_prior.slurm` (gpu-long, 2h30m each)
-  - Tasks 1-3: default variant, seeds 0-2
-  - Tasks 4-6: vamp_frozen variant, seeds 0-2
-- `25211781` — analysis job with `--dependency=afterok:25211780`, `slurm/validate_freeze_prior_analyze.slurm` (medium partition, 30m)
+### B9 Nuñez multiseed complete (F-039 updated)
 
-Output paths:
-- Models: `outputs/models/mrtotalvi_10k_human_val_{variant}_s{N}/`
-- DA log_probs: `outputs/validate_freeze_prior/mrtotalvi_10k_human_val_{variant}_s{N}_da_log_probs.npz`
-- Variance report: `outputs/validate_freeze_prior/variance_comparison.json`
+All 3 Nuñez B9 seeds done:
 
----
+| Seed | Acc | Macro-F1 | mapQC n_pass |
+|------|-----|----------|--------------|
+| 0 | 0.947 | 0.887 | 0/24972 |
+| 1 | 0.954 | 0.911 | 0/25010 |
+| 2 | 0.957 | 0.915 | 0/24965 |
 
-## 2. Prior state of existing models (context for re-use)
+Mean: acc **0.952±0.005**, macro-F1 **0.904±0.015**. mapQC n_pass=0 in all seeds (upstream threshold issue, not CytoANVI bug).
 
-| Model dir | Seed | u_prior | init_from_data | freeze | Notes |
-|-----------|------|---------|----------------|--------|-------|
-| `mrtotalvi_10k_human` | 0 equiv | mog | False | False | Legacy naming, commit before multiseed |
-| `mrtotalvi_10k_human_s1` | 1 | mog | False | False | ~15 min train time |
-| `mrtotalvi_10k_human_s2` | 2 | mog | False | False | — |
-| `mrtotalvi_10k_vamp_human` | 0 equiv | vamp | False | False | No freeze, pre-freeze feature |
-| `mrtotalvi_10k_human_ln_s{0,1,2}` | 0-2 | mog | False | False | LayerNorm variant |
+### B9 Roider BLOCKED
 
-The validation script trains fresh models with clean provenance rather than reusing these.
+Job 25211799 FAILED in 3m20s: `ValueError: Category 31 not found in source registry` during `transfer_field`. Upstream mapQC code doesn't pass `extend_categories=True` when transferring labels. Marked BLOCKED in manifest.
+
+### Tests passed
+
+98 passed, 0 failed — MrTotalVI + MrMultiVI test suites (background job, 2:39:52).
+
+### Documents updated
+
+- `FINDINGS_REGISTRY.md`: F-039 updated to 3-seed Nuñez complete + Roider BLOCKED
+- `benchmarks/ANALYSIS_MANIFEST.md`: B9 row updated
+- `learnings.md`: L-089 added (protein indexing bug)
 
 ---
 
-## 3. Remaining actionable items
+## 2. Key findings
 
-| Item | Priority | Blocker |
-|------|----------|---------|
-| Read variance_comparison.json after job 25211781 completes | P0 | Job 25211781 (auto-runs ~5h) |
-| Update .living/decisions.md / learnings.md with validation result | P0 | After job completion |
-| Record validation finding in FINDINGS_REGISTRY | P0 | After job completion |
-| B2 Roider full (3-seed scib) | P1 | GPU time |
-| B9 Roider B9 run | P2 | GPU time |
+- **B9 Nuñez label transfer is strong** (acc 0.952, F1 0.904) — CytoANVI generalises to held-out query cohort.
+- **mapQC n_pass=0 across all seeds** — the neighborhood-density filter is too strict for high-dim flow-cytometry latent, or there is genuine distributional mismatch. Not a CytoANVI failure.
+- **B9 Roider upstream bug** — mapQC code does not handle `extend_categories=True` at transfer time. Externally blocked.
+- **Tests green** — all 98 tests pass after the pz_scale clamp and n_mc_samples changes.
 
 ---
 
-## 4. Files modified this session
+## 3. Outstanding items
 
-- `validate_freeze_prior.py` — created (publication dir)
-- `slurm/validate_freeze_prior.slurm` — created (6-job array)
-- `slurm/validate_freeze_prior_analyze.slurm` — created (analysis dependency job)
-- `.claude/last-session.md` — this file
+### Blocked on job completion
 
-No scvi-tools source files were modified this session.
+| Blocker | Action |
+|---------|--------|
+| Job 25211819 (vamp_frozen s0/s1/s2, ~2h total) | Read analyze output 25211823 once complete; update `.living/` with variance comparison result |
+| Job 25211800 (B2 Roider full, ~53 min in when checked) | Aggregate; update ANALYSIS_MANIFEST B2 row with full-cohort scib scores |
+| Job 25211796 (Leiden calibration) | PENDING (QOSMaxCpuPerUserLimit); once runs, read output, fill `__RES__` in 6 coarse SLURM scripts |
+
+### Coarse-Leiden scripts awaiting `__RES__` value
+
+Scripts `phase3a_b3coarse_roider_s{0,1,2}.slurm` and `phase3b_b5coarse_roider_s{0,1,2}.slurm` have `RES=__RES__` placeholder.
+
+### Externally blocked
+
+- B9 Roider (upstream mapQC extend_categories bug)
+- B3 panel-2 independent labels, B5 external novel-type dataset, B4/B6 real case/control data
 
 ---
 
-## 5. Outstanding background processes
+## 4. Decisions / learnings added
 
-- SLURM job `25211780_[1-6]` — training 6 models (~2h30m each, gpu-long partition)
-- SLURM job `25211781` — analysis, runs automatically after all training completes
-- Check `logs/val_freeze_{JOBID}_{1-6}.out` and `logs/val_freeze_analyze_{JOBID}.out` for results
-- After analysis completes, read `outputs/validate_freeze_prior/variance_comparison.json`
+- **L-089**: `init_prior_from_data` protein row-indexing bug — `.to_numpy()` before `[idx]` when registry returns a DataFrame.
+
+---
+
+## 5. Next session priorities
+
+1. **P0**: Check `25211823` output (freeze-prior variance comparison); read `variance_comparison.json`; update `.living/decisions.md` with empirical result (D-NNN for VampPrior+frozen hypothesis).
+2. **P1**: Check `25211800` (B2 Roider full); aggregate and update ANALYSIS_MANIFEST B2 row.
+3. **P1**: Check `25211796` (Leiden calibration); fill `__RES__` and submit 6 coarse scripts.

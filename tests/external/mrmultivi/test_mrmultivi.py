@@ -1340,8 +1340,8 @@ def test_protein_in_encoder_trains_finite_elbo(mdata_basic):
     )
 
 
-def test_protein_in_encoder_default_unchanged(mdata_basic):
-    """protein_in_encoder=False (default) does not widen fc1 or register extra params."""
+def test_protein_in_encoder_default_true(mdata_basic):
+    """protein_in_encoder=True (default) widens fc1 by n_input_proteins."""
     MrMultiVI.setup_mudata(
         mdata_basic,
         sample_key="donor",
@@ -1350,11 +1350,13 @@ def test_protein_in_encoder_default_unchanged(mdata_basic):
     )
     model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
     module = model.module
-    assert not module.protein_in_encoder
-    assert module.qu.n_input_proteins == 0
-    # fc1 input width must be exactly n_latent (no covariate conditioning, no protein)
-    assert module.qu.fc1.in_features == N_LATENT, (
-        f"Default fc1.in_features={module.qu.fc1.in_features}, expected {N_LATENT}"
+    assert module.protein_in_encoder is True
+    n_proteins = module.n_input_proteins
+    assert n_proteins > 0, "synthetic_iid MuData must contain protein data"
+    assert module.qu.n_input_proteins == n_proteins
+    assert module.qu.fc1.in_features == N_LATENT + n_proteins, (
+        f"Default fc1.in_features={module.qu.fc1.in_features}, "
+        f"expected {N_LATENT + n_proteins}"
     )
 
 
@@ -1590,15 +1592,16 @@ def test_differential_abundance_n_mc_samples_invalid(mdata_basic):
 # Change B1 — protein_in_encoder=False default
 # ---------------------------------------------------------------------------
 
-def test_protein_in_encoder_default_false(mdata_basic):
-    """Change B1: protein_in_encoder defaults to False; qu.n_input_proteins == 0 by default."""
+def test_protein_in_encoder_explicit_false(mdata_basic):
+    """Explicit protein_in_encoder=False: qu.n_input_proteins==0 and fc1 not widened."""
     MrMultiVI.setup_mudata(
         mdata_basic,
         sample_key="donor",
         batch_key="batch",
         modalities=MODALITIES,
     )
-    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                      protein_in_encoder=False)
     assert model.module.protein_in_encoder is False
     assert model.module.qu.n_input_proteins == 0, (
         "With protein_in_encoder=False, qu should have n_input_proteins=0"

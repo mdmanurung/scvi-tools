@@ -652,3 +652,19 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **Body**: `torch.Tensor.var()` defaults to `correction=1` (Bessel's correction, divides by n−1). When `mc_samples=1`, the tensor along the MC axis has length 1, so `var(1)` computes `sum_sq / (1-1) = sum_sq / 0 = NaN`. This silently poisons `lfc_std` for any call with `mc_samples=1`. Fix: use `var(1, correction=0)` (population variance, divides by n). Population variance is the correct choice for an MC estimator where we care about the spread of the draws, not an unbiased estimate of a population parameter.
 
 **Secondary**: `qu.loc` is a PyTorch `Normal` attribute that aliases `loc` (the mean parameter), but the attribute name is misleading when the intent is "use the posterior mean." Prefer `qu.mean` — semantically unambiguous (`.mean` is the distribution mean property, not a raw parameter alias). `qu.loc` and `qu.mean` are numerically identical for `Normal`.
+
+### L-088 — [2026-07-12] B5 multiseed aggregate had wrong CytoVI AUROC (0.775 vs correct 0.855) due to stale per-seed files
+**Category**: data-integrity
+**Tags**: cytoanvi, b5, multiseed, aggregate, auroc, novelty-detection
+**mitigation_type**: structural
+**structural_mitigation_candidate**: always check per-seed file modification dates before trusting an existing aggregate; prefer regenerating from source files
+**Body**: The existing `roider_full_b5_sweep_multiseed.json` reported `cytovi_mean_auroc_mean=0.775`. Investigation revealed this aggregate was built from `_11type_orig.json` files (July 6, covering only 11 Leiden types) rather than the July 7 reruns (jobs 25149032/33/34) which expanded to all 47 types AND added `cytoanvi_knn_baseline`. The per-seed files `s{0,1,2}.json` matched July 7 timestamps. Regenerating the aggregate from the correct per-seed files gave `cytovi_mean_auroc_mean=0.855±0.001` and `cytoanvi_knn_mean_auroc_mean=0.906±0.003`. The stale 0.775 figure had been copied into F-013 and potentially into earlier session notes.
+
+**Secondary (path resolution)**: `aggregate_b5_multiseed.py` uses `HERE = Path(__file__).parent` for path resolution. Calling it with relative paths from the repo root causes doubling (`.scratch/cytoanvi-benchmark/.scratch/cytoanvi-benchmark/...`). Always pass absolute paths when calling aggregate scripts from outside their directory.
+
+### L-089 — [2026-07-12] `init_prior_from_data` protein subsampling: integer row-index vs DataFrame column indexing
+**Category**: bug
+**Tags**: mrtotalvi, vamp-prior, init_prior_from_data, pandas, indexing
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test that `init_prior_from_data=True` runs end-to-end without error (already required by Change D verification in the plan)
+**Body**: In `mrtotalvi/_model.py:192`, `get_from_registry(PROTEIN_EXP_KEY)` returns a pandas DataFrame with protein-name string columns. Applying `[idx]` where `idx` is a numpy integer array of row positions was interpreted by pandas as column selection → `KeyError`. Fix: `.to_numpy()[idx]` extracts the underlying ndarray first so integer indexing selects rows. The same pattern at line 185 for `X_KEY` works because the gene expression registry returns a scipy sparse matrix (where integer array indexing is row selection). Root cause discovered from SLURM job failure logs: tasks 4-6 of array 25211780 failed at `__init__` within 55s.

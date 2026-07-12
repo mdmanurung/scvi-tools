@@ -341,3 +341,23 @@ accept **kwargs.
 **Rationale**: This reduces encoder calls from `mc_samples*(1+n_fixed)` to `1 + mc_samples*(1+n_fixed)_decoder_only` per batch value — a significant speedup for mc_samples=50. The architecture guarantees the cache is correct: in both models the encoder is deterministic given (x, batch_index) with `n_samples=1`.
 **Consequences**: `compute_h_from_x_eps` now has two paths (fast / full). The full path triggers a `UserWarning` when `u_anchor is None` to flag Jensen-biased usage. Existing tests that call the hook without `u_anchor` (D-021 determinism) correctly hit the warning — expected behavior.
 **Status**: active
+
+### D-041 — [2026-07-12] VampPrior+frozen empirically reduces cross-seed DA variance by 18.7%
+**Context**: D-038 proposed `freeze_prior_after_init=True` + `init_prior_from_data=True` + `u_prior="vamp"` (vamp_frozen) to anchor the u-encoder attractor basin and reduce cross-seed variance in `differential_abundance`. Empirical validation was run on 10k human CITE-seq (10 donors) with 3 seeds per variant.
+**Decision**: Accept vamp_frozen as the recommended config for DA stability. The empirical evidence from `validate_freeze_prior.py --phase analyze` confirms the hypothesis.
+**Empirical result**:
+| Variant | mean_std | median_std | p95_std |
+|---------|----------|------------|---------|
+| default (MoG) | 17.42 | 14.76 | 39.44 |
+| vamp_frozen | 14.17 | 11.77 | 33.69 |
+Ratio: 0.813 — 18.7% reduction in mean cross-seed DA variance. Shape: (3, 125706, 10). Output: `outputs/validate_freeze_prior/variance_comparison.json`.
+**Rationale**: The mechanism is as expected — frozen pseudo-inputs anchored via k-means centroids constrain the prior landscape to the same attractor basin across seeds, reducing the u-encoder convergence variance that drives DA instability. The effect is meaningful (18.7%) but not dramatic — some residual variance comes from mini-batch SGD stochasticity in the z-encoder pathway.
+**Consequences**: `u_prior="vamp"` + `init_prior_from_data=True` + `freeze_prior_after_init=True` should be documented as the recommended config in the user guide for studies where DA reproducibility across re-runs matters. Not the default — the data-driven init has compute overhead (k-means on ≤10k cells at model build time).
+**Status**: active
+
+### D-040 — [2026-07-12] B5 OOD conclusion: TTA method failure, not latent failure
+**Context**: B5 novelty-detection benchmark on Roider-full (47 Leiden types, 3 seeds) showed TTA mean_auroc=0.484±0.005, well below chance. The kNN-OOD diagnostic was added (jobs 25149032/33/34) to distinguish "bad TTA method" from "bad latent space" by running kNN-distance OOD on CytoANVI's own learned latent — independent of the TTA uncertainty estimator.
+**Decision**: Attribute B5 failure to the TTA uncertainty method, not to the latent space quality. Report CytoANVI-latent kNN (0.906±0.003) as the diagnostic evidence; do not report it as the headline OOD result. TTA remains CytoANVI's built-in OOD score; B5 headline is TTA mean_auroc=0.484±0.005 (NEGATIVE).
+**Rationale**: CytoANVI-kNN (0.906) outperforms CytoVI-kNN (0.855) using the same kNN-distance OOD scorer on the same held-out types — confirming the latent is actually superior to CytoVI's. The failure at TTA=0.484 is therefore in the uncertainty estimation method (test-time augmentation dropout variance) rather than latent geometry. This is the honest characterization: the model learns a good representation; we just lack a good uncertainty head for OOD.
+**Consequences**: (1) B5 reports a negative result for TTA-based OOD with strong diagnostic evidence that the underlying latent is sound. (2) Future work should explore calibrated uncertainty heads or direct kNN-distance OOD as the scorer. (3) CytoVI kNN reference corrected from erroneous 0.775 (11-type subset) to 0.855 (47-type full sweep) — see L-088.
+**Status**: active

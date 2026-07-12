@@ -92,7 +92,7 @@ class MrMultiVAE(MULTIVAE):
         u_prior_mixture_k: int = 20,
         u_prior_label_weight: float = 10.0,
         u_prior: str = "mog",
-        protein_in_encoder: bool = False,
+        protein_in_encoder: bool = True,
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,

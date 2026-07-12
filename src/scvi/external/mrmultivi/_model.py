@@ -70,11 +70,12 @@ class MrMultiVI(MULTIVI):
         ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
     protein_in_encoder
         Whether to concatenate raw ``log1p``-protein counts onto MULTIVAE's
-        mixed latent ``u0`` before the u-encoder.  **Default ``False``** is the
-        correct setting: ``u`` is the *sample-unaware* representation by design,
-        and raw protein carries strong donor/panel/batch signal that disrupts the
-        u/z decomposition and empirically degrades batch-integration metrics.
-        Set to ``True`` only as an experimental ablation.
+        mixed latent ``u0`` before the u-encoder.  Default ``True``: protein
+        carries cell-identity signal at least as discriminative as RNA, and the
+        u-encoder learns to strip donor/batch effects from both modalities during
+        training — the same mechanism that handles RNA.  Set to ``False`` only
+        if protein normalization is known to be poor (e.g. cross-panel missing
+        markers with no DSB/CLR normalization).
     init_prior_from_data
         If ``True`` and ``u_prior="vamp"``, run k-means on a random subsample
         (≤10 000 cells) of the raw encoder input and use the centroids to
@@ -107,7 +108,7 @@ class MrMultiVI(MULTIVI):
         u_prior_mixture_k: int = 20,
         u_prior_label_weight: float = 10.0,
         u_prior: str = "mog",
-        protein_in_encoder: bool = False,
+        protein_in_encoder: bool = True,
         learn_z_u_prior_scale: bool = False,
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,

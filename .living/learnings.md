@@ -615,3 +615,12 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **General rule**: for any MrVI-style model, the granularity of `sample_key` must be ≥ the granularity of every `sample_cov_key` used in `differential_expression` or `differential_abundance`. In a repeated-measures design with timepoint as condition, `sample_key` must be at donor×timepoint level.
 
 **Structural fix pending**: add a pre-flight check in `_stats.differential_abundance` (and `_differential_expression`): for each `sample_cov_key`, assert that `adata.obs.groupby(model.sample_key)[key].nunique().max() == 1`.
+
+### L-083 — [2026-07-12] torch.Tensor.var() defaults correction=1 → NaN when n=1
+**Category**: correctness
+**Tags**: mrtotalvi, mrmultivi, lfc_std, mc_samples, pytorch, variance
+**mitigation_type**: structural
+**structural_mitigation_candidate**: `lfc_mc_cov.var(1, correction=0)` in `_stats.py`
+**Body**: `torch.Tensor.var()` defaults to `correction=1` (Bessel's correction, divides by n−1). When `mc_samples=1`, the tensor along the MC axis has length 1, so `var(1)` computes `sum_sq / (1-1) = sum_sq / 0 = NaN`. This silently poisons `lfc_std` for any call with `mc_samples=1`. Fix: use `var(1, correction=0)` (population variance, divides by n). Population variance is the correct choice for an MC estimator where we care about the spread of the draws, not an unbiased estimate of a population parameter.
+
+**Secondary**: `qu.loc` is a PyTorch `Normal` attribute that aliases `loc` (the mean parameter), but the attribute name is misleading when the intent is "use the posterior mean." Prefer `qu.mean` — semantically unambiguous (`.mean` is the distribution mean property, not a raw parameter alias). `qu.loc` and `qu.mean` are numerically identical for `Normal`.

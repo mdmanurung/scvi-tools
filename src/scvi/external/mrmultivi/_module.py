@@ -635,6 +635,48 @@ class MrMultiVAE(MULTIVAE):
         )
 
     @torch.inference_mode()
+    def _infer_lfc_aux(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        batch_index: torch.Tensor,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
+        label: torch.Tensor | None = None,
+        cell_idx: torch.Tensor | None = None,
+        size_factor: torch.Tensor | None = None,
+        sample_index: torch.Tensor | None = None,
+        cf_sample: torch.Tensor | None = None,
+        **_,
+    ) -> dict:
+        """Return inference outputs that are constant across CRN MC draws.
+
+        ``libsize_expr`` and ``qz_m`` depend only on ``x`` and ``batch_index``,
+        not on ``u_anchor``, so they are safe to compute once per batch value and
+        cache. Called by ``_stats.py`` before the MC loop to avoid running the
+        full encoder ``mc_samples*(1+n_fixed)`` times per batch value.
+        """
+        n_cells = x.shape[0]
+        if label is None:
+            label = torch.zeros(n_cells, 1, dtype=torch.long, device=x.device)
+        if cell_idx is None:
+            cell_idx = torch.arange(n_cells, device=x.device)
+        out = self.inference(
+            x,
+            y,
+            batch_index,
+            cont_covs=cont_covs,
+            cat_covs=cat_covs,
+            label=label,
+            cell_idx=cell_idx,
+            size_factor=size_factor,
+            n_samples=1,
+            sample_index=sample_index,
+            cf_sample=cf_sample,
+        )
+        return {"libsize_expr": out["libsize_expr"], "qz_m": out["qz_m"]}
+
+    @torch.inference_mode()
     def compute_h_from_x_eps(
         self,
         x: torch.Tensor,
@@ -649,6 +691,7 @@ class MrMultiVAE(MULTIVAE):
         size_factor: torch.Tensor | None = None,
         cf_sample: torch.Tensor | None = None,
         u_anchor: torch.Tensor | None = None,
+        _lfc_aux: dict | None = None,
     ) -> torch.Tensor:
         """Return ``concat([px_scale, py_scale_det])`` at ``z = z_base + extra_eps``.
 
@@ -701,33 +744,46 @@ class MrMultiVAE(MULTIVAE):
         if cell_idx is None:
             cell_idx = torch.arange(n_cells, device=x.device)
 
-        # Run inference (single MC draw; the MC loop lives in _stats.py).
-        out = self.inference(
-            x,
-            y,
-            batch_index,
-            cont_covs=cont_covs,
-            cat_covs=cat_covs,
-            label=label,
-            cell_idx=cell_idx,
-            size_factor=size_factor,
-            n_samples=1,
-            sample_index=sample_index,
-            cf_sample=cf_sample,
-        )
-
-        # CRN path: when u_anchor is provided (by _stats.py MC loop), use it
-        # directly so both x_0 and x_1 at the same MC step share the same
-        # sampled u — eliminating the cross-term variance and giving an unbiased
-        # posterior-marginalized LFC estimator without Jensen bias.
-        # Legacy fallback (u_anchor=None): use qu.mean — deterministic but biased.
-        qu = out["qu"]
         sample_index_cf = sample_index if cf_sample is None else cf_sample
-        u = u_anchor if u_anchor is not None else qu.mean
+
+        if u_anchor is not None and _lfc_aux is not None:
+            # CRN fast path: skip inference — libsize_expr and qz_m are constant
+            # per batch value and were pre-computed by _infer_lfc_aux in _stats.py.
+            u = u_anchor
+            libsize_expr = _lfc_aux["libsize_expr"]
+            qz_m = _lfc_aux["qz_m"]
+        else:
+            # Full inference path: needed when u_anchor is None (legacy biased
+            # path) or when no aux cache is available.
+            if u_anchor is None:
+                import warnings
+                warnings.warn(
+                    "compute_h_from_x_eps called without u_anchor: falling back to "
+                    "qu.mean, which produces Jensen-biased LFC estimates. Pass "
+                    "u_anchor (a sample from q(u|x)) for unbiased CRN estimation.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            out = self.inference(
+                x,
+                y,
+                batch_index,
+                cont_covs=cont_covs,
+                cat_covs=cat_covs,
+                label=label,
+                cell_idx=cell_idx,
+                size_factor=size_factor,
+                n_samples=1,
+                sample_index=sample_index,
+                cf_sample=cf_sample,
+            )
+            qu = out["qu"]
+            u = u_anchor if u_anchor is not None else qu.mean
+            qz_m = out["qz_m"]
+            libsize_expr = out["libsize_expr"]
+
         z_base, _, _ = self.qz(u, sample_index_cf)
         z = z_base + extra_eps           # counterfactual latent
-        qz_m = out["qz_m"]               # (batch, n_latent) — deterministic u mean
-        libsize_expr = out["libsize_expr"]
 
         gen_out = self.generative(
             z=z,

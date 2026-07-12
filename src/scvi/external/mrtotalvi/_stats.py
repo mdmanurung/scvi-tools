@@ -12,6 +12,24 @@ from torch.distributions import Categorical, Independent, MixtureSameFamily, Nor
 from tqdm import tqdm
 
 
+def _validate_sample_level_covariates(obs, sample_key: str, cov_keys: list[str]) -> None:
+    """Raise ValueError if any cov in cov_keys is not constant within sample_key."""
+    for cov in cov_keys:
+        if cov not in obs.columns:
+            continue
+        n_per_sample = obs.groupby(sample_key, observed=True)[cov].nunique()
+        bad = n_per_sample[n_per_sample > 1]
+        if len(bad):
+            raise ValueError(
+                f"sample_cov_key '{cov}' is not constant within sample_key '{sample_key}' "
+                f"for the following samples: {bad.index.tolist()}. "
+                f"Each sample (sample_key level) must map to exactly one covariate value; "
+                f"otherwise drop_duplicates() picks an arbitrary value and the design matrix "
+                f"is incorrect. To test a within-sample condition (e.g. timepoint), retrain "
+                f"with a more granular sample_key (e.g. 'donor_timepoint')."
+            )
+
+
 def _rowwise_max_excluding_diagonal(matrix: torch.Tensor) -> torch.Tensor:
     if matrix.ndim != 2:
         raise ValueError(f"Expected a 2D matrix, got shape {tuple(matrix.shape)}.")
@@ -98,21 +116,8 @@ def differential_abundance(
     """Compute MrVI-style differential abundance log probabilities over ``u``."""
     adata = model._validate_anndata(adata)
 
-    # Validate that each sample maps to exactly one value of each covariate (L-078).
     if sample_cov_keys:
-        for cov in sample_cov_keys:
-            if cov not in adata.obs.columns:
-                continue
-            n_per_sample = adata.obs.groupby(sample_key, observed=True)[cov].nunique()
-            bad = n_per_sample[n_per_sample > 1]
-            if len(bad):
-                raise ValueError(
-                    f"differential_abundance: sample_cov_key '{cov}' is not sample-level — "
-                    f"{len(bad)} sample(s) map to >1 value of '{cov}' "
-                    f"(e.g. '{bad.index[0]}'). "
-                    f"Retrain with a finer-grained sample_key (e.g. 'donor_timepoint') "
-                    f"so each sample maps to exactly one {cov} value."
-                )
+        _validate_sample_level_covariates(adata.obs, sample_key, list(sample_cov_keys))
 
     sample_values = list(model.sample_order) if hasattr(model, "sample_order") else list(
         adata.obs[sample_key].unique()
@@ -418,28 +423,12 @@ def _differential_expression(
     model._check_if_trained(warn=False)
     adata = model._validate_anndata(adata)
 
-    # Validate: each sample (model.sample_key level) must map to exactly one
-    # value of every sample_cov_key.  If a donor spans multiple timepoints but
-    # sample_key="donor", drop_duplicates(subset=sample_key) silently picks a
-    # data-order-dependent timepoint — making the design matrix wrong (L-077).
+    if mc_samples < 1:
+        raise ValueError("mc_samples must be >= 1.")
     _cov_to_check = list(sample_cov_keys)
     if donor_key and donor_key != model.sample_key:
         _cov_to_check.append(donor_key)
-    for _cov in _cov_to_check:
-        if _cov not in adata.obs.columns:
-            continue
-        _nunique = adata.obs.groupby(model.sample_key, observed=True)[_cov].nunique()
-        _bad = _nunique[_nunique > 1]
-        if len(_bad) > 0:
-            raise ValueError(
-                f"sample_cov_key '{_cov}' is not constant within sample_key '{model.sample_key}' "
-                f"for the following samples: {_bad.index.tolist()}.  "
-                f"MrVI-style DE requires each sample (model.sample_key level) to map to "
-                f"exactly one covariate value; otherwise drop_duplicates() picks an "
-                f"arbitrary value and the design matrix is incorrect.  "
-                f"To test a within-sample condition (e.g. timepoint), retrain the model with "
-                f"a more granular sample_key (e.g. 'donor_timepoint')."
-            )
+    _validate_sample_level_covariates(adata.obs, model.sample_key, _cov_to_check)
 
     n_sample = model.summary_stats.n_sample
     sample_mask = (
@@ -544,8 +533,8 @@ def _differential_expression(
                     return torch.stack(eps_list, dim=1)
 
                 if mc_samples == 1:
-                    u_samples = [qu.loc]
-                    eps_batch = _eps_from_u(qu.loc).unsqueeze(0)
+                    u_samples = [qu.mean]
+                    eps_batch = _eps_from_u(qu.mean).unsqueeze(0)
                 else:
                     u_samples = [qu.rsample() for _ in range(mc_samples)]
                     eps_batch = torch.stack(
@@ -635,23 +624,34 @@ def _differential_expression(
                         h_kwargs_b = dict(h_kwargs)
                         h_kwargs_b["batch_index"] = batch_cf
 
+                        # Cache inference aux once per batch value.  library_gene (and
+                        # qz_m for MrMultiVI) depend only on x/batch_index, not on
+                        # u_anchor, so they are identical for all mc_samples draws.
+                        # Without this cache, compute_h_from_x_eps would re-run the
+                        # full encoder mc_samples*(1+n_fixed) times per batch value.
+                        _lfc_aux = None
+                        if hasattr(model.module, "_infer_lfc_aux"):
+                            _lfc_aux = model.module._infer_lfc_aux(**h_kwargs_b)
+
                         # CRN: null decode per MC draw, sharing u_samples[mc_idx]
                         # with the contrast decode below.  x_0 varies with u so
                         # lfc_std now captures u-posterior uncertainty (not just
                         # regression uncertainty in beta).
-                        x0_mc = []
+                        x0_mc = [] if store_baseline else None
                         log_x0_mc = []
                         for mc_idx in range(mc_samples):
                             x_0 = model.module.compute_h_from_x_eps(
                                 extra_eps=eps_mean_cell,
                                 u_anchor=u_samples[mc_idx],
+                                _lfc_aux=_lfc_aux,
                                 **h_kwargs_b,
                             )  # (n_cells, n_features)
-                            x0_mc.append(x_0)
+                            if x0_mc is not None:
+                                x0_mc.append(x_0)
                             log_x0_mc.append(torch.log2(x_0 + eps_lfc))
 
                         if lfc_wsum is None:
-                            n_features_lfc = x0_mc[0].shape[-1]
+                            n_features_lfc = log_x0_mc[0].shape[-1]
                             lfc_wsum = torch.zeros(
                                 n_fixed, n_cells, n_features_lfc, device=device
                             )
@@ -677,6 +677,7 @@ def _differential_expression(
                                 x_1 = model.module.compute_h_from_x_eps(
                                     extra_eps=extra,
                                     u_anchor=u_samples[mc_idx],
+                                    _lfc_aux=_lfc_aux,
                                     **h_kwargs_b,
                                 )  # (n_cells, n_features)
                                 lfc_mc_k.append(
@@ -690,7 +691,13 @@ def _differential_expression(
                         )  # (n_fixed, mc, n_cells, n_features)
 
                         lfc_wsum += w_b * lfc_mc_cov.mean(1)
-                        lfc_var_wsum += w_b * lfc_mc_cov.var(1)
+                        # correction=0 (population variance) because mc_samples=1 is valid;
+                        # correction=1 yields NaN via 0/0 when mc_samples=1.
+                        # Note: this accumulates within-batch MC variance only; the
+                        # between-batch term sum(w*(mu_b-mu)^2) is omitted — matching the
+                        # MRVI reference (mrvi_torch/_model.py:1444-1448), so lfc_std is
+                        # slightly conservative when batches have different mean LFC.
+                        lfc_var_wsum += w_b * lfc_mc_cov.var(1, correction=0)
                         if delta is not None:
                             pde_wsum += w_b * (lfc_mc_cov.abs() >= delta).float().mean(1)
 

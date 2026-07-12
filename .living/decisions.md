@@ -306,3 +306,10 @@ accept **kwargs.
 **Rationale**: Making `u_anchor` required would break the two existing D-021 tests and any future standalone callers. The `None` fallback is the Jensen-biased path that predates this fix — safe for the D-021 determinism check because it only tests that protein background is deterministic (not that LFC is unbiased). Prefer optional over required when real standalone callers exist.
 **Consequences**: Future standalone callers of `compute_h_from_x_eps` must either pass `u_anchor` (for unbiased LFC) or accept Jensen bias (for point-estimate LFC). The None path should not be used in new MC-loop contexts.
 **Status**: active
+
+### D-035 — [2026-07-12] _infer_lfc_aux: cache encoder-side constants once per batch value (CRN fast path)
+**Context**: `compute_h_from_x_eps` runs the full encoder (_regular_inference / inference) for every MC draw × every batch value. `library_gene` (mrtotalvi) and `libsize_expr`/`qz_m` (mrmultivi) depend only on `x` and `batch_index` — not on `u_anchor` — so they are identical for all mc_samples draws at a given batch value.
+**Decision**: Add `_infer_lfc_aux(**h_kwargs)` to both modules; call it once per `b_val` in `_stats.py` before the MC loop; pass `_lfc_aux=_lfc_aux` to all `compute_h_from_x_eps` calls. Fast path: when `u_anchor is not None and _lfc_aux is not None`, skip `_regular_inference` entirely and use cached values. Key signature: `**_` swallows unknown kwargs so the helper is forward-compatible with any h_kwargs additions.
+**Rationale**: This reduces encoder calls from `mc_samples*(1+n_fixed)` to `1 + mc_samples*(1+n_fixed)_decoder_only` per batch value — a significant speedup for mc_samples=50. The architecture guarantees the cache is correct: in both models the encoder is deterministic given (x, batch_index) with `n_samples=1`.
+**Consequences**: `compute_h_from_x_eps` now has two paths (fast / full). The full path triggers a `UserWarning` when `u_anchor is None` to flag Jensen-biased usage. Existing tests that call the hook without `u_anchor` (D-021 determinism) correctly hit the warning — expected behavior.
+**Status**: active

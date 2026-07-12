@@ -116,6 +116,7 @@ class MrMultiVI(MULTIVI):
         kl_u_weight: float = 1.0,
         kl_z_weight: float = 1.0,
         init_prior_from_data: bool = False,
+        freeze_prior_after_init: bool = False,
         **model_kwargs,
     ) -> None:
         if model_kwargs.get("latent_distribution", "normal") != "normal":
@@ -180,6 +181,7 @@ class MrMultiVI(MULTIVI):
             n_obs_per_sample=n_obs_per_sample,
             n_labels=self.summary_stats.get("n_labels", 0),
             prior_centroids=None,
+            freeze_prior_after_init=freeze_prior_after_init,
         )
 
         self._sample_key = sample_key

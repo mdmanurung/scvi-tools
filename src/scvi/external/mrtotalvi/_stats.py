@@ -125,8 +125,15 @@ def differential_abundance(
     if sample_subset is not None:
         sample_values = [s for s in sample_values if s in set(sample_subset)]
 
+    # Per-cell modality-weight models cannot accept held-out adata in get_latent_representation.
+    # DA is always run on the training data, so adata=None (→ model.adata) is equivalent.
+    _repr_adata = (
+        None
+        if getattr(getattr(model, "module", None), "modality_weights", None) == "cell"
+        else adata
+    )
     us = model.get_latent_representation(
-        adata,
+        _repr_adata,
         give_mean=True,
         give_z=False,
         batch_size=batch_size,
@@ -758,8 +765,13 @@ def get_outlier_cell_sample_pairs(
 ) -> xr.Dataset:
     """Compute admissible cell-sample pairs using aggregated posteriors over ``u``."""
     adata = model._validate_anndata(adata)
+    _repr_adata = (
+        None
+        if getattr(getattr(model, "module", None), "modality_weights", None) == "cell"
+        else adata
+    )
     us = model.get_latent_representation(
-        adata,
+        _repr_adata,
         give_mean=True,
         give_z=False,
         batch_size=batch_size,

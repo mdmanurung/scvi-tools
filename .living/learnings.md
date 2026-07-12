@@ -616,6 +616,27 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 
 **Structural fix pending**: add a pre-flight check in `_stats.differential_abundance` (and `_differential_expression`): for each `sample_cov_key`, assert that `adata.obs.groupby(model.sample_key)[key].nunique().max() == 1`.
 
+### L-084 — [2026-07-12] model.history key is 'elbo_train' not 'train_loss_epoch' in MrTotalVI
+**Category**: gotcha
+**Tags**: mrtotalvi, training-history, pytorch-lightning, test-patterns
+**mitigation_type**: ambient-awareness
+**structural_mitigation_candidate**: use candidate-scan pattern: `next((k for k in candidates if k in history), None)`
+**Body**: `model.history` in scvi-tools (PyTorch Lightning back-end) exposes `'elbo_train'`, `'train_loss'`, `'reconstruction_loss_train'`, etc. — not the generic `'train_loss_epoch'` string that Trainer callbacks sometimes use. Hardcoding `history["train_loss_epoch"]` raises `KeyError`. Pattern: scan a candidate list in priority order (`["elbo_train", "train_loss", "train_loss_epoch"]`) and assert one is found, so the test remains valid across version changes.
+
+### L-086 — [2026-07-12] Single-seed scIB bio sub-score estimate (+0.009) was noise; 3-seed analysis shows bio conservation flat (Δbio = −0.006±0.010)
+**Category**: analysis-process
+**Tags**: mrmultivi, scib, bio-conservation, multi-seed, adversarial-check
+**mitigation_type**: structural
+**structural_mitigation_candidate**: never report sub-score breakdown from a single seed; always replicate with ≥3 seeds before claiming directional component gains
+**Body**: F-015 (single-seed scIB breakdown) showed MrMultiVI_u bio sub-score +0.009 over MultiVI. This was reported in the manifest as "bio conservation also marginally better." The 3-seed adversarial audit (F-038, skeptic agent session 50) showed that across all 3 seeds, Δbio = −0.006±0.010 — statistically indistinguishable from zero, with mean actually negative. The single-seed +0.009 was pure noise. The manifest claim and the `mr_multimodal.md` "bio Δ≈+0.009 marginal" wording were both corrected. Lesson: a single-seed sub-score estimate can misrepresent direction by ±0.015 — never report component-level breakdown without multi-seed confirmation. Also caught: the MultiVI baseline (0.593) is a single-seed point with no within-model error bar; published comparison should disclose asymmetric error bars.
+
+### L-085 — [2026-07-12] User-facing docs did not disclose empirical eps-space DE anti-concordance — a publication-blocking gap
+**Category**: process
+**Tags**: mrtotalvi, mrmultivi, de, lfc, publication, documentation
+**mitigation_type**: structural
+**structural_mitigation_candidate**: always add empirical validation note to user-facing docs when a new API is shipped; distinguish "API works" (code tests pass) from "results are biologically valid" (concordance with gold standard)
+**Body**: When `store_lfc=True` was implemented and the ADRs/mr_multimodal.md were updated, the docs described the feature as working and resolved. The empirical validation (F-036, F-037) was completed afterward and showed anti-concordance with PyDESeq2 gold standard across all 12 cell types. But `mr_multimodal.md` was never updated to reflect this. The v1 Limitations section had: BatchNorm/vmap note, ATAC rejection, ArchesMixin note, objective note — no mention that LFC results are anti-concordant with pseudobulk. Similarly, F-023's status was left as "preliminary (sex-adjusted pending)" after F-028 closed the question; F-021 pointed to retracted findings (F-020/F-017) as the evidence base; F-026 called the convergent IFN artifact "the most robust shared signal." These stale entries compound: a reader tracing the evidence chain encounters misleading status markers and conclusions. Fix: (1) add empirical eps-space DE disclaimer block to `mr_multimodal.md` v1 Limitations; (2) update stale FINDINGS_REGISTRY entries with retraction notes and status corrections; (3) add DA stability caveat for MrTotalVI; (4) add Publication Confidence Review section to ANALYSIS_MANIFEST (session 49).
+
 ### L-083 — [2026-07-12] torch.Tensor.var() defaults correction=1 → NaN when n=1
 **Category**: correctness
 **Tags**: mrtotalvi, mrmultivi, lfc_std, mc_samples, pytorch, variance

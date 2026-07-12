@@ -156,6 +156,7 @@ class MrTotalVAE(TOTALVAE):
         n_obs_per_sample: torch.Tensor | None = None,
         n_labels: int | None = None,
         prior_centroids: torch.Tensor | None = None,
+        freeze_prior_after_init: bool = False,
     ) -> None:
         """Build / replace the u→z hierarchy after the base TOTALVAE is initialised.
 
@@ -181,6 +182,8 @@ class MrTotalVAE(TOTALVAE):
         prior_centroids
             Optional ``(K, dim)`` tensor of cluster centroids for data-driven prior
             initialization. See :func:`init_u_prior` for semantics.
+        freeze_prior_after_init
+            Passed through to :func:`init_u_prior`. See its docstring for semantics.
         """
         if n_latent_sample is None:
             n_latent_sample = self._n_latent_sample
@@ -238,6 +241,7 @@ class MrTotalVAE(TOTALVAE):
             u_prior_type=getattr(self, "u_prior_type", "mog"),
             u_vamp_pseudo_dim=self.n_input_genes + self.n_input_proteins,
             prior_centroids=prior_centroids,
+            freeze_prior_after_init=freeze_prior_after_init,
         )
 
         if learn_z_u_prior_scale:

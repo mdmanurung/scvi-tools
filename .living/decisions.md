@@ -307,6 +307,20 @@ accept **kwargs.
 **Consequences**: Future standalone callers of `compute_h_from_x_eps` must either pass `u_anchor` (for unbiased LFC) or accept Jensen bias (for point-estimate LFC). The None path should not be used in new MC-loop contexts.
 **Status**: active
 
+### D-036 — [2026-07-12] BatchNorm vs LayerNorm for MrTotalVI: LayerNorm preferred for small-N DA
+**Context**: MrTotalVI inherits from TOTALVAE which defaults `use_batch_norm="both"`. At N≤20 donors, batch statistics are high-variance → unstable DA. MrMultiVI already defaults to LayerNorm (inherits from MULTIVAE). A `use_batch_norm/use_layer_norm` switch exists in TOTALVAE but was not exposed/tested for MrTotalVI.
+**Decision**: Document `use_batch_norm="none", use_layer_norm="both"` as the recommended MrTotalVI config for small-N studies. The kwargs flow through `MrTotalVI(**model_kwargs)` → `TOTALVAE.__init__` with no code changes. Validated by `test_mrtotalvi_layer_norm_trains_finite`.
+**Rationale**: LayerNorm normalizes per-sample (cell-wise), not per-batch. Safe for batch size 1. MrMultiVI's default behavior serves as evidence this path is stable.
+**Consequences**: User guide should recommend `use_layer_norm="both"` in the tutorial. The default (BatchNorm) is not broken but may be sub-optimal for small cohorts.
+**Status**: active
+
+### D-037 — [2026-07-12] Add empirical eps-space DE disclaimer to user-facing docs
+**Context**: `mr_multimodal.md` described `store_lfc=True` as a functional feature (with BatchNorm/vmap and ATAC caveats) but contained no disclosure that eps-space LFC is empirically anti-concordant with pseudobulk across all 12 cell types and all three models (F-036, F-037). A user running DE would receive anti-concordant results with no warning.
+**Decision**: Added "Differential expression — empirical validation note (eps-space limitation)" block to v1 Limitations in `mr_multimodal.md`. Summarizes: (1) eps absorbs cell-state variation as identity leaving near-zero treatment signal; (2) on schisto CITE-seq (n=10 donors, 12 cell types), Spearman rho −0.24 to +0.04 vs PyDESeq2 gold standard; (3) cross-validate before drawing biological conclusions. Also added MrTotalVI DA instability caveat (citing F-034 numeric range) to the same section.
+**Rationale**: The API works correctly — this is an empirical limitation, not a code bug. The correct venue for the disclosure is the v1 Limitations section, not the API signature. A manuscript reviewer or user who runs DE must be directed to pseudobulk calibration; without this disclosure, they cannot know the results are anti-concordant.
+**Consequences**: `mr_multimodal.md` now accurately represents the empirical state of the DE API. The ADRs (0005/0006) do not need updating — they document the implementation decisions, not empirical validation results. If a future release improves eps-space DE (e.g. u-bypass architecture), this limitation block should be removed or scoped.
+**Status**: active
+
 ### D-035 — [2026-07-12] _infer_lfc_aux: cache encoder-side constants once per batch value (CRN fast path)
 **Context**: `compute_h_from_x_eps` runs the full encoder (_regular_inference / inference) for every MC draw × every batch value. `library_gene` (mrtotalvi) and `libsize_expr`/`qz_m` (mrmultivi) depend only on `x` and `batch_index` — not on `u_anchor` — so they are identical for all mc_samples draws at a given batch value.
 **Decision**: Add `_infer_lfc_aux(**h_kwargs)` to both modules; call it once per `b_val` in `_stats.py` before the MC loop; pass `_lfc_aux=_lfc_aux` to all `compute_h_from_x_eps` calls. Fast path: when `u_anchor is not None and _lfc_aux is not None`, skip `_regular_inference` entirely and use cached values. Key signature: `**_` swallows unknown kwargs so the helper is forward-compatible with any h_kwargs additions.

@@ -1486,6 +1486,59 @@ def test_kl_weights_stored_and_non_default_differ(mdata_basic):
 
 
 # ---------------------------------------------------------------------------
+# freeze_prior_after_init
+# ---------------------------------------------------------------------------
+
+
+def test_freeze_prior_after_init_mog(mdata_basic):
+    """freeze_prior_after_init=True freezes MoG location/scale but keeps logits trainable."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                      freeze_prior_after_init=True)
+    m = model.module
+    assert not m.u_prior_means.requires_grad, "u_prior_means should be frozen"
+    assert not m.u_prior_scales.requires_grad, "u_prior_scales should be frozen"
+    assert m.u_prior_logits.requires_grad, "u_prior_logits must remain trainable"
+
+
+def test_freeze_prior_after_init_vamp(mdata_basic):
+    """freeze_prior_after_init=True freezes VampPrior pseudo-inputs but keeps logits trainable."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    K = 4
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K,
+                      freeze_prior_after_init=True)
+    m = model.module
+    assert not m.u_vamp_pseudo.requires_grad, "u_vamp_pseudo should be frozen"
+    assert m.u_prior_logits.requires_grad, "u_prior_logits must remain trainable"
+
+
+def test_freeze_prior_false_default(mdata_basic):
+    """freeze_prior_after_init defaults to False — all prior params remain trainable."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+    m = model.module
+    assert m.u_prior_means.requires_grad
+    assert m.u_prior_scales.requires_grad
+    assert m.u_prior_logits.requires_grad
+
+
+# ---------------------------------------------------------------------------
 # Change B1 — protein_in_encoder=False default
 # ---------------------------------------------------------------------------
 
@@ -1565,4 +1618,116 @@ def test_protein_encoder_mode_project(mdata_basic):
     n_proteins_in_fc1 = qu.protein_proj.out_features
     assert n_proteins_in_fc1 < n_proteins_full or n_proteins_full <= 2, (
         "Projected protein dim should be smaller than full protein dim"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _infer_lfc_aux fast path and LFC sign sanity
+# ---------------------------------------------------------------------------
+
+
+def test_mrmultivi_lfc_aux_fast_path_matches_full():
+    """_lfc_aux fast path gives bit-identical compute_h_from_x_eps output to full path.
+
+    When u_anchor is provided and _lfc_aux is cached, compute_h_from_x_eps skips
+    self.inference and reads libsize_expr/qz_m from the cache.  This test verifies
+    that cached values equal what inference() would return — confirming the F3/G1
+    correctness claim: libsize_expr and qz_m depend only on x/batch_index, not
+    on u_anchor.
+    """
+    import torch
+
+    model, mdata = _bi_model_and_mdata()
+    n_latent = model.module.n_latent
+    model.module.eval()
+
+    dl = model._make_data_loader(adata=mdata, batch_size=32)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    n_cells = inf_inputs["x"].shape[0]
+    extra_eps = torch.randn(n_cells, n_latent)
+
+    with torch.inference_mode():
+        # Get a deterministic u anchor
+        base_out = model.module.inference(**inf_inputs, n_samples=1)
+        u = base_out["qu"].mean
+
+        # Pre-compute the aux cache
+        aux = model.module._infer_lfc_aux(**inf_inputs)
+
+        # Full inference path: u_anchor provided, no cache → reruns inference()
+        h_full = model.module.compute_h_from_x_eps(
+            extra_eps=extra_eps, u_anchor=u, _lfc_aux=None, **inf_inputs
+        )
+
+        # Fast path: u_anchor + cache → skips inference()
+        h_fast = model.module.compute_h_from_x_eps(
+            extra_eps=extra_eps, u_anchor=u, _lfc_aux=aux, **inf_inputs
+        )
+
+    max_diff = (h_full - h_fast).abs().max().item()
+    assert max_diff < 1e-5, (
+        f"Fast path diverges from full inference path: max|diff| = {max_diff:.2e}. "
+        "libsize_expr or qz_m from _infer_lfc_aux differs from inference() output — "
+        "the F3/G1 cache-is-constant assumption may be violated."
+    )
+
+
+def test_mrmultivi_lfc_sign_known_positive_control():
+    """LFC gene-space sign is correct: a strongly up-regulated gene has positive LFC.
+
+    Constructs a two-group MuData where condition='b' cells (donor_2, donor_3)
+    have RNA gene 0 inflated by 20× its baseline mean.  After training, the
+    condition_b WLS coefficient should yield positive mean gene-0 LFC.
+
+    Design matrix encodes 'a' as reference (drop_first=True, 'a' < 'b') so
+    condition_b dummy=1 → expected lfc > 0 for gene 0.
+    """
+    import scipy.sparse as sp
+    from mudata import MuData
+
+    mdata_full = synthetic_iid(return_mudata=True)
+    n_cells = mdata_full.n_obs
+    mdata_full.obs["donor"] = [f"donor_{i % N_DONORS}" for i in range(n_cells)]
+
+    mdata_bi = MuData({
+        "rna": mdata_full.mod["rna"].copy(),
+        "protein_expression": mdata_full.mod["protein_expression"].copy(),
+    })
+    mdata_bi.obs["donor"] = mdata_full.obs["donor"].values
+    mdata_bi.obs["batch"] = mdata_full.obs["batch"].values
+    mdata_bi.obs["condition"] = np.where(
+        mdata_bi.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+
+    # Inflate RNA gene 0 for condition 'b' cells by 20× baseline mean
+    rna = mdata_bi.mod["rna"]
+    X = rna.X.toarray() if sp.issparse(rna.X) else np.array(rna.X, dtype=np.float32)
+    mean_g0 = float(X[:, 0].mean())
+    mask_b = (mdata_bi.obs["condition"] == "b").values
+    X[mask_b, 0] += 20.0 * max(mean_g0, 1.0)
+    rna.X = X.astype(np.float32)
+
+    MrMultiVI.setup_mudata(
+        mdata_bi,
+        sample_key="donor",
+        batch_key="batch",
+        modalities={"rna_layer": "rna", "protein_layer": "protein_expression"},
+    )
+    model = MrMultiVI(mdata_bi, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=30, accelerator="cpu")
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=10,
+        batch_size=64,
+        store_lfc=True,
+    )
+
+    # lfc[:, 0, 0] = per-cell LFC for first covariate (condition_b), gene 0
+    lfc_gene0 = de["lfc"].values[:, 0, 0]
+    mean_lfc = float(np.mean(lfc_gene0))
+    assert mean_lfc > 0, (
+        f"Gene 0 LFC is not positive (mean={mean_lfc:.4f}) despite 20× inflation in "
+        "condition='b'. LFC sign may be inverted or extra_eps is not reaching the decoder."
     )

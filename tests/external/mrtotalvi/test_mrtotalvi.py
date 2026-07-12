@@ -1378,3 +1378,187 @@ def test_init_prior_from_data_vamprior():
         f"data-driven pseudo-inputs norms {norms.tolist()} are unexpectedly small; "
         "expected them near data centroids"
     )
+
+
+def test_freeze_prior_after_init_mog():
+    """freeze_prior_after_init=True freezes MoG location/scale but keeps logits trainable."""
+    import torch
+
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
+                      freeze_prior_after_init=True)
+    m = model.module
+    assert not m.u_prior_means.requires_grad, "u_prior_means should be frozen"
+    assert not m.u_prior_scales.requires_grad, "u_prior_scales should be frozen"
+    assert m.u_prior_logits.requires_grad, "u_prior_logits must remain trainable"
+
+
+def test_freeze_prior_after_init_vamp():
+    """freeze_prior_after_init=True freezes VampPrior pseudo-inputs but keeps logits trainable."""
+    import torch
+
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    K = 4
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
+                      u_prior="vamp", u_prior_mixture_k=K,
+                      freeze_prior_after_init=True)
+    m = model.module
+    assert not m.u_vamp_pseudo.requires_grad, "u_vamp_pseudo should be frozen"
+    assert m.u_prior_logits.requires_grad, "u_prior_logits must remain trainable"
+
+
+def test_freeze_prior_false_default():
+    """freeze_prior_after_init defaults to False — all prior params remain trainable."""
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT)
+    m = model.module
+    assert m.u_prior_means.requires_grad
+    assert m.u_prior_scales.requires_grad
+    assert m.u_prior_logits.requires_grad
+
+
+# ---------------------------------------------------------------------------
+# New tests appended after test_n_obs_per_sample_in_state_dict
+# ---------------------------------------------------------------------------
+
+
+def test_mrtotalvi_layer_norm_trains_finite(adata_basic):
+    """MrTotalVI with use_batch_norm='none', use_layer_norm='both' trains without NaN.
+
+    use_batch_norm/use_layer_norm flow through **model_kwargs to TOTALVAE. This
+    configuration mirrors MrMultiVI's default (MULTIVAE uses LayerNorm) and is
+    the recommended setting for small-N DA (stable at N<=20 samples vs BatchNorm).
+    """
+    model = _setup_and_train(
+        adata_basic,
+        use_batch_norm="none",
+        use_layer_norm="both",
+    )
+    history = model.history
+    candidates = ["elbo_train", "train_loss", "train_loss_epoch"]
+    found = next((k for k in candidates if k in history), None)
+    assert found is not None, f"No loss key found in history: {list(history.keys())}"
+    train_loss = list(history[found].values.ravel())
+    assert all(np.isfinite(v) for v in train_loss), (
+        f"Training loss has non-finite values with LayerNorm: {train_loss}"
+    )
+
+    # Smoke-check latent representation is finite
+    u = model.get_latent_representation(give_z=False)
+    assert np.all(np.isfinite(u)), "get_latent_representation returned non-finite u"
+
+
+def test_mrtotalvi_lfc_aux_fast_path_matches_full(adata_basic):
+    """_lfc_aux fast path gives bit-identical compute_h_from_x_eps output to full path.
+
+    When u_anchor is provided and _lfc_aux is cached, compute_h_from_x_eps skips
+    _regular_inference and reads library_gene from the cache.  This test verifies
+    that the cached value equals what _regular_inference would return — confirming
+    the F3/G1 correctness claim: library_gene depends only on x/batch_index, not
+    on u_anchor.
+    """
+    import torch
+
+    model, adata = _de_lfc_model(adata_basic)
+    n_latent = model.module.n_latent
+    model.module.eval()
+
+    dl = model._make_data_loader(adata=adata, batch_size=32)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    n_cells = inf_inputs["x"].shape[0]
+    extra_eps = torch.randn(n_cells, n_latent)
+
+    with torch.inference_mode():
+        # Get a deterministic u anchor
+        base_out = model.module._regular_inference(**inf_inputs, n_samples=1)
+        u = base_out["qu"].mean
+
+        # Pre-compute the aux cache
+        aux = model.module._infer_lfc_aux(**inf_inputs)
+
+        # Full inference path: u_anchor provided, no cache → reruns _regular_inference
+        h_full = model.module.compute_h_from_x_eps(
+            extra_eps=extra_eps, u_anchor=u, _lfc_aux=None, **inf_inputs
+        )
+
+        # Fast path: u_anchor + cache → skips _regular_inference
+        h_fast = model.module.compute_h_from_x_eps(
+            extra_eps=extra_eps, u_anchor=u, _lfc_aux=aux, **inf_inputs
+        )
+
+    max_diff = (h_full - h_fast).abs().max().item()
+    assert max_diff < 1e-5, (
+        f"Fast path diverges from full inference path: max|diff| = {max_diff:.2e}. "
+        "library_gene from _infer_lfc_aux differs from _regular_inference output — "
+        "the F3/G1 cache-is-constant assumption may be violated."
+    )
+
+
+def test_mrtotalvi_lfc_sign_known_positive_control():
+    """LFC gene-space sign is correct: a strongly up-regulated gene has positive LFC.
+
+    Constructs a two-group dataset where condition='b' cells have gene 0 inflated
+    by 20× its baseline mean.  After training, the condition_b WLS coefficient
+    should yield positive mean gene-0 LFC.
+
+    The design matrix encodes condition 'a' as reference (drop_first=True, 'a' < 'b'),
+    so condition_b dummy = 1 for the high-expression group → expected lfc > 0 for gene 0.
+    """
+    import scipy.sparse as sp
+
+    adata = _make_adata(n_donors=N_DONORS)
+
+    # Two conditions: 'b' = donor_2 + donor_3; these will have inflated gene 0.
+    adata.obs["condition"] = np.where(
+        adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+
+    # Inflate gene 0 for condition 'b' cells by 20× baseline mean
+    X = adata.X.toarray() if sp.issparse(adata.X) else np.array(adata.X, dtype=np.float32)
+    mean_g0 = float(X[:, 0].mean())
+    mask_b = adata.obs["condition"] == "b"
+    X[mask_b.values, 0] += 20.0 * max(mean_g0, 1.0)
+    adata.X = X.astype(np.float32)
+
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=30, accelerator="cpu")
+
+    de = model.differential_expression(
+        sample_cov_keys=["condition"],
+        mc_samples=10,
+        batch_size=64,
+        store_lfc=True,
+    )
+
+    # lfc[:, 0, 0] = per-cell LFC for first covariate (condition_b), gene 0
+    lfc_gene0 = de["lfc"].values[:, 0, 0]
+    mean_lfc = float(np.mean(lfc_gene0))
+    assert mean_lfc > 0, (
+        f"Gene 0 LFC is not positive (mean={mean_lfc:.4f}) despite 20× inflation in "
+        "condition='b'. LFC sign may be inverted or extra_eps is not reaching the decoder."
+    )

@@ -215,6 +215,7 @@ def init_u_prior(
     u_prior_type: str = "mog",
     u_vamp_pseudo_dim: int | None = None,
     prior_centroids: "torch.Tensor | None" = None,
+    freeze_prior_after_init: bool = False,
 ) -> None:
     """Register the MrVI-style prior over ``u`` on ``module``.
 
@@ -236,6 +237,17 @@ def init_u_prior(
         initialization. For VampPrior: centroids should already be in
         pre-activation space (i.e. softplus-inverse of the raw data values).
         For MoG: centroids should be in latent space. Ignored when ``None``.
+    freeze_prior_after_init
+        If ``True``, freeze the location/shape prior parameters after
+        initialization so the prior landscape does not move during training.
+        For VampPrior this freezes ``u_vamp_pseudo``; for MoG it freezes
+        ``u_prior_means`` and ``u_prior_scales``. ``u_prior_logits`` (mixture
+        weights) remains trainable in all cases.
+
+        This is only meaningful for cross-seed DA stability when the prior is
+        also data-driven (``prior_centroids`` set via ``init_prior_from_data``
+        and ``u_prior_type="vamp"``). Freezing a randomly-initialised prior
+        locks in a different landscape per seed and provides no benefit.
     """
     for name in ("u_prior_logits", "u_prior_means", "u_prior_scales", "u_prior_scale", "u_vamp_pseudo"):
         if hasattr(module, name):
@@ -277,6 +289,12 @@ def init_u_prior(
         module.u_prior_mixture = False
         module.resolved_u_prior_mixture_k = 0
         module.register_buffer("u_prior_scale", torch.tensor(float(u_prior_scale)))
+
+    if freeze_prior_after_init:
+        for attr in ("u_vamp_pseudo", "u_prior_means", "u_prior_scales"):
+            p = getattr(module, attr, None)
+            if isinstance(p, nn.Parameter):
+                p.requires_grad_(False)
 
 
 def build_u_prior(

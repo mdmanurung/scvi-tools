@@ -117,6 +117,38 @@ These limitations are intentional cuts documented in ADR-0005 / ADR-0006.
 - `MrMultiVI.differential_expression` rejects ATAC-containing models. Use `differential_abundance`
   for sample-level DA over `u` instead.
 
+**Differential expression — empirical validation note (eps-space limitation):**
+The LFC values returned by `store_lfc=True` are decoded from the `eps = z − u` residual, which
+captures the *donor-specific* deviation from the sample-unaware base `u`. Because the `u` encoder
+absorbs cell-state variation (including treatment-induced states such as IFN activation) as part of
+cell identity, `eps` carries minimal cell-state treatment signal. On one CITE-seq dataset
+(schistosomiasis, n=10 donors, 12 cell types), eps-space LFC from all three models (MRVI,
+MrTotalVI, MrMultiVI) was **anti-concordant** with pseudobulk DE gold standard (PyDESeq2,
+Spearman rho −0.24 to +0.04 across all cell types). This limitation is architectural and
+cell-type-universal: no cell type showed positive concordance between model LFC and pseudobulk
+direction. Cross-validate eps-space LFC against pseudobulk (e.g. PyDESeq2 or edgeR) before
+drawing biological conclusions from `store_lfc=True` output.
+
+**Differential abundance — sample-count sensitivity:**
+`MrTotalVI.differential_abundance` is unreliable when `sample_key` maps to many samples relative
+to the prior capacity. In one experiment with 20 donor-timepoint samples, MrTotalVI DA varied from
+−9.0 to +9.7 across seeds (std >> mean); MrMultiVI DA at the same setup was stable (mean +0.96
+± 0.13). If using `differential_abundance` with a `sample_key` that expands the sample count
+significantly (e.g. `sample_key="donor_timepoint"`), validate stability across seeds before
+reporting results.
+
+**Integration benchmarks (single dataset, batch-correction only):**
+MrMultiVI's integration improvement over MultiVI has been benchmarked on one CITE-seq dataset
+(schistosomiasis, n=10 donors, 12 cell types; human only). Across three seeds, MrMultiVI achieves a
+total scIB score of 0.640±0.009 vs. MultiVI 0.593 (Δ+0.047; note the MultiVI baseline is a single
+seed — seed variance for MultiVI is unmeasured). The gain is entirely attributable to batch
+correction: across the same three seeds, the scIB batch sub-score improves by Δ+0.128±0.008, while
+bio conservation is flat (Δbio = −0.006±0.010, indistinguishable from zero). A single-seed
+preliminary estimate suggested Δbio ≈ +0.009, but this does not replicate in the 3-seed analysis.
+Interpret the MrMultiVI integration claim specifically as improved batch mixing; bio conservation is
+not improved. kNN label transfer is worse under MrMultiVI (local structure regresses). Multi-dataset
+validation (macaque CITE-seq) is pending.
+
 **ArchesMixin / scArches surgery:**
 Neither model supports reference-query surgery or the `ArchesMixin` protocol.
 

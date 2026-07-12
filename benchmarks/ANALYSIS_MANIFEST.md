@@ -79,9 +79,13 @@ as preliminary; multi-seed needed for publication. Runner:
 
 ### Interpretation
 
-**MrMultiVI vs MultiVI:** ✅ Clear scIB win — +0.049 total, +0.108 batch correction. MR
-hierarchical donor latent substantially improves batch mixing; bio conservation also marginally
-better. Label transfer neutral/slight negative (−0.007 acc; F1 similar or +0.020 for z).
+**MrMultiVI vs MultiVI:** ✅ Batch-correction win — +0.047 total (3-seed), +0.128±0.008 batch correction. MR
+hierarchical donor latent substantially improves batch mixing; bio conservation is unchanged
+(Δbio = −0.006±0.010, mean ≈ 0 across 3 seeds; the single-seed +0.009 estimate from F-015 was
+noise that did not replicate). MultiVI baseline is single-seed (SEED=0 fixed), so error bars are
+asymmetric: gap of +0.047 is ~5× MR's within-model std (±0.009). Label transfer negative (kNN
+regresses — see F-015; probable over-mixing of rare/single-batch cell types). See F-038 for
+3-seed bio/batch decomposition.
 
 **MrTotalVI vs TotalVI:** ❌ No scIB win — MrTotalVI_z −0.012 / MrTotalVI_u −0.017 total vs
 TotalVI. TotalVI batch correction (0.684) notably better than MrTotalVI_u (0.640) or _z (0.620).
@@ -132,20 +136,95 @@ Rationale: `sample_key="donor"` makes temporal DE/DA invalid in paired designs (
 
 MrMultiVI DTP integration win is preserved and confirmed. MrTotalVI DTP does not improve over non-DTP.
 
-**DE concordance vs PyDESeq2 gold standard (F-033):**
+**DE concordance vs PyDESeq2 gold standard (F-033, F-036):**
 
 | Model | Spearman rho | Sign agree (all) | Sign agree (top-100) | IFN direction |
 |-------|-------------|-----------------|---------------------|---------------|
-| MrTotalVI_dtp | −0.240 | 0.424 | 0.220 | **ALL WRONG (12/12 inverted)** |
+| MrTotalVI_dtp | −0.240 | 0.424 | 0.220 | 12/12 wrong; abs_max=0.013 (near-zero) |
 | MrMultiVI_dtp | +0.036 | 0.514 | n/a | near-random |
-| Old donor model | −0.095 | ~0.16 (top-100) | — | wrong |
+| Old donor model | −0.095 | ~0.16 (top-100) | — | wrong (invalid design matrix) |
+| **MRVI (reference)** | **−0.138** | **0.450** | **0.370** | **0/7 correct; abs_max=0.032 (near-zero)** |
 
-**Key finding**: Fixing the design matrix (DTP) did NOT fix IFN direction. DTP rho=−0.240 is WORSE than old model rho=−0.095. Root cause (L-079): the u encoder absorbs IFN-activated cell states; eps contains near-zero IFN signal regardless of training granularity. **eps-space DE is inherently blind to treatment-induced cell-state changes.**
+**Key finding (F-036, 2026-07-12)**: MRVI itself is anti-concordant with PyDESeq2 (rho=−0.138, sign agree on sig genes=0.324). The eps-space DE limitation (L-079) applies to the reference MRVI implementation, not only MrTotalVI/MrMultiVI. F-020 biological narrative ("IFN activation → decline → W22 suppression") is **retracted** — the cross-model IFN-suppression convergence is a shared artifact. All eps-space models show near-zero IFN LFCs; the signal is absent, not merely inverted. Script: `.scratch/mr-schisto-benchmark/compare_mrvi_pydeseq2.py`.
 
 **DA stability (F-034):**
 - MrTotalVI_dtp: mean W22 enrichment = +1.12 ± **9.46** (s0=+2.74, s1=−9.04, s2=+9.67). Completely unstable; not usable.
 
 **Conclusion**: DTP retraining fixes the design-matrix validity issue (required) and improves MrMultiVI scIB integration. It does NOT fix the fundamental eps/u partitioning limitation for treatment-level DE. For temporal DE, use PyDESeq2 pseudobulk (F-031). The model contribution is in integration quality and cell-type-level resolution, not temporal DE.
+
+### Per-cell-type DE concordance (CPU, global model LFC vs stratified pseudobulk — F-037, 2026-07-12)
+
+**Question**: does the eps-space DE limitation (L-079) vary by cell type? Are there any of the 12 cell types where global model LFC directionally agrees with cell-type-specific pseudobulk?
+
+**Method**: compared pre-computed global DTP-model LFC (W22 contrast) against 12 cell-type-stratified pseudobulk t-test results (paired, 10 donors). Script: `.scratch/mr-schisto-benchmark/compare_per_celltype_pb.py`. Output: `results/per_celltype_pb_concordance.{tsv,json}`.
+
+**Result — eps-space limitation is cell-type-universal:**
+
+| Model | Spearman rho range | IFN pairs correct |
+|-------|-------------------|------------------|
+| MRVI | −0.098 to +0.027 | 15/84 (17.9%, below chance) |
+| MrTotalVI_dtp | −0.126 to −0.008 (all negative) | 31/156 (19.9%, below chance) |
+| MrMultiVI_dtp | −0.037 to +0.012 (near-zero) | 67/156 (42.9%, near-random) |
+
+No cell type is rescued. Classical monocytes (strongest pseudobulk IFN signal) give MRVI rho=−0.098 and 0/7 IFN genes correct. MrMultiVI's best performers (Tcm/Naive cytotoxic T, Naive B cells: 8/13 IFN correct each) are still below random chance. All 12 × 3 Spearman rho values are near-zero or negative. **The eps-space DE limitation is not cell-type-specific** — it is universal across all cell types in this dataset.
+
+**Track 2 (GPU per-cell-type MRVI DE)**: script `run_mrvi_de_per_celltype.py` + SLURM job `slurm/submit_mrvi_de_per_celltype.sh` are ready. Will run actual `model.differential_expression(adata=adata_ct)` per cell type. Main risk: cell types missing donors from full cohort of 38 will be skipped. **Not yet submitted** — Track 1 already closes the question architecturally.
+
+---
+
+## Publication Confidence Review — 2026-07-12
+
+### Scope
+
+Package-level readiness of MrTotalVI and MrMultiVI for a methods publication. No manuscript draft exists; review is against the package as a tool that others would use and cite.
+
+### Positive confidence factors
+
+| Item | Evidence | Confidence |
+|------|----------|------------|
+| MrMultiVI **batch-correction** win over MultiVI | +0.047 total scIB 3-seed (F-024, F-032); Δbatch +0.128±0.008, Δbio −0.006±0.010 ≈ flat (F-038) | ✅ High (batch only) |
+| DA stability (MrMultiVI DTP) | mean +0.96 ± 0.13, 3-seed (F-035); 4.6× MRVI baseline | ✅ High |
+| Test suite | 98/98 passing (session 45) | ✅ High |
+| IFN artifact retracted, documented | F-029, F-031, F-036, F-037; F-020 PARTIALLY RETRACTED | ✅ Complete |
+| Design matrix fix (DTP) | L-076–L-078; DTP scIB improves MrMultiVI | ✅ Done |
+| ADRs and user guide updated | ADR-0005/0006; mr_multimodal.md | ✅ Done |
+
+### Risk register (publication-blocking or significant)
+
+**P0 — FIXED THIS SESSION:**
+- `mr_multimodal.md` described `store_lfc=True` as a working feature with no disclosure that eps-space LFC is empirically anti-concordant with pseudobulk across all 12 cell types (F-037). A user running DE would receive numbers that contradict the biological ground truth with no warning. **Fixed**: empirical eps-space DE disclaimer + DA stability caveat added to v1 Limitations.
+- FINDINGS_REGISTRY contained stale cross-references: F-023 status "pending sex-adjustment" (resolved by F-028 null result), F-021 pointed to retracted F-020/F-017 as evidence basis, F-026 labeled convergent IFN artifact as "most robust shared signal", F-017 status did not note IFN retraction. **Fixed**: all four entries updated.
+
+**P1 — FIXED (session 49/50):**
+1. ✅ **Batch vs bio breakdown now in `mr_multimodal.md`.** (Session 50) Added "Integration benchmarks (single dataset, batch-correction only)" block: total scIB +0.047 (3-seed); **Δbatch +0.128±0.008 dominant; Δbio = −0.006±0.010 (flat, within noise)**. Single-seed +0.009 estimate (F-015) did not replicate — corrected in manifest + docs. MultiVI baseline is single-seed; asymmetric error bars disclosed. F-038 registered.
+2. ✅ **MrTotalVI DA instability caveat with concrete numbers now in docs.** (Session 49) Added to v1 Limitations: s0=+2.74, s1=−9.04, s2=+9.67 numeric range; contrasted with MrMultiVI stable (mean +0.96 ± 0.13).
+3. ✅ **Single-dataset limitation now disclosed in docs.** (Session 50) Integration benchmarks block explicitly states validation is on one CITE-seq dataset (schisto, n=10 donors, 12 cell types); multi-dataset validation (macaque) pending.
+
+**P1 — Still open:**
+4. **kNN regression framing.** Integration uniformly hurts kNN label transfer (F-015). The manifest explanation ("kBET-skipped types disrupt local structure") is credible but asserted, not formally tested. A reviewer will ask for kBET-removed replication or cell-type-stratified kNN. Skeptic audit (F-038) confirms this is a genuine limitation, not explained away by the 6/29-small-type argument.
+
+**Skeptic audit verdict (session 50, F-038):** No show-stoppers. Win is real and consistent. Required reframings for publication:
+- "batch-correction win," not "integration win"
+- Disclose asymmetric error bars (MultiVI baseline is single-seed)
+- "MrMultiVI_u reaches parity with TotalVI within noise" (0.640 vs 0.639, not "ties")
+- MrTotalVI does NOT beat TotalVI (0.634 vs 0.639)
+- kNN regression reported as a genuine limitation alongside scIB Total
+
+**P2 — Lower priority:**
+5. **F-021 permutation null still claims "Biological evidence must rely on F-020/F-017"** — that sentence is stale. Status updated with warning, but the body text should be corrected when the findings registry is next formally revised.
+6. **DE parity section (lines 109-116) reads as a success** — technically correct (code works) but juxtaposed with the DTP results section showing anti-concordance. The sequencing is confusing without a reader note distinguishing "API is implemented" from "biological validity."
+
+### Overall confidence rating (updated session 50, post-F-038)
+
+**Moderate-High with focused framing.** P0 and P1 items are addressed. The package supports a focused methods paper that frames:
+- MrMultiVI as a **batch-correction tool** with a consistent +0.047 Total scIB improvement over MultiVI (Δbatch +0.128±0.008; bio conservation flat); reaching parity with TotalVI within noise
+- eps-space DE as **not suitable for biological conclusions** without pseudobulk cross-validation (cross-validate with PyDESeq2/edgeR before drawing conclusions)
+- MrTotalVI DA at high sample counts as unstable; MrMultiVI DA as the reliable pathway
+- kNN label transfer regression as a genuine limitation (over-mixing possible)
+
+**Remaining honest caveat**: validation is single-dataset (schisto, human only). Macaque replication pending.
+
+**The IFN-suppression retraction is complete and well-documented.** No surviving claim of IFN suppression exists in user-facing docs.
 
 ## Common utilities (`benchmarks/common/`)
 

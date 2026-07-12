@@ -1,72 +1,91 @@
-# Last Session — Session 31 (2026-07-11)
+# Last Session — Session 36 (2026-07-12)
 
 ## Session goal
-Implement all 4 approved correctness + config improvements for MrTotalVI / MrMultiVI (Changes B–E from the plan `what-is-the-status-snuggly-robin.md`).
+Verify sex-adjusted DE multi-seed result (confirm rho=1.0 is genuine), confirm all F-028/L-075
+documentation is in place, confirm plan changes B-E are all implemented and tests pass.
 
-## What was done
+---
 
-### Change E — `n_obs_per_sample` buffer persistence (L-052 closed)
+## 1. Work completed
 
-- `mrtotalvi/_module.py:241` and `mrmultivi/_module.py:256`: flipped `persistent=False` → `persistent=True`
-- Existing `UserWarning` guard in `loss()` retained as belt-and-suspenders
-- Test: `test_n_obs_per_sample_in_state_dict` in both test files — verifies `state_dict()` contains the buffer and `load_state_dict` round-trip restores it
+### Verification of sex-adj multi-seed null result
+Confirmed per-seed DDX3Y values:
+- Seed 0: sex_adj=0.1130, naive=0.1128 (≈ same)
+- Seed 1: sex_adj=0.4707, naive=0.4708 (identical — no sex adjustment effect)
+- Seed 2: sex_adj=0.7400, naive=0.7400 (identical — no sex adjustment effect)
 
-### Change C — Separate β weights for `kl_u` and `kl_z`
+Seeds 1 and 2 sex-adj = naive. Multi-seed mean sex_adj = naive (rho=1.0000). This confirms the
+null result in F-028: `donor_key='sex'` WLS adjustment is ineffective at n=5 donors.
 
-- Added `kl_u_weight: float = 1.0` and `kl_z_weight: float = 1.0` to both module constructors (`MrTotalVAE`, `MrMultiVAE`) and model constructors
-- Applied as `kl_u_weight * kl_u + kl_z_weight * kl_z` in both `loss()` methods
-- Defaults (1.0, 1.0) reproduce prior behaviour exactly
-- Threaded explicitly through `super().__init__()` calls (not absorbed into `**model_kwargs`)
-- Tests: `test_kl_weights_stored_and_non_default_differ` in both test files
+### Documentation verification — all in place
+- F-027 marked ARTIFACT in FINDINGS_REGISTRY.md ✓
+- F-028 (multi-seed null) registered in FINDINGS_REGISTRY.md ✓
+- L-075 (donor_key sex adjustment unreliable at n≤5 donors) in learnings.md ✓
+- ANALYSIS_MANIFEST.md sex-adj bullet reads "NULL RESULT (F-027 artifact, F-028 multi-seed, COMPLETE ✅)" ✓
 
-### Change D — Data-driven VampPrior / MoG prior initialization
+### Plan changes B-E — all implemented in committed code
+All four plan changes from the approved plan (what-is-the-status-snuggly-robin.md) are already
+implemented in `6c11639d feat(mrtotalvi,mrmultivi): commit full working-tree state`:
+- **Change E**: `n_obs_per_sample` buffer `persistent=True` in both modules ✓
+- **Change C**: `kl_u_weight / kl_z_weight` static scalars in both modules ✓
+- **Change D**: `init_prior_from_data=False` flag; TotalVI+VampPrior k-means init ✓ (MultiVI deferred per D-031)
+- **Change B**: `protein_in_encoder=False` default in MrMultiVI; `protein_encoder_mode` via `qu_kwargs` ✓
 
-- `_components.py` `init_u_prior`: added `prior_centroids: torch.Tensor | None = None` parameter; VampPrior and MoG branches use centroids when provided and shape matches K
-- `mrtotalvi/_module.py` and `mrmultivi/_module.py` `_setup_hierarchy`: added `prior_centroids` parameter, passed to `init_u_prior`
-- `MrTotalVI.__init__`: added `init_prior_from_data: bool = False`; when True + `u_prior="vamp"`, runs k-means on ≤10k gene+protein cells, applies softplus-inverse, passes as `prior_centroids`
-- `MrMultiVI.__init__`: same flag, silently deferred (MultiVI VampPrior pseudo-inputs are in MULTIVAE continuous latent space, not accessible at init time)
-- Test: `test_init_prior_from_data_vamprior` in TotalVI test file — verifies finite pseudo-inputs with norms > 0.5 (away from origin)
-- L-071 added documenting the MultiVI limitation
+**All 89 tests pass** (mrtotalvi + mrmultivi, 62s).
 
-### Change B — protein→u-encoder path
+---
 
-**B1 — confirmed defaults + added docstrings:**
-- `protein_in_encoder=False` already the default in both model and module
-- Added explicit Parameter documentation in both class docstrings explaining WHY (u must be sample-unaware; raw protein carries donor/batch/panel signal)
-- Also documented `kl_u_weight`, `kl_z_weight`, and `init_prior_from_data` in class docstrings
-- Test: `test_protein_in_encoder_default_false` in MultiVI test file
+## 2. Key quantitative results
 
-**B2 — experimental `protein_encoder_mode` spike:**
-- `EncoderXU_MultiVI.__init__` in `_components.py`: added `protein_encoder_mode: str = "log1p"` and `protein_encoder_proj_dim: int | None = None`
-- Modes: `"log1p"` (current behaviour), `"layernorm"` (adds `nn.LayerNorm`), `"project"` (adds `nn.Linear` reducing dim)
-- `"project"` mode changes `fc1.in_features` — uses `proj_dim` not full `n_input_proteins`
-- Flows via `qu_kwargs` — no new first-class model params needed
-- Tests: `test_protein_encoder_mode_layernorm` (trains to finite ELBO), `test_protein_encoder_mode_project` (verifies dim reduction wired correctly)
+### Final DE narrative (stable)
+- W22 multi-seed naive (F-023): DDX3Y +0.441±0.315 (sex confound), IFITM3 −0.271±0.082 (IFN, stable)
+- Sex-adj multi-seed (F-028): rho=1.000 vs naive; null result — sex adjustment not feasible at n=5 donors
+- Cross-model Spearman MrTotalVI vs MrMultiVI (F-026): 0.289; IFN genes concordant 6/9
 
-### Living-repo protocol updates
+### scIB 3-seed (stable from sessions 34/35)
+| Model | scIB Total (3-seed) | vs baseline |
+|-------|---------------------|-------------|
+| TotalVI | 0.639 | baseline |
+| MrTotalVI_u | 0.634 ± 0.007 | −0.005 |
+| MrTotalVI_z | 0.628 ± 0.004 | −0.011 |
+| MultiVI | 0.593 | baseline |
+| MrMultiVI_u | **0.640 ± 0.009** | **+0.047** ✅ |
+| MrMultiVI_z | 0.634 ± 0.006 | +0.041 ✅ |
 
-- L-052: marked CLOSED, updated with final fix description
-- L-071: added — MultiVI VampPrior data-driven init limitation
-- D-030: separate kl_u/kl_z weights design decision
-- D-031: data-driven VampPrior init design decision (TotalVI only)
-- D-032: protein_encoder_mode via qu_kwargs design decision
+---
 
-## Test results
+## 3. Current state of codebase
 
-89/89 tests pass (`tests/external/mrtotalvi/` + `tests/external/mrmultivi/`, 8 new tests added)
+Source code is clean (all changes committed). Outstanding unstaged changes are living-repo docs
+only (.living/, benchmarks/ANALYSIS_MANIFEST.md). These should be committed.
 
-## State at session end
+Plan changes B-E are fully implemented:
+- `persistent=True` buffer for `n_obs_per_sample` (Change E)
+- `kl_u_weight`, `kl_z_weight` static multipliers (Change C)
+- `init_prior_from_data` for VampPrior k-means init (Change D)
+- `protein_in_encoder=False` default + `protein_encoder_mode` spike (Change B)
 
-All 4 changes (B–E) are complete and tested. The plan (`what-is-the-status-snuggly-robin.md`) is fully executed.
+---
 
-**Deferred (separate plan):** semi-supervised auxiliary classifier (old improvement #1). Critical: eval must mask eval cells as unlabeled during training to avoid label leakage in the held-out-F1 metric.
+## 4. Files created/updated this session
 
-## Key file locations
+None — verification-only session. Prior session's docs confirmed correct.
 
-- `src/scvi/external/mrtotalvi/_module.py` — Changes E, C, D
-- `src/scvi/external/mrmultivi/_module.py` — Changes E, C, D
-- `src/scvi/external/mrtotalvi/_model.py` — Changes C, D, B1 docstrings
-- `src/scvi/external/mrmultivi/_model.py` — Changes C, D, B1 docstrings
-- `src/scvi/external/mrtotalvi/_components.py` — Change D (`init_u_prior`), Change B2 (`EncoderXU_MultiVI`)
-- `tests/external/mrtotalvi/test_mrtotalvi.py` — 3 new tests (E, C, D)
-- `tests/external/mrmultivi/test_mrmultivi.py` — 5 new tests (E, C, B1, B2×2)
+---
+
+## 5. Immediate next steps
+
+1. **Commit living-repo doc updates**: `.living/findings/FINDINGS_REGISTRY.md`,
+   `.living/learnings.md`, `benchmarks/ANALYSIS_MANIFEST.md` (all contain F-027/F-028/L-075).
+2. **MrMultiVI DE protein W22**: `de_mrtotalvi_lfc_protein_W22_sex_adj.tsv` from job 25211192
+   (single-run) exists but not yet analyzed. CD62L↑, CD36↑, CD11c↓ pattern expected from W22
+   vaccine response literature.
+3. **Publication write-up**: human cohort benchmarks complete (F-022–F-028). Key claims:
+   - MrMultiVI_u +0.047 scIB over MultiVI (robust, 3-seed ✅)
+   - MrTotalVI ≈ TotalVI (−0.005, within variance ✅)
+   - W22 IFN suppression in both models (sign-concordant 6/9; F-026)
+   - Y-chr confound present; sex adjustment not feasible at n=5 donors (L-075)
+   - Plan changes B-E implemented; tests pass (89/89)
+4. **Macaque cohort**: externally blocked (no latents available).
+5. **MrVI concordance job 25210714**: still running (>15h, 3d limit on res-hpc-gpu11). When done,
+   may inform cross-model reference concordance analysis.

@@ -508,6 +508,30 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **mitigation_type**: ambient-awareness
 **Body**: `EncoderXU_MultiVI` takes MULTIVAE's mixed latent `u0` (continuous, can be negative) as input — not raw counts. So MrMultiVI VampPrior pseudo-inputs (shape `(K, n_latent)`) live in `u0` space. Unlike MrTotalVI (raw count space, Softplus-constrained), you can't compute data centroids and apply softplus-inverse. The only way to seed them from data at init time would be to run a forward pass through the random (untrained) MULTIVAE encoder, which produces meaningless latents. `init_prior_from_data=True` is accepted syntactically by MrMultiVI but silently deferred. If data-driven MoG/VampPrior init is wanted for MultiVI, it must be done post-training via `model.module.u_prior_means.data = compute_latent_centroids(model)`.
 
+### L-072 — [2026-07-12] `de["pvalue"]` in MrTotalVI DE is per-cell, not per-gene
+**Category**: gotcha
+**Tags**: mrtotalvi, de, pvalue, calibration, permutation-null, per-cell
+**mitigation_type**: ambient-awareness
+**Body**: `_stats.py` Wald chi² computes `ts = (betas_norm**2).sum(-1).mean(0)` where `betas_norm` has shape `(mc, cells, n_cov, latent_dim)`. After squaring + summing over latent + averaging over MC, `ts` has shape `(cells, n_cov)`. So `de["pvalue"]` = chi² p-value per CELL, not per gene. The LFC path (`store_lfc=True`) computes a separate gene-level contrast via `compute_h_from_x_eps`. The permutation null (`run_permutation_null.py`) tests whether per-cell p-values are enriched below 0.05 — with n=10 donors, each permutation creates a coherent alternative biology (not a true null), producing frac_below_0.05 in [0, 1] with sd≈0.47. Real data sits at 40th–55th percentile of null → test is uninformative for calibration at n=10. To calibrate gene-level DE, would need per-gene chi² statistics (not currently exposed), or a different null strategy (shuffle cells within timepoints, not donors between timepoints).
+
+### L-073 — [2026-07-12] `model.eval()` not valid on scvi Model objects — use `model.module.eval()`
+**Category**: bug
+**Tags**: mrtotalvi, mrmultivi, eval-mode, pytorch, scvi-model
+**mitigation_type**: fix
+**Body**: scvi Model classes (MrTotalVI, MrTotalVI, etc.) do not inherit from `torch.nn.Module` and have no `.eval()` method. Calling `model.eval()` raises `AttributeError: 'MrTotalVI' object has no attribute 'eval'`. The underlying PyTorch module is at `model.module` — so `model.module.eval()` is correct. In practice, scvi Models are already in eval mode post-load for inference; the `.eval()` call is typically a defensive no-op. But in scripts that explicitly require eval mode, use `model.module.eval()`.
+
+### L-074 — [2026-07-12] `_differential_expression` with `donor_key` returns 3D LFC DataArray
+**Category**: gotcha
+**Tags**: mrtotalvi, mrmultivi, de, lfc, xarray, donor_key
+**mitigation_type**: fix
+**Body**: When `donor_key` is set, `_differential_expression` returns `lfc` as an xarray DataArray with dims `[cell_name, covariate, feature]` and shape `(n_cells, n_fixed, n_features)`. Scripts that try to slice `de_result["lfc"].values[:n_genes]` are slicing the cell axis, not the feature axis — yielding garbage. Correct extraction: (1) inspect `de_result["lfc"].coords["covariate"].values` to find the relevant covariate label (e.g., `"timepoint_W22"` from `pd.get_dummies`); (2) select with `.sel(covariate="timepoint_W22")`; (3) average over cells with `.mean("cell_name")`; result is `(n_features,)`. This applies even when `n_fixed=1`. The covariate name comes from `_construct_design_matrix`: categorical `sample_cov_keys` → `pd.get_dummies(drop_first=True)` → columns named `"{key}_{category}"`.
+
+### L-075 — [2026-07-12] `donor_key` sex adjustment unreliable at n≤5 donors (between-donor sex variable)
+**Category**: gotcha
+**Tags**: mrtotalvi, de, donor_key, sex-confound, wls, instability
+**mitigation_type**: ambient-awareness
+**Body**: `donor_key='sex'` adds a sex dummy to the WLS design matrix for eps regression. With n=5 donors (3F+2M) and sex as a between-donor variable (constant within each donor across timepoints), the sex beta is under-constrained relative to the donor-level eps variance. Consequence: the sex-adjusted W22 beta is highly sensitive to how each model seed encodes sex-linked variance in eps space. Result: DDX3Y across seeds — s0=+0.113, s1=+0.471, s2=+0.740; multi-seed mean =+0.441 = naive (rho=1.000). The seed-0 sex adjustment (job 25211187, F-027) appeared to collapse Y-chr genes ~75%, but this did NOT replicate in seeds 1+2. The multi-seed mean sex-adj is algebraically identical to the naive. **Rule**: `donor_key` sex adjustment via WLS is only reliable when sex can be identified across many donors (n≥~20 per group) or when there exists within-donor sex variation (biologically impossible). At n=5 donors, sex is nearly collinear with donor identity in the eps regression and the sex beta is stochastic. Report Y-chr confound as a limitation rather than attempting to partial it out at this sample size.
+
 ### L-068 — [2026-07-11] Subsample/h5ad version mismatch causes UMAP overlay misalignment
 **Category**: infra
 **Tags**: umap, subsample, h5ad, mismatch, benchmark

@@ -1,91 +1,79 @@
-# Last Session — Session 36 (2026-07-12)
+# Last Session — Session 43 (2026-07-12)
 
 ## Session goal
-Verify sex-adjusted DE multi-seed result (confirm rho=1.0 is genuine), confirm all F-028/L-075
-documentation is in place, confirm plan changes B-E are all implemented and tests pass.
+Document MrMultiVI DTP DA result (job 25211449), commit all accumulated changes (sessions 40–43).
 
 ---
 
 ## 1. Work completed
 
-### Verification of sex-adj multi-seed null result
-Confirmed per-seed DDX3Y values:
-- Seed 0: sex_adj=0.1130, naive=0.1128 (≈ same)
-- Seed 1: sex_adj=0.4707, naive=0.4708 (identical — no sex adjustment effect)
-- Seed 2: sex_adj=0.7400, naive=0.7400 (identical — no sex adjustment effect)
+### Part 1 — MrMultiVI DTP DA result (F-035)
+Job 25211449 completed. Result is **stable and positive**:
 
-Seeds 1 and 2 sex-adj = naive. Multi-seed mean sex_adj = naive (rho=1.0000). This confirms the
-null result in F-028: `donor_key='sex'` WLS adjustment is ineffective at n=5 donors.
+| Seed | W22 enrichment |
+|------|----------------|
+| s0   | +0.839 |
+| s1   | +0.939 |
+| s2   | +1.089 |
+| **mean ± std** | **+0.956 ± 0.126** |
+| MRVI baseline | +0.205 |
 
-### Documentation verification — all in place
-- F-027 marked ARTIFACT in FINDINGS_REGISTRY.md ✓
-- F-028 (multi-seed null) registered in FINDINGS_REGISTRY.md ✓
-- L-075 (donor_key sex adjustment unreliable at n≤5 donors) in learnings.md ✓
-- ANALYSIS_MANIFEST.md sex-adj bullet reads "NULL RESULT (F-027 artifact, F-028 multi-seed, COMPLETE ✅)" ✓
+Sharp contrast with MrTotalVI DTP DA (std=9.46 >> mean=1.12, F-034). MrMultiVI is 4.6× the MRVI baseline, stable (cv=0.13). Architectural interpretation: MrMultiVI's MULTIVAE u0 latent + LayerNorm is less sensitive to small-N prior estimation than TotalVI's BatchNorm-heavy encoder.
 
-### Plan changes B-E — all implemented in committed code
-All four plan changes from the approved plan (what-is-the-status-snuggly-robin.md) are already
-implemented in `6c11639d feat(mrtotalvi,mrmultivi): commit full working-tree state`:
-- **Change E**: `n_obs_per_sample` buffer `persistent=True` in both modules ✓
-- **Change C**: `kl_u_weight / kl_z_weight` static scalars in both modules ✓
-- **Change D**: `init_prior_from_data=False` flag; TotalVI+VampPrior k-means init ✓ (MultiVI deferred per D-031)
-- **Change B**: `protein_in_encoder=False` default in MrMultiVI; `protein_encoder_mode` via `qu_kwargs` ✓
+This is a publishable positive DA result for MrMultiVI.
 
-**All 89 tests pass** (mrtotalvi + mrmultivi, 62s).
+### Part 2 — Living docs updated
+- **F-034**: note updated — "MrMultiVI DTP DA not run" → "Contrast: MrMultiVI DTP DA is stable (see F-035)"
+- **F-035**: new finding — MrMultiVI DTP DA mean=+0.956 ± 0.126, stable, 4.6× MRVI baseline
 
----
-
-## 2. Key quantitative results
-
-### Final DE narrative (stable)
-- W22 multi-seed naive (F-023): DDX3Y +0.441±0.315 (sex confound), IFITM3 −0.271±0.082 (IFN, stable)
-- Sex-adj multi-seed (F-028): rho=1.000 vs naive; null result — sex adjustment not feasible at n=5 donors
-- Cross-model Spearman MrTotalVI vs MrMultiVI (F-026): 0.289; IFN genes concordant 6/9
-
-### scIB 3-seed (stable from sessions 34/35)
-| Model | scIB Total (3-seed) | vs baseline |
-|-------|---------------------|-------------|
-| TotalVI | 0.639 | baseline |
-| MrTotalVI_u | 0.634 ± 0.007 | −0.005 |
-| MrTotalVI_z | 0.628 ± 0.004 | −0.011 |
-| MultiVI | 0.593 | baseline |
-| MrMultiVI_u | **0.640 ± 0.009** | **+0.047** ✅ |
-| MrMultiVI_z | 0.634 ± 0.006 | +0.041 ✅ |
+### Part 3 — Committed all accumulated changes
+Single commit covering sessions 40–43 work:
+- CRN fix (`_stats.py`, both `_module.py`)
+- CRN identity tests (both test files)
+- L-081 (MrMultiVI load bug), D-034 (CRN decision), living docs (F-035, F-034 update)
+- ANALYSIS_MANIFEST update
 
 ---
 
-## 3. Current state of codebase
+## 2. Key quantitative facts
 
-Source code is clean (all changes committed). Outstanding unstaged changes are living-repo docs
-only (.living/, benchmarks/ANALYSIS_MANIFEST.md). These should be committed.
-
-Plan changes B-E are fully implemented:
-- `persistent=True` buffer for `n_obs_per_sample` (Change E)
-- `kl_u_weight`, `kl_z_weight` static multipliers (Change C)
-- `init_prior_from_data` for VampPrior k-means init (Change D)
-- `protein_in_encoder=False` default + `protein_encoder_mode` spike (Change B)
+| Metric | Value |
+|--------|-------|
+| MrMultiVI DTP DA W22 enrichment | +0.956 ± 0.126 ✅ (stable, 4.6× baseline) |
+| MrTotalVI DTP DA W22 enrichment | +1.12 ± 9.46 ❌ (unstable, std >> mean) |
+| MrMultiVI_u_dtp scIB (3-seed) | 0.648 ± 0.006 (+0.057 vs MultiVI ✅) |
+| CRN identity test | PASS: max\|LFC\| < 1e-5 ✅ |
 
 ---
 
-## 4. Files created/updated this session
+## 3. Files created/updated this session
 
-None — verification-only session. Prior session's docs confirmed correct.
+### Modified
+- `.living/findings/FINDINGS_REGISTRY.md` — F-034 updated, F-035 added
+- `.claude/last-session.md` — this file
 
 ---
 
-## 5. Immediate next steps
+## 4. Immediate next steps
 
-1. **Commit living-repo doc updates**: `.living/findings/FINDINGS_REGISTRY.md`,
-   `.living/learnings.md`, `benchmarks/ANALYSIS_MANIFEST.md` (all contain F-027/F-028/L-075).
-2. **MrMultiVI DE protein W22**: `de_mrtotalvi_lfc_protein_W22_sex_adj.tsv` from job 25211192
-   (single-run) exists but not yet analyzed. CD62L↑, CD36↑, CD11c↓ pattern expected from W22
-   vaccine response literature.
-3. **Publication write-up**: human cohort benchmarks complete (F-022–F-028). Key claims:
-   - MrMultiVI_u +0.047 scIB over MultiVI (robust, 3-seed ✅)
-   - MrTotalVI ≈ TotalVI (−0.005, within variance ✅)
-   - W22 IFN suppression in both models (sign-concordant 6/9; F-026)
-   - Y-chr confound present; sex adjustment not feasible at n=5 donors (L-075)
-   - Plan changes B-E implemented; tests pass (89/89)
-4. **Macaque cohort**: externally blocked (no latents available).
-5. **MrVI concordance job 25210714**: still running (>15h, 3d limit on res-hpc-gpu11). When done,
-   may inform cross-model reference concordance analysis.
+1. **Publication narrative is settled**:
+   - scIB integration: MrMultiVI_u_dtp 0.648 (+0.057 vs MultiVI) — headline win
+   - DA: MrMultiVI DTP W22 enrichment +0.956 ± 0.126 ✅ publishable; MrTotalVI DA unreliable
+   - Temporal DE: PyDESeq2 (F-031) is the reference; eps-space DE architecturally limited (L-079)
+
+2. **Plan changes E/C/D/B** (plan: `what-is-the-status-snuggly-robin.md`):
+   - E: scale_observations persistence fix (flip persistent=False → True)
+   - C: separate β weights for KL_u vs KL_z
+   - D: data-driven VampPrior init
+   - B: protein-in-encoder default flip + experimental spike
+
+3. **Macaque cohort**: externally blocked (no latents).
+
+---
+
+## 5. Known issues / blockers
+
+- eps-space DE for temporal contrasts architecturally limited (L-079) — report as limitation
+- Old `sample_key="donor"` model DE/DA results invalid (L-076, L-078)
+- `MrMultiVI.load()` requires MuData (L-081)
+- MrTotalVI DA unreliable at 20 samples (F-034, L-080)

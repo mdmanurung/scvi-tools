@@ -97,6 +97,23 @@ def differential_abundance(
 ) -> xr.Dataset:
     """Compute MrVI-style differential abundance log probabilities over ``u``."""
     adata = model._validate_anndata(adata)
+
+    # Validate that each sample maps to exactly one value of each covariate (L-078).
+    if sample_cov_keys:
+        for cov in sample_cov_keys:
+            if cov not in adata.obs.columns:
+                continue
+            n_per_sample = adata.obs.groupby(sample_key, observed=True)[cov].nunique()
+            bad = n_per_sample[n_per_sample > 1]
+            if len(bad):
+                raise ValueError(
+                    f"differential_abundance: sample_cov_key '{cov}' is not sample-level — "
+                    f"{len(bad)} sample(s) map to >1 value of '{cov}' "
+                    f"(e.g. '{bad.index[0]}'). "
+                    f"Retrain with a finer-grained sample_key (e.g. 'donor_timepoint') "
+                    f"so each sample maps to exactly one {cov} value."
+                )
+
     sample_values = list(model.sample_order) if hasattr(model, "sample_order") else list(
         adata.obs[sample_key].unique()
     )
@@ -401,6 +418,29 @@ def _differential_expression(
     model._check_if_trained(warn=False)
     adata = model._validate_anndata(adata)
 
+    # Validate: each sample (model.sample_key level) must map to exactly one
+    # value of every sample_cov_key.  If a donor spans multiple timepoints but
+    # sample_key="donor", drop_duplicates(subset=sample_key) silently picks a
+    # data-order-dependent timepoint — making the design matrix wrong (L-077).
+    _cov_to_check = list(sample_cov_keys)
+    if donor_key and donor_key != model.sample_key:
+        _cov_to_check.append(donor_key)
+    for _cov in _cov_to_check:
+        if _cov not in adata.obs.columns:
+            continue
+        _nunique = adata.obs.groupby(model.sample_key, observed=True)[_cov].nunique()
+        _bad = _nunique[_nunique > 1]
+        if len(_bad) > 0:
+            raise ValueError(
+                f"sample_cov_key '{_cov}' is not constant within sample_key '{model.sample_key}' "
+                f"for the following samples: {_bad.index.tolist()}.  "
+                f"MrVI-style DE requires each sample (model.sample_key level) to map to "
+                f"exactly one covariate value; otherwise drop_duplicates() picks an "
+                f"arbitrary value and the design matrix is incorrect.  "
+                f"To test a within-sample condition (e.g. timepoint), retrain the model with "
+                f"a more granular sample_key (e.g. 'donor_timepoint')."
+            )
+
     n_sample = model.summary_stats.n_sample
     sample_mask = (
         np.isin(model.sample_order, list(sample_subset))
@@ -504,10 +544,12 @@ def _differential_expression(
                     return torch.stack(eps_list, dim=1)
 
                 if mc_samples == 1:
+                    u_samples = [qu.loc]
                     eps_batch = _eps_from_u(qu.loc).unsqueeze(0)
                 else:
+                    u_samples = [qu.rsample() for _ in range(mc_samples)]
                     eps_batch = torch.stack(
-                        [_eps_from_u(qu.rsample()) for _ in range(mc_samples)], dim=0
+                        [_eps_from_u(u_i) for u_i in u_samples], dim=0
                     )
                 # eps_batch: (mc, n_cells, n_sample_kept, n_latent)
 
@@ -593,14 +635,23 @@ def _differential_expression(
                         h_kwargs_b = dict(h_kwargs)
                         h_kwargs_b["batch_index"] = batch_cf
 
-                        # Null decode: eps = eps_mean_cell (no covariate shift)
-                        x_0_b = model.module.compute_h_from_x_eps(
-                            extra_eps=eps_mean_cell, **h_kwargs_b
-                        )  # (n_cells, n_features)
-                        log_x0 = torch.log2(x_0_b + eps_lfc)  # (n_cells, n_features)
+                        # CRN: null decode per MC draw, sharing u_samples[mc_idx]
+                        # with the contrast decode below.  x_0 varies with u so
+                        # lfc_std now captures u-posterior uncertainty (not just
+                        # regression uncertainty in beta).
+                        x0_mc = []
+                        log_x0_mc = []
+                        for mc_idx in range(mc_samples):
+                            x_0 = model.module.compute_h_from_x_eps(
+                                extra_eps=eps_mean_cell,
+                                u_anchor=u_samples[mc_idx],
+                                **h_kwargs_b,
+                            )  # (n_cells, n_features)
+                            x0_mc.append(x_0)
+                            log_x0_mc.append(torch.log2(x_0 + eps_lfc))
 
                         if lfc_wsum is None:
-                            n_features_lfc = x_0_b.shape[-1]
+                            n_features_lfc = x0_mc[0].shape[-1]
                             lfc_wsum = torch.zeros(
                                 n_fixed, n_cells, n_features_lfc, device=device
                             )
@@ -613,10 +664,9 @@ def _differential_expression(
                                 )
 
                         if store_baseline:
-                            baseline_wsum += w_b * x_0_b
+                            baseline_wsum += w_b * torch.stack(x0_mc, 0).mean(0)
 
-                        # Contrast decode per covariate × MC draw
-                        # lfc_mc_cov: (n_fixed, mc, n_cells, n_features)
+                        # Contrast decode per covariate × MC draw; share u_anchor (CRN)
                         lfc_mc_cov_list = []
                         for k in range(n_fixed):
                             lfc_mc_k = []
@@ -625,10 +675,12 @@ def _differential_expression(
                                     betas_eps[mc_idx, :, k, :] + eps_mean_cell
                                 )  # (n_cells, n_latent)
                                 x_1 = model.module.compute_h_from_x_eps(
-                                    extra_eps=extra, **h_kwargs_b
+                                    extra_eps=extra,
+                                    u_anchor=u_samples[mc_idx],
+                                    **h_kwargs_b,
                                 )  # (n_cells, n_features)
                                 lfc_mc_k.append(
-                                    torch.log2(x_1 + eps_lfc) - log_x0
+                                    torch.log2(x_1 + eps_lfc) - log_x0_mc[mc_idx]
                                 )
                             lfc_mc_cov_list.append(
                                 torch.stack(lfc_mc_k, 0)

@@ -639,6 +639,7 @@ class MrTotalVAE(TOTALVAE):
         cont_covs: torch.Tensor | None = None,
         cat_covs: torch.Tensor | None = None,
         cf_sample: torch.Tensor | None = None,
+        u_anchor: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return ``concat([px_scale, py_scale_det])`` at ``z = z_base + extra_eps``.
 
@@ -706,12 +707,15 @@ class MrTotalVAE(TOTALVAE):
             cf_sample=cf_sample,
         )
 
-        # Use the posterior MEAN of u for a deterministic z_base (mirrors MRVI).
-        # out["z_base"] was computed from qu.rsample(), which changes each call.
-        # Recomputing from qu.mean gives a fixed anchor for the LFC contrast.
+        # CRN path: when u_anchor is provided (by _stats.py MC loop), use it
+        # directly so both x_0 and x_1 at the same MC step share the same
+        # sampled u — eliminating the cross-term variance and giving an unbiased
+        # posterior-marginalized LFC estimator without Jensen bias.
+        # Legacy fallback (u_anchor=None): use qu.mean — deterministic but biased.
         qu = out["qu"]
         sample_index_cf = sample_index if cf_sample is None else cf_sample
-        z_base, _, _ = self.qz(qu.mean, sample_index_cf)  # deterministic
+        u = u_anchor if u_anchor is not None else qu.mean
+        z_base, _, _ = self.qz(u, sample_index_cf)
         z = z_base + extra_eps      # counterfactual latent
         library_gene = out["library_gene"]  # (batch, 1)
 

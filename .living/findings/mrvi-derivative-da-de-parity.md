@@ -1,8 +1,8 @@
 # Findings: DA/DE Parity — MRVI vs MrTotalVI / MrMultiVI
 
-**Date:** 2026-07-11 (updated session-25)
-**Status:** verified (source line refs inline); LFC section updated to reflect implemented state
-**Author:** session-24 (plan), session-25 (LFC gap closed)  
+**Date:** 2026-07-12 (updated session-42)
+**Status:** verified; CRN fix implemented — LFC is now an unbiased posterior-marginalized estimator
+**Author:** session-24 (plan), session-25 (LFC gap closed), session-41 (estimand difference documented), session-42 (CRN fix implemented)
 
 ---
 
@@ -144,6 +144,22 @@ working-tree commit). The description below reflects the current implemented sta
 - **D-023** — RNA scale: softmax `scale` (MRVI-h analog). ✅ implemented.
 - **D-024** — vmap policy: `use_vmap` param in `_stats.py` is currently ignored;
   the LFC path uses explicit Python loops (safe with BatchNorm decoders). ✅ implemented.
+
+### Estimand: posterior-marginalized LFC via CRN (implemented 2026-07-12)
+
+Mr* now uses **Common Random Numbers (CRN)** to estimate the posterior-marginalized LFC:
+
+> E_u[log2 dec(u + β_k)] − E_u[log2 dec(u + β_null)]
+
+**Implementation:** `_stats.py` stores `u_samples` (one sampled u per MC draw) alongside `eps_batch`. In the LFC block, both x_0 and x_1 for MC draw `mc_idx` receive `u_anchor=u_samples[mc_idx]`. x_0 is now computed inside the MC loop (not once outside). Both `compute_h_from_x_eps` hooks accept `u_anchor: torch.Tensor | None` — when provided, it overrides `qu.mean` as the latent anchor for `qz(u, cf_sample)`.
+
+**Correctness proof:** Because `EncoderUZ` with `use_map=True` (default) is deterministic given u, `qz(u_anchor, cf)` → `(u_anchor, eps_det, None)` — so `z_base = u_anchor` exactly. When `extra_eps` for x_0 and x_1 are both equal to `eps_mean_cell`, the two decode calls are bit-identical → LFC == 0 exactly (verified by `test_mrtotalvi_crn_identity` / `test_mrmultivi_crn_identity`).
+
+**Variance:** `lfc_mc_cov.var(1)` now captures both β_k regression uncertainty (across MC) and u-posterior uncertainty (u_anchor varies per draw). `lfc_std` is no longer anti-conservative.
+
+**Legacy path:** `u_anchor=None` → `qu.mean` (Jensen-biased) is retained for standalone callers (D-021 determinism tests). `_stats.py` always provides `u_anchor`. See D-034.
+
+**Comparison to MRVI reference:** MRVI uses independent u draws in separate vmap slices (unbiased but high-variance, Cov=0). Mr* CRN is lower-variance and unbiased — a genuine improvement over both the original `qu.mean` path and MRVI's independent-draws approach.
 
 ---
 

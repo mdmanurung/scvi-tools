@@ -526,13 +526,92 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **mitigation_type**: fix
 **Body**: When `donor_key` is set, `_differential_expression` returns `lfc` as an xarray DataArray with dims `[cell_name, covariate, feature]` and shape `(n_cells, n_fixed, n_features)`. Scripts that try to slice `de_result["lfc"].values[:n_genes]` are slicing the cell axis, not the feature axis — yielding garbage. Correct extraction: (1) inspect `de_result["lfc"].coords["covariate"].values` to find the relevant covariate label (e.g., `"timepoint_W22"` from `pd.get_dummies`); (2) select with `.sel(covariate="timepoint_W22")`; (3) average over cells with `.mean("cell_name")`; result is `(n_features,)`. This applies even when `n_fixed=1`. The covariate name comes from `_construct_design_matrix`: categorical `sample_cov_keys` → `pd.get_dummies(drop_first=True)` → columns named `"{key}_{category}"`.
 
-### L-075 — [2026-07-12] `donor_key` sex adjustment unreliable at n≤5 donors (between-donor sex variable)
+### L-075 — [2026-07-12] `donor_key='sex'` has zero effect in a balanced paired design (orthogonal to timepoint)
 **Category**: gotcha
 **Tags**: mrtotalvi, de, donor_key, sex-confound, wls, instability
 **mitigation_type**: ambient-awareness
-**Body**: `donor_key='sex'` adds a sex dummy to the WLS design matrix for eps regression. With n=5 donors (3F+2M) and sex as a between-donor variable (constant within each donor across timepoints), the sex beta is under-constrained relative to the donor-level eps variance. Consequence: the sex-adjusted W22 beta is highly sensitive to how each model seed encodes sex-linked variance in eps space. Result: DDX3Y across seeds — s0=+0.113, s1=+0.471, s2=+0.740; multi-seed mean =+0.441 = naive (rho=1.000). The seed-0 sex adjustment (job 25211187, F-027) appeared to collapse Y-chr genes ~75%, but this did NOT replicate in seeds 1+2. The multi-seed mean sex-adj is algebraically identical to the naive. **Rule**: `donor_key` sex adjustment via WLS is only reliable when sex can be identified across many donors (n≥~20 per group) or when there exists within-donor sex variation (biologically impossible). At n=5 donors, sex is nearly collinear with donor identity in the eps regression and the sex beta is stochastic. Report Y-chr confound as a limitation rather than attempting to partial it out at this sample size.
+**Body**: `donor_key='sex'` adds a sex dummy to the WLS design matrix for eps regression. In the schisto CITE-seq dataset (10 donors, 4M+6F, **all with both W00 and W22 timepoints**), sex is perfectly balanced across timepoints — sex is orthogonal to timepoint in the design matrix. Consequence: including sex in WLS does not change the timepoint beta at all; the sex-adjusted and naive multi-seed means are algebraically identical (rho=1.000). The seed-0 Y-chr collapse (F-027, job 25211187) was a stochastic artifact of one model seed's eps encoding; it did NOT replicate in seeds 1+2 (DDX3Y: s0=+0.113, s1=+0.471, s2=+0.740). **Correction**: prior documentation erroneously stated n=5 donors; the dataset has n=10 donors (4M: RC458, RC660, RC681, RC966; 6F: RC122, RC232, RC307, RC365, RC393, RC441). **Rule**: when timepoint and sex are orthogonal in the study design (balanced paired design), WLS sex adjustment cannot remove sex confounds in `eps` — the betas are independent by construction. The Y-chr confound should be reported as a limitation; it arises because the model's eps encodes cross-donor variation that includes sex-linked biology, which paired pseudobulk (F-029) correctly cancels via within-donor differencing.
+
+### L-076 — [2026-07-12] Model eps-space timepoint contrast can reverse IFN sign vs pseudobulk ground truth — root cause: design matrix misspecification
+**Category**: design
+**Tags**: mrtotalvi, de, eps, ifn, calibration, pseudobulk, artifact, sample_key
+**mitigation_type**: ambient-awareness
+**Body**: In MrTotalVI DE (`sample_cov_keys=["timepoint"]`, model trained with `sample_key="donor"`), the WLS produces IFN genes as negative at W22, while donor pseudobulk (ground truth) shows IFN consistently UP in every cell type. The root cause is a **design matrix misspecification**, not just eps signal partitioning:
+
+**Primary mechanism** (design matrix is wrong): `eps = EncoderUZ.forward(u, donor_id)` — the sample-specific residual depends only on the donor identity (embedding table has one entry per donor), NOT per timepoint. When `_differential_expression` builds `sample_info`, it calls `adata.obs[["donor","timepoint"]].drop_duplicates(subset="donor")` over the full 4-timepoint adata. This assigns each donor its first-seen timepoint in the data file, not its actual timepoint at DE time. For schisto CITE-seq the resulting "W22" flag = {RC441, RC232, RC365} vs others — a donor-group comparison with no temporal meaning. The WLS "timepoint_W22 beta" estimates the eps deviation of those 3 donors from the rest, not a within-donor W22 vs W00 effect.
+
+**Secondary mechanism** (eps has no within-donor temporal information): even if the design matrix were constructed correctly, eps = attention(u, embed(donor_id)) produces the SAME residual for W00 and W22 cells from the same donor. There is no mechanism by which eps encodes within-donor temporal change when sample_key=donor.
+
+**Correct setup for temporal DE**: retrain with `sample_key="donor_timepoint"` (20 samples) so each (donor, timepoint) pair has its own embedding, and eps captures temporal variation. Or use calibrated pseudobulk (F-029) as ground truth.
+
+**Rule**: MrVI-style eps-space DE is only valid when `model.sample_key` granularity matches the condition variable in `sample_cov_keys`. When sample_key=donor and sample_cov_keys=["timepoint"], the analysis is invalid for within-donor temporal DE (see L-077).
+
+### L-077 — [2026-07-12] MrVI-style DE: sample_key granularity must match condition granularity
+**Category**: design
+**Tags**: mrtotalvi, mrmultivi, de, sample_key, design-matrix, temporal, paired
+**mitigation_type**: structural
+**structural_mitigation_candidate**: IMPLEMENTED — `_stats.py` `_differential_expression` now raises `ValueError` when any sample maps to >1 value of any sample_cov_key. Tests: `test_mrtotalvi_de_raises_on_nonunique_cov`, `test_mrmultivi_de_raises_on_nonunique_cov`.
+**Body**: The `_differential_expression` function builds its design matrix by `drop_duplicates(subset=model.sample_key)` over `adata.obs`. This assumes each sample (= one row in model's embedding table) maps to exactly ONE value of each `sample_cov_key`. If a donor spans multiple timepoints (paired design), the drop_duplicates silently picks the first-seen timepoint per donor — a data-order artifact, not a biological property.
+
+**When it breaks**: `sample_key="donor"` + `sample_cov_keys=["timepoint"]` with paired (longitudinal) data. Each donor appears at multiple timepoints; drop_duplicates picks arbitrarily.
+
+**When it works correctly**: `sample_key="donor_timepoint"` (each sample = one unique condition). Then drop_duplicates is a no-op (each sample has exactly one condition level), and the design matrix is correct.
+
+**Structural mitigation (IMPLEMENTED 2026-07-12)**: `_stats.py` `_differential_expression` now validates that each sample maps to exactly one value of every `sample_cov_key` (and `donor_key` if provided). Raises `ValueError("... not constant within sample_key ...")` at call time if the invariant is violated. Tests added to both `test_mrtotalvi.py` and `test_mrmultivi.py`.
+
+### L-079 — [2026-07-12] eps-space DE cannot detect treatment-induced cell-state changes — u absorbs the signal
+**Category**: design
+**Tags**: mrtotalvi, mrmultivi, de, eps, cell-state, treatment-effect, ifn, artifact, fundamental-limitation
+**mitigation_type**: ambient-awareness
+**Body**: Even after fixing the design matrix with DTP retraining (`sample_key="donor_timepoint"`), MrTotalVI/MrMultiVI eps-space DE still reports IFN genes as DOWN at W22 vs PyDESeq2 gold standard IFN UP (Spearman rho=−0.240, all 12 IFN genes wrong direction — see F-033). The reason is architectural: `u = EncoderXU(x)` is a function of the cell's gene expression `x`. IFN activation is a cell state that manifests as changes in `x` (higher STAT1, IFIT3, GBP1, etc.). The u encoder captures this cell state because it is trained on cell-level expression. So u at W22 is already "high-IFN" for IFN-activated cells. Then `eps = z − u` is the residual after removing the cell-intrinsic state — eps contains very little IFN signal because IFN information is already encoded in u. When the WLS regresses eps on the design matrix, the IFN direction is driven by noise/second-order effects, not by the primary biological signal.
+
+**Contrast with donor effects**: eps WAS designed to capture donor-level variation (genetic background, technical effects) that affects all cells from a donor identically regardless of their individual cell state. For such effects, u (cell-state) is similar between donors and the donor-specific deviation lands in eps — making eps-space DE appropriate. For treatment effects that change cell states (e.g., IFN activation from infection treatment), the signal routes through u, not eps.
+
+**Quantitative confirmation**: old donor model rho=−0.095 → DTP model rho=−0.240. Fixing the design matrix made things WORSE in concordance terms because DTP correctly identifies IFN as the primary temporal signal (it appears cleanly in the DTP top-DOWN genes) but still assigns it the wrong direction. The signal is real but inverted.
+
+**Practical rule**: eps-space DE in MrVI-family models is NOT appropriate for detecting treatment-induced cell-state changes. Use calibrated pseudobulk (PyDESeq2, F-031) for those. eps-space DE is appropriate for identifying donor/batch covariate effects that persist across cell types (e.g., a covariate that shifts eps direction independently of cell state — a true sample-level additive effect in latent space). The u vs eps partition is fundamentally a "cell state" vs "sample effect" partition.
+
+---
+
+### L-080 — [2026-07-12] DTP MrTotalVI DA seed variance is catastrophic (std ≈ 8× mean)
+**Category**: data
+**Tags**: mrtotalvi, da, dtp, seed-instability, mog-prior, temporal
+**mitigation_type**: ambient-awareness
+**Body**: DTP MrTotalVI DA per-seed W22 enrichment: s0=+2.74, s1=−9.04, s2=+9.67; mean=+1.12, std=9.46. The seed with negative enrichment (s1=−9.04) reports cells as more likely at W00 than W22, the opposite of both the positive seeds and biological expectation. With 20 samples (10 donors × 2 timepoints), the sample-level MoG or VampPrior u-prior is harder to learn reliably than with the original 10-donor setup — the prior collapses differently per seed. The DA result is meaningless at 3 seeds. Contrast: DA with original `sample_key="donor"` on 10 samples was blocked (wrong granularity, L-078), so no baseline comparison is possible. **Rule**: DA requires sufficient samples (>> 20) and stable training across seeds; 3 seeds at 20 samples is insufficient for MrVI-style DA. The `differential_abundance` result is inherently less stable than `differential_expression` because it is computed entirely in latent u-space, making it more sensitive to the prior.
+
+---
 
 ### L-068 — [2026-07-11] Subsample/h5ad version mismatch causes UMAP overlay misalignment
 **Category**: infra
 **Tags**: umap, subsample, h5ad, mismatch, benchmark
 **Body**: Pre-computed UMAP coords (`umap_coords_MrMultiVI_u.tsv.gz`) generated Jul 11 11:35; the h5ad was subsequently modified (Jul 11 19:43). The subsample (SEED=0, same MAX_CELLS=50k, same `celltype_not_null` filter) produces a different set of obs_names when reindex is done on the new h5ad, yielding only 19861/49752 aligned cells for the Jaccard overlay. Analysis results (F1, purity, ARI, NMI, Leiden cross-recoverability) are fully valid on the current subsample. Fix: always regenerate UMAP coords in the same script that generates the analysis subsample, or save subsample obs_names as a sidecar file.
+
+### L-081 — [2026-07-12] MrMultiVI.load() requires MuData, not AnnData — `_validate_var_names` calls `.get()` on numpy array
+**Category**: bug
+**Tags**: mrmultivi, load, save_load, mudata, anndata, validate_var_names
+**mitigation_type**: code_fix
+**Body**: `Model.load(str(model_dir), adata=adata)` calls `_validate_var_names` in `_save_load.py:231`. For MrMultiVI, `load_var_names` is the `var_names` attribute of the input data, which is a `numpy.ndarray` when an `AnnData` is passed. But `_validate_var_names` assumes a dict-like structure and calls `.get(mod_key)` on it — raising `AttributeError: 'numpy.ndarray' object has no attribute 'get'`. The fix is to pass a `MuData` (with `{"rna": rna_adata, "protein": protein_adata}` modalities) instead of a flat `AnnData`. The `make_mrmultivi_mdata(adata)` helper in `run_multiseed_de.py` implements this correctly; `run_dtp_da.py` was missing the conversion. Fix applied: check `if model_cls is MrMultiVI` in `run_dtp_da.py:run_da_seed` and call `make_mrmultivi_mdata(adata)` before the `.load()` call. General rule: any script loading MrMultiVI must pass MuData, not AnnData.
+
+### L-082 — [2026-07-12] mr* `lfc_std` anti-conservatism: Jensen bias from qu.mean — FIXED with CRN
+**Category**: design
+**Tags**: mrtotalvi, mrmultivi, lfc, lfc_std, pde, qu_mean, crn, estimand, anti-conservative
+**mitigation_type**: structural
+**structural_mitigation_candidate**: `test_mrtotalvi_crn_identity`, `test_mrmultivi_crn_identity` (CRN identity: same u+eps → LFC == 0)
+**Body**: `compute_h_from_x_eps` originally used `qu.mean` as the latent anchor, shifting the estimand from the posterior-marginalized LFC to a point-estimate LFC at u_mean. Two consequences: (1) Jensen bias — `dec(E[u]) ≠ E[dec(u)]` for nonlinear decoders; (2) Anti-conservative intervals — x_0 was computed once outside the MC loop, so `lfc_std`/`pde` captured only regression uncertainty in β_k.
+
+**Fix implemented (2026-07-12)**: Common Random Numbers (CRN). Both modules now accept `u_anchor: torch.Tensor | None`. `_stats.py` stores `u_samples` per MC draw and passes `u_anchor=u_samples[mc_idx]` to both x_0 and x_1 decode calls. x_0 is now computed inside the MC loop. This gives the correct posterior-marginalized LFC estimator with proper variance. The `u_anchor=None` legacy path (uses qu.mean) is kept for standalone callers (e.g. test_d021_*) — see D-034.
+
+**Residual awareness**: with default `use_map=True` in `EncoderUZ`, `qz(u_anchor, cf)` is deterministic given u_anchor — so the only randomness in the LFC MC loop is from `qu.rsample()`. `library_gene`/`libsize_expr` scale the rate but not `px_scale` (softmax) or `py_scale_det` (deterministic D-021), so they do not contaminate the contrast.
+
+### L-078 — [2026-07-12] sample_key='donor' makes DA invalid in repeated-measures (paired) designs
+**Category**: design
+**Tags**: mrtotalvi, mrmultivi, differential_abundance, sample_key, design-matrix, temporal, paired, da
+**mitigation_type**: structural
+**structural_mitigation_candidate**: validate in _stats.differential_abundance that each sample_key maps to exactly one value of each sample_cov_key
+**Body**: `differential_abundance(sample_cov_keys=["timepoint"])` aggregates per-sample log-probs in `u` space and regresses them on the covariate. This requires that each sample (`model.sample_key` level) maps to exactly one covariate value. With `sample_key="donor"` in a longitudinal design (each donor at 4 timepoints), `sample_info = adata.obs[["donor","timepoint"]].drop_duplicates(subset="donor")` silently picks the first-seen timepoint per donor — a data-order artifact. The covariate assignment is wrong, so DA results are meaningless.
+
+**Fix**: retrain with `sample_key="donor_timepoint"` (38 samples, one per donor×timepoint). Each sample then has an unambiguous timepoint. MRVI (trained with `sample_key="final_label"` ≈ donor×timepoint) was already using the correct granularity; MrTotalVI/MrMultiVI were not.
+
+**General rule**: for any MrVI-style model, the granularity of `sample_key` must be ≥ the granularity of every `sample_cov_key` used in `differential_expression` or `differential_abundance`. In a repeated-measures design with timepoint as condition, `sample_key` must be at donor×timepoint level.
+
+**Structural fix pending**: add a pre-flight check in `_stats.differential_abundance` (and `_differential_expression`): for each `sample_cov_key`, assert that `adata.obs.groupby(model.sample_key)[key].nunique().max() == 1`.

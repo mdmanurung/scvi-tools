@@ -689,6 +689,49 @@ def test_mrmultivi_differential_expression_rna_protein():
     assert np.all((de["padj"].values >= 0) & (de["padj"].values <= 1))
 
 
+def test_mrmultivi_de_raises_on_nonunique_cov():
+    """ValueError when sample_cov_key is not constant within sample_key (L-077).
+
+    Models trained with sample_key="donor" cannot test within-donor conditions
+    (e.g. timepoint) via sample_cov_keys — drop_duplicates picks an arbitrary
+    timepoint per donor, making the design matrix wrong.
+    """
+    from mudata import MuData
+
+    mdata_full = synthetic_iid(return_mudata=True)
+    n_cells = mdata_full.n_obs
+    mdata_full.obs["donor"] = [f"donor_{i % N_DONORS}" for i in range(n_cells)]
+
+    mdata_bi = MuData({
+        "rna": mdata_full.mod["rna"].copy(),
+        "protein_expression": mdata_full.mod["protein_expression"].copy(),
+    })
+    mdata_bi.obs["donor"] = mdata_full.obs["donor"].values
+    mdata_bi.obs["batch"] = mdata_full.obs["batch"].values
+    # Each donor spans both timepoints — paired design where donor ≠ timepoint.
+    # Round-robin assignment means donor index = i % N_DONORS; use block-based
+    # timepoint (i // N_DONORS) % 2 so every donor gets cells at both timepoints.
+    mdata_bi.obs["timepoint"] = np.where(
+        (np.arange(n_cells) // N_DONORS) % 2 == 0, "T0", "T1"
+    )
+
+    MrMultiVI.setup_mudata(
+        mdata_bi,
+        sample_key="donor",
+        batch_key="batch",
+        modalities={"rna_layer": "rna", "protein_layer": "protein_expression"},
+    )
+    model = MrMultiVI(mdata_bi, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    with pytest.raises(ValueError, match="not constant within"):
+        model.differential_expression(
+            sample_cov_keys=["timepoint"],
+            mc_samples=2,
+            batch_size=32,
+        )
+
+
 # ---------------------------------------------------------------------------
 # store_lfc tests — gene/protein LFC path
 # ---------------------------------------------------------------------------
@@ -863,6 +906,41 @@ def test_mrmultivi_protein_decode_is_deterministic():
     protein2 = out2[..., -n_proteins:]
     assert torch.allclose(protein1, protein2), (
         "Protein decode is not deterministic — D-021 background fix may be missing"
+    )
+
+
+def test_mrmultivi_crn_identity():
+    """CRN: sharing u_anchor between x_0 and x_1 gives LFC == 0 when extra_eps is identical.
+
+    When the same u and the same extra_eps are passed to both decode calls, x_1 and
+    x_0 are bit-identical, so log2(x_1) - log2(x_0) is exactly 0.  This proves
+    u_anchor is wired through both endpoints and the CRN path is active.
+    """
+    import torch
+
+    model, mdata = _bi_model_and_mdata()
+    n_latent = model.module.n_latent
+
+    model.module.eval()
+    dl = model._make_data_loader(adata=mdata, batch_size=32)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    n_cells = inf_inputs["x"].shape[0]
+    extra_eps = torch.randn(n_cells, n_latent)
+
+    # Run inference once to get qu, then sample a u.
+    with torch.inference_mode():
+        base_out = model.module.inference(**inf_inputs, n_samples=1)
+    u = base_out["qu"].rsample()
+
+    eps_lfc = 1e-6
+    x_0 = model.module.compute_h_from_x_eps(extra_eps=extra_eps, u_anchor=u, **inf_inputs)
+    x_1 = model.module.compute_h_from_x_eps(extra_eps=extra_eps, u_anchor=u, **inf_inputs)
+
+    lfc = torch.log2(x_1 + eps_lfc) - torch.log2(x_0 + eps_lfc)
+    assert lfc.abs().max().item() < 1e-5, (
+        f"CRN identity failed: max|LFC| = {lfc.abs().max().item():.2e} "
+        "(expected exactly 0 when same u_anchor and extra_eps are shared)"
     )
 
 

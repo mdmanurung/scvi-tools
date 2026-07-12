@@ -99,11 +99,12 @@ The kNN metric is misleading here; scIB total score is the appropriate headline.
 - Macaque pending (no latents yet).
 
 **DE / DA schisto results (2026-07-11–12):**
-- **MrTotalVI W22 multi-seed (F-023):** median lfc_std=0.011 (stable). Top hits = Y-chr genes (sex confound, CV≈70%) + IFN suppression (IFITM3, IFIT3, IFI44L; cv<35%).
-- **Sex-adjusted DE MrTotalVI W22 — NULL RESULT (F-027 artifact, F-028 multi-seed, COMPLETE ✅):** `donor_key='sex'` multi-seed (jobs 25211187/207/208, seeds 0+1+2). **Spearman rho (sex_adj multi-seed vs naive multi-seed) = 1.000**; Y-chr gene deltas ≈0 (DDX3Y delta=−0.000006). Per-seed DDX3Y spans 0.113→0.471→0.740 (std=0.314) — stochastic, not systematic. The seed-0 result (F-027) showing Y-chr collapse was an artifact. `donor_key='sex'` WLS is unstable at n=5 donors (see L-075). **DE narrative must use naive multi-seed (F-023); Y-chr confound reported as limitation.** Files: `results/de_multiseed_mrtotalvi_lfc_rna_W22_sex_adj.tsv`, `results/de_sex_adjustment_multiseed_comparison.json`.
-- **MrMultiVI W22 multi-seed (F-025):** median lfc_std=0.050 (4.5× noisier than MrTotalVI). Top hits dominated by Ig V-gene segments and lncRNAs — no IFN signal in top-20. IFN 6/9 concordant with MrTotalVI in sign (IFITM3, IFIT3, ISG15, STAT1, GBP1, GBP5). Dynamic range smaller (max |LFC|=0.675 vs MrTotalVI 1.226).
-- **Cross-model W22 Spearman multi-seed (F-026):** rho=0.289 (vs single-seed 0.104 from F-018). Sign agreement top-500 genes: 0.690. Multi-seed means remove per-run noise; IFN suppression is the most robust shared signal.
-- Permutation null calibration (F-021): 20/20 perms complete; per-cell chi² test at n=10 donors produces frac_below_0.05 sd≈0.47 → uninformative. Formal calibration not achievable; biological evidence from cross-model convergence (F-020).
+- **MrTotalVI W22 multi-seed (F-023):** median lfc_std=0.011 (stable). Top hits = Y-chr genes (sex confound, CV≈70%) + **IFN "suppression"** (IFITM3, IFIT3, IFI44L; cv<35%). ⚠️ IFN direction is a model artifact — see F-029.
+- **Sex-adjusted DE MrTotalVI W22 — NULL RESULT (F-027 artifact, F-028 multi-seed, COMPLETE ✅):** `donor_key='sex'` multi-seed (jobs 25211187/207/208, seeds 0+1+2). **Spearman rho (sex_adj multi-seed vs naive multi-seed) = 1.000**. Reason: sex is orthogonal to timepoint in the balanced paired design (all 10 donors at both W00+W22), so WLS sex beta is algebraically independent of the timepoint beta. Corrected from prior "n=5 donors" — actual n=10 donors (4M+6F). See L-075 and L-076.
+- **MrMultiVI W22 multi-seed (F-025):** median lfc_std=0.050 (4.5× noisier than MrTotalVI). Top hits dominated by Ig V-gene segments and lncRNAs — no IFN signal in top-20. IFN 6/9 concordant with MrTotalVI in sign — also artifacts per F-029.
+- **Cross-model W22 Spearman multi-seed (F-026):** rho=0.289 (vs single-seed 0.104 from F-018). The shared IFN signal (6/9 concordant) is the most coherent cross-model signal but represents a shared artifact (both models' eps contract IFN genes negatively).
+- **Donor pseudobulk calibration — IFN UPREGULATED at W22, model artifact confirmed (F-029, COMPLETE ✅):** 10-donor paired t-test (df=9, BH). 0 genes pass genome-wide padj<0.05 (top: PROK2 padj=0.082). All 9 IFN genes POSITIVE direction in unstratified pseudobulk. Cell-type-stratified (12 types): IFN consistently UP within every cell type (STAT1 positive 12/12, IFITM3 9/12). Classical monocytes: 2 significant genes (U62317.4, PSMB10), ISG-dominated top-20. Y-chr negative control: DDX3Y pseudobulk ≈ 0 (padj=0.814) vs model +0.441 — confirms model's Y-chr signal is sex-composition confound. **⚠️ MODEL IFN-DOWN NARRATIVE IS WRONG.** Correct narrative: IFN pathway upregulation at W22 (post-treatment immune recovery). Files: `results/pseudobulk_de_W22_results.tsv`, `results/pseudobulk_stratified_summary.json`.
+- Permutation null calibration (F-021): 20/20 perms complete; per-cell chi² test at n=10 donors produces frac_below_0.05 sd≈0.47 → uninformative. Formal calibration achieved via pseudobulk (F-029).
 
 **DA/DE parity with MRVI (2026-07-11, COMPLETE):** Full remediation B1–B5 landed.
 - `store_lfc=True` now returns decoded gene/protein `lfc`, `lfc_std`, `pde` (when `delta`
@@ -113,6 +114,38 @@ The kNN metric is misleading here; scIB total score is the appropriate headline.
 - Both models default `use_vmap=False`; MrTotalVI uses BatchNorm (vmap-incompatible), D-023.
 - 5/5 MrTotalVI LFC tests + 6/6 MrMultiVI LFC tests pass; backward-compat tests pass.
 - ADR-0005/0006 and `mr_multimodal.md` updated; L-061 added for BatchNorm×vmap gotcha.
+
+### DTP retraining results (donor_timepoint, 3 seeds — 2026-07-12)
+
+Rationale: `sample_key="donor"` makes temporal DE/DA invalid in paired designs (L-076–L-078). DTP retrain uses `sample_key="donor_timepoint"` (20 samples = 10 donors × 2 timepoints), fixing the design matrix. Jobs 25211393–25211398.
+
+**scIB (F-032):**
+
+| Model | Total |
+|-------|-------|
+| MrMultiVI_u_dtp | **0.648±0.006** ← +0.057 vs MultiVI ✅ |
+| MrMultiVI_z_dtp | 0.641±0.005 |
+| MultiVI (baseline) | 0.591 |
+| MrTotalVI_u_dtp | 0.625±0.012 |
+| MrTotalVI_z_dtp | 0.624±0.003 |
+| TotalVI (baseline) | 0.634 |
+
+MrMultiVI DTP integration win is preserved and confirmed. MrTotalVI DTP does not improve over non-DTP.
+
+**DE concordance vs PyDESeq2 gold standard (F-033):**
+
+| Model | Spearman rho | Sign agree (all) | Sign agree (top-100) | IFN direction |
+|-------|-------------|-----------------|---------------------|---------------|
+| MrTotalVI_dtp | −0.240 | 0.424 | 0.220 | **ALL WRONG (12/12 inverted)** |
+| MrMultiVI_dtp | +0.036 | 0.514 | n/a | near-random |
+| Old donor model | −0.095 | ~0.16 (top-100) | — | wrong |
+
+**Key finding**: Fixing the design matrix (DTP) did NOT fix IFN direction. DTP rho=−0.240 is WORSE than old model rho=−0.095. Root cause (L-079): the u encoder absorbs IFN-activated cell states; eps contains near-zero IFN signal regardless of training granularity. **eps-space DE is inherently blind to treatment-induced cell-state changes.**
+
+**DA stability (F-034):**
+- MrTotalVI_dtp: mean W22 enrichment = +1.12 ± **9.46** (s0=+2.74, s1=−9.04, s2=+9.67). Completely unstable; not usable.
+
+**Conclusion**: DTP retraining fixes the design-matrix validity issue (required) and improves MrMultiVI scIB integration. It does NOT fix the fundamental eps/u partitioning limitation for treatment-level DE. For temporal DE, use PyDESeq2 pseudobulk (F-031). The model contribution is in integration quality and cell-type-level resolution, not temporal DE.
 
 ## Common utilities (`benchmarks/common/`)
 

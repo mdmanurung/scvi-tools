@@ -387,6 +387,7 @@ class MrTotalVI(TOTALVI):
         omit_original_sample: bool = True,
         donor_key: str | None = None,
         batch_size: int = 128,
+        n_mc_samples: int = 1,
     ) -> xr.Dataset:
         """Compute MrVI-style differential abundance log probabilities over ``u``.
 
@@ -408,6 +409,10 @@ class MrTotalVI(TOTALVI):
             donor effect for repeated-measures designs.
         batch_size
             Dataloader batch size.
+        n_mc_samples
+            MC draws from ``q(u|x)`` for Jensen-gap bias correction.
+            See :func:`~scvi.external.mrtotalvi._stats.differential_abundance`
+            for full semantics.  Default ``1`` preserves deterministic behavior.
         """
         return _differential_abundance(
             self,
@@ -419,6 +424,7 @@ class MrTotalVI(TOTALVI):
             omit_original_sample=omit_original_sample,
             donor_key=donor_key,
             batch_size=batch_size,
+            n_mc_samples=n_mc_samples,
         )
 
     def get_outlier_cell_sample_pairs(

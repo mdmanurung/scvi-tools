@@ -112,9 +112,37 @@ def differential_abundance(
     omit_original_sample: bool = True,
     donor_key: str | None = None,
     batch_size: int = 128,
+    n_mc_samples: int = 1,
 ) -> xr.Dataset:
-    """Compute MrVI-style differential abundance log probabilities over ``u``."""
+    """Compute MrVI-style differential abundance log probabilities over ``u``.
+
+    Parameters
+    ----------
+    n_mc_samples
+        Number of Monte-Carlo draws from ``q(u|x)`` used to estimate the
+        per-cell log-probability under each sample's aggregated posterior.
+
+        When ``n_mc_samples=1`` (default) the posterior mean is used as a
+        plug-in estimate (``give_mean=True``).  This is fast and
+        **deterministic** given fixed model weights.
+
+        When ``n_mc_samples > 1``, ``K`` draws ``u_k ~ q(u|x)`` are taken and
+        the estimate is ``log(1/K * Σ_k p(u_k | sample))``, i.e.
+        ``logsumexp(log_probs_k) - log(K)``.  This corrects the Jensen-gap
+        bias of the plug-in estimator (``log p(E[u]) ≤ log E[p(u)]``) at the
+        cost of ``K`` forward passes and inference-time stochasticity.
+
+        **Important:** ``n_mc_samples > 1`` does *not* reduce cross-training-
+        seed variance in DA results.  The seed variance originates from
+        training (the u-encoder converges to a different attractor per seed),
+        not from the evaluation estimator.  Once model weights are fixed, DA
+        is deterministic for ``n_mc_samples=1``; for ``n_mc_samples > 1`` set
+        :attr:`scvi.settings.seed` before calling to ensure reproducibility.
+    """
     adata = model._validate_anndata(adata)
+
+    if n_mc_samples < 1:
+        raise ValueError("n_mc_samples must be >= 1.")
 
     if sample_cov_keys:
         _validate_sample_level_covariates(adata.obs, sample_key, list(sample_cov_keys))
@@ -132,12 +160,19 @@ def differential_abundance(
         if getattr(getattr(model, "module", None), "modality_weights", None) == "cell"
         else adata
     )
-    us = model.get_latent_representation(
-        _repr_adata,
-        give_mean=True,
-        give_z=False,
-        batch_size=batch_size,
-    )
+    if n_mc_samples == 1:
+        us_list = [
+            model.get_latent_representation(
+                _repr_adata, give_mean=True, give_z=False, batch_size=batch_size
+            )
+        ]
+    else:
+        us_list = [
+            model.get_latent_representation(
+                _repr_adata, give_mean=False, give_z=False, batch_size=batch_size
+            )
+            for _ in range(n_mc_samples)
+        ]
 
     log_probs = []
     n_splits = max(int(np.ceil(adata.n_obs / batch_size)), 1)
@@ -147,15 +182,20 @@ def differential_abundance(
             sample=sample_name,
             batch_size=batch_size,
         )
-        sample_log_probs = []
-        for u_rep in np.array_split(us, n_splits):
-            u_tensor = torch.as_tensor(
-                u_rep,
-                dtype=ap.component_distribution.base_dist.loc.dtype,
-                device=ap.component_distribution.base_dist.loc.device,
-            )
-            sample_log_probs.append(ap.log_prob(u_tensor).detach().cpu().numpy()[:, None])
-        log_probs.append(np.concatenate(sample_log_probs, axis=0))
+        _dtype = ap.component_distribution.base_dist.loc.dtype
+        _device = ap.component_distribution.base_dist.loc.device
+        draw_log_probs = []
+        for us in us_list:
+            chunk_lps = []
+            for u_rep in np.array_split(us, n_splits):
+                u_tensor = torch.as_tensor(u_rep, dtype=_dtype, device=_device)
+                chunk_lps.append(ap.log_prob(u_tensor).detach().cpu().numpy())
+            draw_log_probs.append(np.concatenate(chunk_lps, axis=0))  # (n_cells,)
+        if n_mc_samples == 1:
+            cell_lp = draw_log_probs[0]
+        else:
+            cell_lp = logsumexp(np.stack(draw_log_probs, axis=0), axis=0) - np.log(n_mc_samples)
+        log_probs.append(cell_lp[:, None])
 
     log_probs = np.concatenate(log_probs, axis=1)
 

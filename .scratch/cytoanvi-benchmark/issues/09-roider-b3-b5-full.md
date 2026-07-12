@@ -160,3 +160,64 @@ Smoke job **25129287** COMPLETED at 22:14:05 CEST Jun 30 (elapsed 1:32:07).
 - Check: no NaN, B3 concordance ≥ 0.70, B5 ∃ AUROC > 0.70
 - Run manifest-mode aggregation: `python benchmarks/common/aggregate_results.py --manifest .scratch/cytoanvi-benchmark/publication_manifest.json`
 - Update FINDINGS_REGISTRY (add F-012+ for roider-full-e1000 B3/B5)
+
+### 2026-07-01 — B5 job 25132401 FAILED (NaN crash); fix applied; resubmitted as 25132895
+
+Job **25132401** failed at 00:57:27 elapsed (exit code 1:0). The first Leiden cluster trained
+successfully for 1000 epochs (~57 min). The **second cluster** crashed at epoch 1/1000 step 0 with:
+
+```
+ValueError: Expected parameter loc (Tensor of shape (8192, 10)) of distribution Normal ... to satisfy
+the constraint Real(), but found invalid values: tensor([[nan, nan, nan, ...], ...])
+```
+
+**Root cause:** `encoder_marker_mask` was `None` for the second model, so the encoder received full
+data including NaN panel-2-specific marker columns → all-NaN z_encoder output. `encoder_marker_mask`
+is None when `PROTEIN_NAN_MASK` is not registered, which happens when `setup_anndata` is called with
+`nan_layer=None` and auto-detection (`if nan_layer is None and "_nan_mask" in adata.layers`) fails
+across successive model instantiations in the same Python process.
+
+**Fix (commit 3575b392):**
+1. Pass `nan_layer=NAN_LAYER` explicitly in `benchmarks/cytoanvi/run.py` `kw` dict — never rely on
+   auto-detection for multi-model sweeps (47 sequential instantiations).
+2. Add `del model + gc.collect() + cuda.empty_cache()` in `task_b5_novelty` after scoring each
+   holdout cluster to prevent GPU memory accumulation across 47 iterations.
+
+See L-026 in `.living/learnings.md` for full gotcha writeup.
+
+**Resubmitted as job 25132895 (RUNNING, 2026-07-01):**
+- First cluster training normally; epoch 108/1000, train_loss=−24.9, no NaN, no UserWarning
+- GPU: NVIDIA L40S on res-hpc-gpu12
+- ETA for all 47 clusters: ~24h from job start
+
+### 2026-07-03 — B3/B5 publication reruns failed; manifest corrected; rerun required
+
+Scheduler state checked on 2026-07-03:
+
+- Job **25132400** (`phase3_b3b5_roider.slurm`) is `FAILED` (`1:0`, elapsed 05:20:06,
+  node `res-hpc-gpu14`). It wrote `results/roider_full_b3_s0.json`, then seed 1 failed with
+  `Trainer.__init__() got an unexpected keyword argument 'lr'`. The current code routes
+  publication learning rate through `plan_kwargs["lr"]`; B3 needs a clean rerun.
+- Job **25132895** (`phase3b_b5sweep_roider.slurm`) is `FAILED` (`1:0`, elapsed 00:55:57,
+  node `res-hpc-gpu12`). It hit the old `Normal(..., sqrt(pz1_v))` scale failure in CytoANVI
+  loss. The current module clamps tiny variances and raises targeted errors for non-finite or
+  negative variance; B5 needs a clean rerun.
+
+`publication_manifest.json` now marks the required roider-full B3/B5 artifacts as `failed`.
+Manifest-mode aggregation should therefore stop until new complete artifacts replace these entries.
+Rerun scripts should use `--cytoanvi-recipe publication` so empirical label priors, class weighting,
+LR plateau scheduling, `lr=5e-4`, and `gradient_clip_val=1.0` are applied consistently.
+
+### 2026-07-03 — Publication reruns resubmitted
+
+After focused tests and a synthetic publication-recipe smoke passed, the rerun scripts were submitted:
+
+- **B3** `phase3_b3b5_roider.slurm` → job **25140597**, `RUNNING` on `res-hpc-gpu11`,
+  time limit 14:00:00, output
+  `.scratch/cytoanvi-benchmark/slurm/out/cytoanvi_p3a_roider_b3_25140597.log`.
+- **B5** `phase3b_b5sweep_roider.slurm` → job **25140598**, `RUNNING` on `res-hpc-gpu11`,
+  time limit 48:00:00, output
+  `.scratch/cytoanvi-benchmark/slurm/out/cytoanvi_p3b_roider_b5sweep_25140598.log`.
+
+The manifest now records these jobs as `running`. Aggregation remains gated until both jobs finish
+and the required artifacts are marked `complete`.

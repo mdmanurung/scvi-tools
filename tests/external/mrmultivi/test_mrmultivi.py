@@ -1538,6 +1538,54 @@ def test_freeze_prior_false_default(mdata_basic):
     assert m.u_prior_logits.requires_grad
 
 
+def test_differential_abundance_n_mc_samples_1_runs(mdata_basic):
+    """n_mc_samples=1 (default) runs without error and returns finite values."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    da = model.differential_abundance(n_mc_samples=1, batch_size=32)
+    assert "log_probs" in da
+    assert da["log_probs"].dims == ("cell_name", "sample")
+    assert np.all(np.isfinite(da["log_probs"].values))
+
+
+def test_differential_abundance_n_mc_samples_gt1_runs(mdata_basic):
+    """n_mc_samples > 1 runs and returns same shape as n_mc_samples=1."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    da_mean = model.differential_abundance(n_mc_samples=1, batch_size=32)
+    da_mc = model.differential_abundance(n_mc_samples=4, batch_size=32)
+    assert da_mc["log_probs"].shape == da_mean["log_probs"].shape
+    assert np.all(np.isfinite(da_mc["log_probs"].values))
+
+
+def test_differential_abundance_n_mc_samples_invalid(mdata_basic):
+    """n_mc_samples < 1 raises ValueError."""
+    MrMultiVI.setup_mudata(
+        mdata_basic,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT)
+    model.is_trained_ = True
+    with pytest.raises(ValueError, match="n_mc_samples"):
+        model.differential_abundance(n_mc_samples=0, batch_size=32)
+
+
 # ---------------------------------------------------------------------------
 # Change B1 — protein_in_encoder=False default
 # ---------------------------------------------------------------------------

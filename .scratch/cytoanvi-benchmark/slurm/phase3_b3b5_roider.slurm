@@ -29,6 +29,7 @@ for SEED in 0 1 2; do
     --labels-key cell_type \
     --max-epochs 1000 --seed "$SEED" \
     --batch-size 8192 \
+    --cytoanvi-recipe publication \
     --out "$RESULTS/roider_full_b3_s${SEED}.json"
 done
 

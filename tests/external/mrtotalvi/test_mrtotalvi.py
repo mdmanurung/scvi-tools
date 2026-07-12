@@ -1435,6 +1435,56 @@ def test_freeze_prior_false_default():
     assert m.u_prior_logits.requires_grad
 
 
+def test_differential_abundance_n_mc_samples_1_is_deterministic(adata_basic):
+    """n_mc_samples=1 (default) gives a deterministic result given fixed weights."""
+    adata = adata_basic.copy()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    da1 = model.differential_abundance(n_mc_samples=1, batch_size=32)
+    da2 = model.differential_abundance(n_mc_samples=1, batch_size=32)
+    np.testing.assert_array_equal(da1["log_probs"].values, da2["log_probs"].values)
+
+
+def test_differential_abundance_n_mc_samples_gt1_runs(adata_basic):
+    """n_mc_samples > 1 runs and returns same shape as n_mc_samples=1."""
+    adata = adata_basic.copy()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+
+    da_mean = model.differential_abundance(n_mc_samples=1, batch_size=32)
+    da_mc = model.differential_abundance(n_mc_samples=4, batch_size=32)
+    assert da_mc["log_probs"].shape == da_mean["log_probs"].shape
+    assert np.all(np.isfinite(da_mc["log_probs"].values))
+
+
+def test_differential_abundance_n_mc_samples_invalid():
+    """n_mc_samples < 1 raises ValueError."""
+    adata = _make_adata()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT)
+    model.is_trained_ = True
+    with pytest.raises(ValueError, match="n_mc_samples"):
+        model.differential_abundance(n_mc_samples=0, batch_size=32)
+
+
 # ---------------------------------------------------------------------------
 # New tests appended after test_n_obs_per_sample_in_state_dict
 # ---------------------------------------------------------------------------

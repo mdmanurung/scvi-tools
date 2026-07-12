@@ -10,3 +10,164 @@ p1 shape: (620000, 22), p2 shape: (620000, 22)
 === running b3 (seed=0) ===
 /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchmarks/cytoanvi/tasks.py:256: UserWarning: Batch key panel_batch already exists in adata. Overwriting it.
   merged = cytovi.merge_batches([p1.copy(), p2.copy()], batch_key="panel_batch")
+[34mINFO    [0m Training for [1;36m20[0m epochs.                                                
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchma ...
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchma ...
+You are using a CUDA device ('NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb') that has Tensor Cores. To properly utilize them, you should set `torch.set_float32_matmul_precision('medium' | 'high')` which will trade-off precision for performance. For more details, read https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+Training:   0%|          | 0/20 [00:00<?, ?it/s]Epoch 1/20:   0%|          | 0/20 [00:00<?, ?it/s]Epoch 1/20:   5%|▌         | 1/20 [00:07<02:28,  7.82s/it]Epoch 1/20:   5%|▌         | 1/20 [00:07<02:28,  7.82s/it, v_num=1, train_loss=120]Epoch 2/20:   5%|▌         | 1/20 [00:07<02:28,  7.82s/it, v_num=1, train_loss=120]Epoch 2/20:  10%|█         | 2/20 [00:14<02:07,  7.08s/it, v_num=1, train_loss=120]Epoch 2/20:  10%|█         | 2/20 [00:14<02:07,  7.08s/it, v_num=1, train_loss=38.7]Epoch 3/20:  10%|█         | 2/20 [00:14<02:07,  7.08s/it, v_num=1, train_loss=38.7]Epoch 3/20:  15%|█▌        | 3/20 [00:20<01:56,  6.84s/it, v_num=1, train_loss=38.7]Epoch 3/20:  15%|█▌        | 3/20 [00:20<01:56,  6.84s/it, v_num=1, train_loss=18.7]Epoch 4/20:  15%|█▌        | 3/20 [00:20<01:56,  6.84s/it, v_num=1, train_loss=18.7]Epoch 4/20:  20%|██        | 4/20 [00:27<01:47,  6.73s/it, v_num=1, train_loss=18.7]Epoch 4/20:  20%|██        | 4/20 [00:27<01:47,  6.73s/it, v_num=1, train_loss=9.43]Epoch 5/20:  20%|██        | 4/20 [00:27<01:47,  6.73s/it, v_num=1, train_loss=9.43]Epoch 5/20:  25%|██▌       | 5/20 [00:34<01:40,  6.67s/it, v_num=1, train_loss=9.43]Epoch 5/20:  25%|██▌       | 5/20 [00:34<01:40,  6.67s/it, v_num=1, train_loss=4.11]Epoch 6/20:  25%|██▌       | 5/20 [00:34<01:40,  6.67s/it, v_num=1, train_loss=4.11]Epoch 6/20:  30%|███       | 6/20 [00:40<01:32,  6.63s/it, v_num=1, train_loss=4.11]Epoch 6/20:  30%|███       | 6/20 [00:40<01:32,  6.63s/it, v_num=1, train_loss=0.559]Epoch 7/20:  30%|███       | 6/20 [00:40<01:32,  6.63s/it, v_num=1, train_loss=0.559]Epoch 7/20:  35%|███▌      | 7/20 [00:47<01:25,  6.61s/it, v_num=1, train_loss=0.559]Epoch 7/20:  35%|███▌      | 7/20 [00:47<01:25,  6.61s/it, v_num=1, train_loss=-1.9] Epoch 8/20:  35%|███▌      | 7/20 [00:47<01:25,  6.61s/it, v_num=1, train_loss=-1.9]Epoch 8/20:  40%|████      | 8/20 [00:53<01:19,  6.59s/it, v_num=1, train_loss=-1.9]Epoch 8/20:  40%|████      | 8/20 [00:53<01:19,  6.59s/it, v_num=1, train_loss=-3.68]Epoch 9/20:  40%|████      | 8/20 [00:53<01:19,  6.59s/it, v_num=1, train_loss=-3.68]Epoch 9/20:  45%|████▌     | 9/20 [01:00<01:12,  6.58s/it, v_num=1, train_loss=-3.68]Epoch 9/20:  45%|████▌     | 9/20 [01:00<01:12,  6.58s/it, v_num=1, train_loss=-5.09]Epoch 10/20:  45%|████▌     | 9/20 [01:00<01:12,  6.58s/it, v_num=1, train_loss=-5.09]Epoch 10/20:  50%|█████     | 10/20 [01:06<01:05,  6.57s/it, v_num=1, train_loss=-5.09]Epoch 10/20:  50%|█████     | 10/20 [01:06<01:05,  6.57s/it, v_num=1, train_loss=-6.25]Epoch 11/20:  50%|█████     | 10/20 [01:06<01:05,  6.57s/it, v_num=1, train_loss=-6.25]Epoch 11/20:  55%|█████▌    | 11/20 [01:13<00:59,  6.56s/it, v_num=1, train_loss=-6.25]Epoch 11/20:  55%|█████▌    | 11/20 [01:13<00:59,  6.56s/it, v_num=1, train_loss=-7.24]Epoch 12/20:  55%|█████▌    | 11/20 [01:13<00:59,  6.56s/it, v_num=1, train_loss=-7.24]Epoch 12/20:  60%|██████    | 12/20 [01:19<00:52,  6.56s/it, v_num=1, train_loss=-7.24]Epoch 12/20:  60%|██████    | 12/20 [01:19<00:52,  6.56s/it, v_num=1, train_loss=-8.01]Epoch 13/20:  60%|██████    | 12/20 [01:19<00:52,  6.56s/it, v_num=1, train_loss=-8.01]Epoch 13/20:  65%|██████▌   | 13/20 [01:26<00:45,  6.56s/it, v_num=1, train_loss=-8.01]Epoch 13/20:  65%|██████▌   | 13/20 [01:26<00:45,  6.56s/it, v_num=1, train_loss=-8.65]Epoch 14/20:  65%|██████▌   | 13/20 [01:26<00:45,  6.56s/it, v_num=1, train_loss=-8.65]Epoch 14/20:  70%|███████   | 14/20 [01:33<00:39,  6.55s/it, v_num=1, train_loss=-8.65]Epoch 14/20:  70%|███████   | 14/20 [01:33<00:39,  6.55s/it, v_num=1, train_loss=-9.37]Epoch 15/20:  70%|███████   | 14/20 [01:33<00:39,  6.55s/it, v_num=1, train_loss=-9.37]Epoch 15/20:  75%|███████▌  | 15/20 [01:39<00:32,  6.55s/it, v_num=1, train_loss=-9.37]Epoch 15/20:  75%|███████▌  | 15/20 [01:39<00:32,  6.55s/it, v_num=1, train_loss=-9.95]Epoch 16/20:  75%|███████▌  | 15/20 [01:39<00:32,  6.55s/it, v_num=1, train_loss=-9.95]Epoch 16/20:  80%|████████  | 16/20 [01:46<00:26,  6.55s/it, v_num=1, train_loss=-9.95]Epoch 16/20:  80%|████████  | 16/20 [01:46<00:26,  6.55s/it, v_num=1, train_loss=-10.5]Epoch 17/20:  80%|████████  | 16/20 [01:46<00:26,  6.55s/it, v_num=1, train_loss=-10.5]Epoch 17/20:  85%|████████▌ | 17/20 [01:52<00:19,  6.55s/it, v_num=1, train_loss=-10.5]Epoch 17/20:  85%|████████▌ | 17/20 [01:52<00:19,  6.55s/it, v_num=1, train_loss=-11]  Epoch 18/20:  85%|████████▌ | 17/20 [01:52<00:19,  6.55s/it, v_num=1, train_loss=-11]Epoch 18/20:  90%|█████████ | 18/20 [01:59<00:13,  6.55s/it, v_num=1, train_loss=-11]Epoch 18/20:  90%|█████████ | 18/20 [01:59<00:13,  6.55s/it, v_num=1, train_loss=-11.4]Epoch 19/20:  90%|█████████ | 18/20 [01:59<00:13,  6.55s/it, v_num=1, train_loss=-11.4]Epoch 19/20:  95%|█████████▌| 19/20 [02:05<00:06,  6.55s/it, v_num=1, train_loss=-11.4]Epoch 19/20:  95%|█████████▌| 19/20 [02:05<00:06,  6.55s/it, v_num=1, train_loss=-11.8]Epoch 20/20:  95%|█████████▌| 19/20 [02:05<00:06,  6.55s/it, v_num=1, train_loss=-11.8]Epoch 20/20: 100%|██████████| 20/20 [02:12<00:00,  6.55s/it, v_num=1, train_loss=-11.8]Epoch 20/20: 100%|██████████| 20/20 [02:12<00:00,  6.55s/it, v_num=1, train_loss=-12.3]`Trainer.fit` stopped: `max_epochs=20` reached.
+Epoch 20/20: 100%|██████████| 20/20 [02:12<00:00,  6.62s/it, v_num=1, train_loss=-12.3]
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchma ...
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /exports/para-lipg-hpc/mdmanurung/scvi-tools/benchma ...
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/lib/python3.13/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'val_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+Training:   0%|          | 0/20 [00:00<?, ?it/s]Epoch 1/20:   0%|          | 0/20 [00:00<?, ?it/s]Epoch 1/20:   5%|▌         | 1/20 [00:03<01:11,  3.75s/it]Epoch 1/20:   5%|▌         | 1/20 [00:03<01:11,  3.75s/it, v_num=1, train_loss=-1.1]Epoch 2/20:   5%|▌         | 1/20 [00:03<01:11,  3.75s/it, v_num=1, train_loss=-1.1]Epoch 2/20:  10%|█         | 2/20 [00:07<01:05,  3.63s/it, v_num=1, train_loss=-1.1]Epoch 2/20:  10%|█         | 2/20 [00:07<01:05,  3.63s/it, v_num=1, train_loss=-19.5]Epoch 3/20:  10%|█         | 2/20 [00:07<01:05,  3.63s/it, v_num=1, train_loss=-19.5]Epoch 3/20:  15%|█▌        | 3/20 [00:10<01:00,  3.57s/it, v_num=1, train_loss=-19.5]Epoch 3/20:  15%|█▌        | 3/20 [00:10<01:00,  3.57s/it, v_num=1, train_loss=-23.2]Epoch 4/20:  15%|█▌        | 3/20 [00:10<01:00,  3.57s/it, v_num=1, train_loss=-23.2]Epoch 4/20:  20%|██        | 4/20 [00:14<00:56,  3.54s/it, v_num=1, train_loss=-23.2]Epoch 4/20:  20%|██        | 4/20 [00:14<00:56,  3.54s/it, v_num=1, train_loss=-24.9]Epoch 5/20:  20%|██        | 4/20 [00:14<00:56,  3.54s/it, v_num=1, train_loss=-24.9]Epoch 5/20:  25%|██▌       | 5/20 [00:17<00:52,  3.52s/it, v_num=1, train_loss=-24.9]Epoch 5/20:  25%|██▌       | 5/20 [00:17<00:52,  3.52s/it, v_num=1, train_loss=-26]  Epoch 6/20:  25%|██▌       | 5/20 [00:17<00:52,  3.52s/it, v_num=1, train_loss=-26]Epoch 6/20:  30%|███       | 6/20 [00:21<00:49,  3.51s/it, v_num=1, train_loss=-26]Epoch 6/20:  30%|███       | 6/20 [00:21<00:49,  3.51s/it, v_num=1, train_loss=-26.8]Epoch 7/20:  30%|███       | 6/20 [00:21<00:49,  3.51s/it, v_num=1, train_loss=-26.8]Epoch 7/20:  35%|███▌      | 7/20 [00:24<00:45,  3.50s/it, v_num=1, train_loss=-26.8]Epoch 7/20:  35%|███▌      | 7/20 [00:24<00:45,  3.50s/it, v_num=1, train_loss=-27.3]Epoch 8/20:  35%|███▌      | 7/20 [00:24<00:45,  3.50s/it, v_num=1, train_loss=-27.3]Epoch 8/20:  40%|████      | 8/20 [00:28<00:41,  3.50s/it, v_num=1, train_loss=-27.3]Epoch 8/20:  40%|████      | 8/20 [00:28<00:41,  3.50s/it, v_num=1, train_loss=-27.8]Epoch 9/20:  40%|████      | 8/20 [00:28<00:41,  3.50s/it, v_num=1, train_loss=-27.8]Epoch 9/20:  45%|████▌     | 9/20 [00:31<00:38,  3.49s/it, v_num=1, train_loss=-27.8]Epoch 9/20:  45%|████▌     | 9/20 [00:31<00:38,  3.49s/it, v_num=1, train_loss=-28.2]Epoch 10/20:  45%|████▌     | 9/20 [00:31<00:38,  3.49s/it, v_num=1, train_loss=-28.2]Epoch 10/20:  50%|█████     | 10/20 [00:35<00:34,  3.49s/it, v_num=1, train_loss=-28.2]Epoch 10/20:  50%|█████     | 10/20 [00:35<00:34,  3.49s/it, v_num=1, train_loss=-28.4]Epoch 11/20:  50%|█████     | 10/20 [00:35<00:34,  3.49s/it, v_num=1, train_loss=-28.4]Epoch 11/20:  55%|█████▌    | 11/20 [00:38<00:31,  3.49s/it, v_num=1, train_loss=-28.4]Epoch 11/20:  55%|█████▌    | 11/20 [00:38<00:31,  3.49s/it, v_num=1, train_loss=-28.6]Epoch 12/20:  55%|█████▌    | 11/20 [00:38<00:31,  3.49s/it, v_num=1, train_loss=-28.6]Epoch 12/20:  60%|██████    | 12/20 [00:42<00:27,  3.49s/it, v_num=1, train_loss=-28.6]Epoch 12/20:  60%|██████    | 12/20 [00:42<00:27,  3.49s/it, v_num=1, train_loss=-28.7]Epoch 13/20:  60%|██████    | 12/20 [00:42<00:27,  3.49s/it, v_num=1, train_loss=-28.7]Epoch 13/20:  65%|██████▌   | 13/20 [00:45<00:24,  3.49s/it, v_num=1, train_loss=-28.7]Epoch 13/20:  65%|██████▌   | 13/20 [00:45<00:24,  3.49s/it, v_num=1, train_loss=-28.8]Epoch 14/20:  65%|██████▌   | 13/20 [00:45<00:24,  3.49s/it, v_num=1, train_loss=-28.8]Epoch 14/20:  70%|███████   | 14/20 [00:49<00:20,  3.49s/it, v_num=1, train_loss=-28.8]Epoch 14/20:  70%|███████   | 14/20 [00:49<00:20,  3.49s/it, v_num=1, train_loss=-28.9]Epoch 15/20:  70%|███████   | 14/20 [00:49<00:20,  3.49s/it, v_num=1, train_loss=-28.9]Epoch 15/20:  75%|███████▌  | 15/20 [00:52<00:17,  3.49s/it, v_num=1, train_loss=-28.9]Epoch 15/20:  75%|███████▌  | 15/20 [00:52<00:17,  3.49s/it, v_num=1, train_loss=-29]  Epoch 16/20:  75%|███████▌  | 15/20 [00:52<00:17,  3.49s/it, v_num=1, train_loss=-29]Epoch 16/20:  80%|████████  | 16/20 [00:56<00:13,  3.49s/it, v_num=1, train_loss=-29]Epoch 16/20:  80%|████████  | 16/20 [00:56<00:13,  3.49s/it, v_num=1, train_loss=-29]Epoch 17/20:  80%|████████  | 16/20 [00:56<00:13,  3.49s/it, v_num=1, train_loss=-29]Epoch 17/20:  85%|████████▌ | 17/20 [00:59<00:10,  3.49s/it, v_num=1, train_loss=-29]Epoch 17/20:  85%|████████▌ | 17/20 [00:59<00:10,  3.49s/it, v_num=1, train_loss=-29.1]Epoch 18/20:  85%|████████▌ | 17/20 [00:59<00:10,  3.49s/it, v_num=1, train_loss=-29.1]Epoch 18/20:  90%|█████████ | 18/20 [01:03<00:06,  3.49s/it, v_num=1, train_loss=-29.1]Epoch 18/20:  90%|█████████ | 18/20 [01:03<00:06,  3.49s/it, v_num=1, train_loss=-29.2]Epoch 19/20:  90%|█████████ | 18/20 [01:03<00:06,  3.49s/it, v_num=1, train_loss=-29.2]Epoch 19/20:  95%|█████████▌| 19/20 [01:06<00:03,  3.49s/it, v_num=1, train_loss=-29.2]Epoch 19/20:  95%|█████████▌| 19/20 [01:06<00:03,  3.49s/it, v_num=1, train_loss=-29.2]Epoch 20/20:  95%|█████████▌| 19/20 [01:06<00:03,  3.49s/it, v_num=1, train_loss=-29.2]Epoch 20/20: 100%|██████████| 20/20 [01:10<00:00,  3.49s/it, v_num=1, train_loss=-29.2]Epoch 20/20: 100%|██████████| 20/20 [01:10<00:00,  3.49s/it, v_num=1, train_loss=-29.3]`Trainer.fit` stopped: `max_epochs=20` reached.
+Epoch 20/20: 100%|██████████| 20/20 [01:10<00:00,  3.50s/it, v_num=1, train_loss=-29.3]
+{
+  "task": "b3_panel_divergent",
+  "seed": 0,
+  "max_epochs": 20,
+  "n_p2": 620000,
+  "p1_holdout": {
+    "accuracy": 0.8094838709677419,
+    "macro_f1": 0.7276228240245168,
+    "n": 124000,
+    "per_class_recall": {
+      "0": 0.6877210712481051,
+      "1": 0.9650226472068445,
+      "10": 0.8430769230769231,
+      "11": 0.5664760543245175,
+      "12": 0.8889970788704966,
+      "13": 0.807928913192071,
+      "14": 0.925351071692535,
+      "15": 0.8950269322309908,
+      "16": 0.9201929401447051,
+      "17": 0.9133391455972101,
+      "18": 0.5185185185185185,
+      "19": 0.40057636887608067,
+      "2": 0.9310233682514102,
+      "20": 0.8936781609195402,
+      "21": 0.8602870813397129,
+      "22": 0.7379454926624738,
+      "23": 0.7289256198347107,
+      "24": 0.8794958499846296,
+      "25": 0.733256351039261,
+      "26": 0.7374204742625795,
+      "27": 0.9091520861372813,
+      "28": 0.9149659863945578,
+      "29": 0.8331877729257642,
+      "3": 0.4632925472747497,
+      "30": 0.8168373151308305,
+      "31": 0.933920704845815,
+      "32": 0.3687315634218289,
+      "33": 0.9384546271338724,
+      "34": 0.8416793120890238,
+      "35": 0.5811088295687885,
+      "36": 0.0,
+      "37": 0.0,
+      "38": 0.9825581395348837,
+      "39": 0.4261931187569367,
+      "4": 0.4351628121044759,
+      "40": 0.6773049645390071,
+      "41": 0.6320272572402045,
+      "42": 0.6787048567870486,
+      "43": 0.5232876712328767,
+      "44": 0.3550387596899225,
+      "45": 0.7575757575757576,
+      "46": 0.0,
+      "5": 0.9081283089380255,
+      "6": 0.8325242718446602,
+      "7": 0.6177241740954379,
+      "8": 0.8440085401654657,
+      "9": 0.9010218393107594
+    }
+  },
+  "p2_inter_method_agreement_vs_knn": {
+    "agreement": 0.6409709677419355,
+    "n": 620000
+  }
+}
+{
+  "seed": 0,
+  "max_epochs": 20,
+  "b3": {
+    "task": "b3_panel_divergent",
+    "seed": 0,
+    "max_epochs": 20,
+    "n_p2": 620000,
+    "p1_holdout": {
+      "accuracy": 0.8094838709677419,
+      "macro_f1": 0.7276228240245168,
+      "n": 124000,
+      "per_class_recall": {
+        "0": 0.6877210712481051,
+        "1": 0.9650226472068445,
+        "10": 0.8430769230769231,
+        "11": 0.5664760543245175,
+        "12": 0.8889970788704966,
+        "13": 0.807928913192071,
+        "14": 0.925351071692535,
+        "15": 0.8950269322309908,
+        "16": 0.9201929401447051,
+        "17": 0.9133391455972101,
+        "18": 0.5185185185185185,
+        "19": 0.40057636887608067,
+        "2": 0.9310233682514102,
+        "20": 0.8936781609195402,
+        "21": 0.8602870813397129,
+        "22": 0.7379454926624738,
+        "23": 0.7289256198347107,
+        "24": 0.8794958499846296,
+        "25": 0.733256351039261,
+        "26": 0.7374204742625795,
+        "27": 0.9091520861372813,
+        "28": 0.9149659863945578,
+        "29": 0.8331877729257642,
+        "3": 0.4632925472747497,
+        "30": 0.8168373151308305,
+        "31": 0.933920704845815,
+        "32": 0.3687315634218289,
+        "33": 0.9384546271338724,
+        "34": 0.8416793120890238,
+        "35": 0.5811088295687885,
+        "36": 0.0,
+        "37": 0.0,
+        "38": 0.9825581395348837,
+        "39": 0.4261931187569367,
+        "4": 0.4351628121044759,
+        "40": 0.6773049645390071,
+        "41": 0.6320272572402045,
+        "42": 0.6787048567870486,
+        "43": 0.5232876712328767,
+        "44": 0.3550387596899225,
+        "45": 0.7575757575757576,
+        "46": 0.0,
+        "5": 0.9081283089380255,
+        "6": 0.8325242718446602,
+        "7": 0.6177241740954379,
+        "8": 0.8440085401654657,
+        "9": 0.9010218393107594
+      }
+    },
+    "p2_inter_method_agreement_vs_knn": {
+      "agreement": 0.6409709677419355,
+      "n": 620000
+    }
+  },
+  "dataset": "roider-full"
+}
+=== Smoke test complete at Tue Jun 30 22:14:05 CEST 2026 ===
+Check the log above for:
+  - Leiden cluster count (=> B5-sweep wall time = clusters × ~50 min)
+  - Epoch times at epochs 2-10 (skip epoch 1 compile warmup)
+  - No NaN in loss

@@ -683,6 +683,13 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 **structural_mitigation_candidate**: test_differential_abundance_trained_model_smoke (both models)
 **Body**: All CI DA tests used `model.is_trained_ = True` (a manual bypass flag) without calling `.train()`. This means the model weights were random (default PyTorch init), the u-encoder never saw data, and the VampPrior pseudo-inputs were random. The aggregated posterior and DA outputs were exercising the code path with random weights only. A code regression in the trained-weight path (e.g., changed tensor shapes after training, NaN from large gradient steps) would not be caught. Added `test_differential_abundance_trained_model_smoke` to both test files: trains for MAX_EPOCHS_QUICK=3 then calls DA with `sample_cov_keys` and asserts finite log_probs with correct shapes.
 
+### L-093 — [2026-07-13] VampPrior softplus-inverse overflows float32 for k-means centroids > ~88
+**Category**: bug
+**Tags**: mrtotalvi, vamprior, numerical, float32
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_mrtotalvi_lfc_sign_known_positive_control
+**Body**: `init_prior_from_data=True` runs k-means on raw gene counts and computes `softplus_inverse(c) = log(expm1(c))`. For c > ~88.7 (float32 exp overflow), `expm1` returns inf → `log(inf) = inf` pseudo-inputs → NaN from `inf * 0` in the encoder's linear layers (zero-initialized weights). Triggered on synthetic data when gene 0 is inflated ×20 (mean=8.48 → centroid ≈ 85–170). Fix: for c > 20, use identity approximation (softplus(c) ≈ c, error < 2e-9). Applied at `_model.py` line ~223: `safe_c = c.clamp(min=1e-6, max=20.0); prior_centroids = torch.where(c > 20.0, c, torch.log(torch.expm1(safe_c)))`.
+
 ### L-092 — [2026-07-13] CI multi-seed DA calibration test cannot reproduce full-cohort instability contrast
 **Category**: test-coverage
 **Tags**: mrtotalvi, mrmultivi, differential-abundance, ci, synthetic-limitation

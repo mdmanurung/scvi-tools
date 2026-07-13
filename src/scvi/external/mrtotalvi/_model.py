@@ -78,6 +78,19 @@ class MrTotalVI(TOTALVI):
         pseudo-inputs near the data manifold (see :cite:t:`Tomczak2018`).
         Ignored for ``u_prior="mog"`` (latent-space centroids require a forward
         pass, not available at init time).
+    freeze_prior_after_init
+        If ``True`` and ``u_prior="vamp"``, freeze the VampPrior pseudo-input
+        parameters after data-driven initialisation so they do not drift during
+        training.  Together with ``init_prior_from_data=True`` this was
+        empirically validated (D-041) to reduce cross-seed DA variance from
+        std=0.875 to std=0.192 on 10-donor CITE-seq data.
+    use_batch_norm
+        Where to apply batch normalisation (``"encoder"``, ``"decoder"``,
+        ``"both"``, ``"none"``).  Defaults to ``"none"``; layer normalisation
+        is preferred for sample-level models to avoid confounding donor effects
+        with batch statistics.
+    use_layer_norm
+        Where to apply layer normalisation.  Defaults to ``"both"``.
     **model_kwargs
         Additional keyword arguments forwarded to :class:`~._module.MrTotalVAE`
         (and transitively to :class:`~scvi.module._totalvae.TOTALVAE`).
@@ -122,6 +135,8 @@ class MrTotalVI(TOTALVI):
         kl_z_weight: float = 1.0,
         init_prior_from_data: bool = False,
         freeze_prior_after_init: bool = False,
+        use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "none",
+        use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         **model_kwargs,
     ) -> None:
         if model_kwargs.get("latent_distribution", "normal") != "normal":
@@ -153,6 +168,8 @@ class MrTotalVI(TOTALVI):
             qu_kwargs=qu_kwargs,
             kl_u_weight=kl_u_weight,
             kl_z_weight=kl_z_weight,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
             **model_kwargs,
         )
 
@@ -202,8 +219,11 @@ class MrTotalVI(TOTALVI):
             kmeans = KMeans(n_clusters=u_prior_mixture_k, random_state=0, n_init="auto")
             kmeans.fit(X_combined)
             c = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)
-            # Softplus-inverse: F.softplus(prior_centroids) ≈ data centroids
-            prior_centroids = torch.log(torch.expm1(c.clamp(min=1e-6)))
+            # Softplus-inverse: F.softplus(prior_centroids) ≈ data centroids.
+            # For c > 20, softplus(c) ≈ c (error < 2e-9), so skip expm1 to avoid
+            # float32 overflow at c > ~88 which would produce inf → NaN in encoder.
+            safe_c = c.clamp(min=1e-6, max=20.0)
+            prior_centroids = torch.where(c > 20.0, c, torch.log(torch.expm1(safe_c)))
 
         self.module._setup_hierarchy(
             n_sample=n_sample,

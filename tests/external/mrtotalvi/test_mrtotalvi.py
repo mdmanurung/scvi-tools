@@ -22,6 +22,8 @@ sys.path.insert(0, "src")
 import scvi
 from scvi.external import MrTotalVI
 
+from tests.external.conftest import get_elbo_key
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1630,14 +1632,7 @@ def test_differential_abundance_trained_model_smoke(adata_basic):
     adata.obs["condition"] = np.where(
         adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
     )
-    MrTotalVI.setup_anndata(
-        adata,
-        protein_expression_obsm_key="protein_expression",
-        sample_key="sample",
-        batch_key="batch",
-    )
-    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
-    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    model = _setup_and_train(adata, n_latent_u=4)
 
     da = model.differential_abundance(
         sample_cov_keys=["condition"],
@@ -1688,15 +1683,8 @@ def test_mrtotalvi_n_labels_zero_mog_prior_smoke(adata_basic):
     )
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
-    # Training must produce finite ELBO — search for whichever key Lightning uses
     history = model.history
-    elbo_key = next(
-        (k for k in ("elbo_train", "train_loss_epoch", "train_elbo_train") if k in history),
-        None,
-    )
-    assert elbo_key is not None, (
-        f"No ELBO history key found with n_labels=0. Available: {list(history.keys())}"
-    )
+    elbo_key = get_elbo_key(history)
     vals = history[elbo_key].to_numpy().astype(float).flatten()
     assert np.all(np.isfinite(vals)), (
         f"Training {elbo_key} is not finite with n_labels=0 + u_prior_mixture=True: {vals}"

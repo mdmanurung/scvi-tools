@@ -24,6 +24,8 @@ sys.path.insert(0, "src")
 from scvi.data import synthetic_iid
 from scvi.external import MrMultiVI
 
+from tests.external.conftest import get_elbo_key
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1840,20 +1842,11 @@ def test_mrmultivi_differential_abundance_trained_model_smoke(mdata_basic):
     without actual training.  This test exercises the end-to-end trained-weights
     code path: outputs must be finite and have the correct shape.
     """
-    import numpy as np
-
     mdata = mdata_basic.copy()
     mdata.obs["condition"] = np.where(
         mdata.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
     )
-    MrMultiVI.setup_mudata(
-        mdata,
-        sample_key="donor",
-        batch_key="batch",
-        modalities=MODALITIES,
-    )
-    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
-    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    model = _setup_and_train(mdata, n_latent_u=4)
 
     da = model.differential_abundance(
         sample_cov_keys=["condition"],
@@ -1964,15 +1957,8 @@ def test_mrmultivi_n_labels_zero_mog_prior_smoke():
     )
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
-    # Training must produce finite ELBO — search for whichever key Lightning uses
     history = model.history
-    elbo_key = next(
-        (k for k in ("elbo_train", "train_loss_epoch", "train_elbo_train") if k in history),
-        None,
-    )
-    assert elbo_key is not None, (
-        f"No ELBO history key found with n_labels=0. Available: {list(history.keys())}"
-    )
+    elbo_key = get_elbo_key(history)
     vals = history[elbo_key].to_numpy().astype(float).flatten()
     assert np.all(np.isfinite(vals)), (
         f"Training {elbo_key} is not finite with n_labels=0 + u_prior_mixture=True: {vals}"

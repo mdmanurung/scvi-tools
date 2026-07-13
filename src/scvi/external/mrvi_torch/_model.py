@@ -159,9 +159,12 @@ class TorchMRVI(
             self.sample_order = self.registry["field_registries"][f"{REGISTRY_KEYS.SAMPLE_KEY}"][
                 "state_registry"
             ]["categorical_mapping"]
-            self.n_obs_per_sample = self.registry["field_registries"][
-                f"{REGISTRY_KEYS.SAMPLE_KEY}"
-            ]["n_obs_per_sample"]["n_obs_per_sample"]
+            _fr_sample = self.registry["field_registries"][f"{REGISTRY_KEYS.SAMPLE_KEY}"]
+            if "n_obs_per_sample" in _fr_sample:
+                self.n_obs_per_sample = _fr_sample["n_obs_per_sample"]["n_obs_per_sample"]
+            else:
+                # Old checkpoint format — n_obs_per_sample only used for training loss scaling
+                self.n_obs_per_sample = None
         self.backend = "torch"
 
         self.module = self._module_cls(

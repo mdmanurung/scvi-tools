@@ -133,6 +133,9 @@ tutorials = [
 
 all = ["cytoanvi[dev,docs,tutorials]"]
 
+[project.scripts]
+cytoanvi-install-skills = "scvi._skills.install:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ['src/scvi', 'src/cytoanvi']
 

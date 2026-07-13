@@ -662,9 +662,30 @@ for c in cov_cols if c != model.sample_key]` before the select. Same fix needed 
 
 **Secondary (path resolution)**: `aggregate_b5_multiseed.py` uses `HERE = Path(__file__).parent` for path resolution. Calling it with relative paths from the repo root causes doubling (`.scratch/cytoanvi-benchmark/.scratch/cytoanvi-benchmark/...`). Always pass absolute paths when calling aggregate scripts from outside their directory.
 
-### L-089 — [2026-07-12] `init_prior_from_data` protein subsampling: integer row-index vs DataFrame column indexing
+### L-089 — [2026-07-12, updated 2026-07-13] `init_prior_from_data` protein subsampling: integer row-index vs DataFrame/ndarray duality
 **Category**: bug
 **Tags**: mrtotalvi, vamp-prior, init_prior_from_data, pandas, indexing
 **mitigation_type**: structural
 **structural_mitigation_candidate**: test that `init_prior_from_data=True` runs end-to-end without error (already required by Change D verification in the plan)
-**Body**: In `mrtotalvi/_model.py:192`, `get_from_registry(PROTEIN_EXP_KEY)` returns a pandas DataFrame with protein-name string columns. Applying `[idx]` where `idx` is a numpy integer array of row positions was interpreted by pandas as column selection → `KeyError`. Fix: `.to_numpy()[idx]` extracts the underlying ndarray first so integer indexing selects rows. The same pattern at line 185 for `X_KEY` works because the gene expression registry returns a scipy sparse matrix (where integer array indexing is row selection). Root cause discovered from SLURM job failure logs: tasks 4-6 of array 25211780 failed at `__init__` within 55s.
+**Body**: In `mrtotalvi/_model.py:192`, `get_from_registry(PROTEIN_EXP_KEY)` returns different types depending on how the protein data was stored: (a) real obsm-with-protein-names data → pandas DataFrame with protein-name string columns; (b) synthetic test data (numpy array in obsm) → numpy ndarray. Applying `[idx]` on a DataFrame with numpy integer array was interpreted as column selection → `KeyError`. Session 58 added `.to_numpy()[idx]` to fix the DataFrame case, but `.to_numpy()` does not exist on numpy arrays, causing `test_init_prior_from_data_vamprior` to fail with `AttributeError`. **Correct fix (2026-07-13)**: `np.asarray(get_from_registry(...))[idx]` — `np.asarray` is a no-op on ndarray and converts DataFrame → 2D ndarray, so integer row-indexing works in both cases. `_model.py:192` now uses this pattern. Root cause discovered from SLURM job failure logs: tasks 4-6 of array 25211780 failed at `__init__` within 55s.
+
+### L-090 — [2026-07-13] protein_in_encoder=True default silently widened u_vamp_pseudo_dim from n_latent to n_latent+n_proteins
+**Category**: bug
+**Tags**: mrmultivi, vamp-prior, protein_in_encoder, test-regression
+**mitigation_type**: structural
+**structural_mitigation_candidate**: tests must explicitly set protein_in_encoder when testing shapes that depend on it, or use the dedicated protein-encoder tests
+**Body**: When `protein_in_encoder` default was reverted from `False` → `True` (session 58), two mrmultivi tests silently broke because they asserted shapes written against the `False` default: (1) `test_vamprior_has_correct_parameters` asserted `u_vamp_pseudo.shape == (K, module.n_latent)` but actual was `(K, n_latent + n_proteins)` = `(6, 110)`; (2) `test_mrmultivi_encode_covariates_expands_qu_input` asserted `fc1.in_features == N_LATENT + expected_extra` but actual was `N_LATENT + n_proteins + expected_extra = 115`. Fix: add `protein_in_encoder=False` to both tests to isolate the quantity under test. Separate `test_protein_in_encoder_default_true` and `test_protein_in_encoder_parameter_shapes` cover the protein-widening path.
+
+### L-091 — [2026-07-13] DA ground-truth correctness was entirely untested in CI — only untrained models
+**Category**: test-coverage
+**Tags**: mrtotalvi, mrmultivi, differential-abundance, ci, untrained-bypass
+**mitigation_type**: structural
+**structural_mitigation_candidate**: test_differential_abundance_trained_model_smoke (both models)
+**Body**: All CI DA tests used `model.is_trained_ = True` (a manual bypass flag) without calling `.train()`. This means the model weights were random (default PyTorch init), the u-encoder never saw data, and the VampPrior pseudo-inputs were random. The aggregated posterior and DA outputs were exercising the code path with random weights only. A code regression in the trained-weight path (e.g., changed tensor shapes after training, NaN from large gradient steps) would not be caught. Added `test_differential_abundance_trained_model_smoke` to both test files: trains for MAX_EPOCHS_QUICK=3 then calls DA with `sample_cov_keys` and asserts finite log_probs with correct shapes.
+
+### L-092 — [2026-07-13] CI multi-seed DA calibration test cannot reproduce full-cohort instability contrast
+**Category**: test-coverage
+**Tags**: mrtotalvi, mrmultivi, differential-abundance, ci, synthetic-limitation
+**mitigation_type**: ambient-awareness
+**structural_mitigation_candidate**: test_mrmultivi_da_multiseed_stability
+**Body**: The real-data finding (MrTotalVI DA std=9.46 vs MrMultiVI std=0.126 across 3 seeds on the schistosomiasis DTP cohort) cannot be reproduced in CI because (a) 3-epoch training on synthetic data is not sufficient to train the VampPrior + MoG attention layers to a meaningful local minimum, and (b) the instability in MrTotalVI is a large-sample-count prior-mismatch phenomenon that requires real cohort size (n=20 donor-timepoint samples) to trigger. The CI test `test_mrmultivi_da_multiseed_stability` checks only that MrMultiVI DA is finite and cross-seed drift is bounded on synthetic data — it is a necessary but not sufficient guard. The full-cohort evidence is in `.scratch/mr-schisto-benchmark/results/da_*_dtp_summary.json` and `run_dtp_da.py`.

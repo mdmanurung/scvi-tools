@@ -57,3 +57,14 @@ Tracks future work items, ideas, and planned improvements.
 | LFC B3: add LFC kwargs + xarray assembly to `mrtotalvi/_model.py` and `mrmultivi/_model.py` wrappers | high | done | infrastructure | 2026-07-11 | mdmanurung | — |
 | LFC B4: add store_lfc tests (shape/coord/finiteness, pde∈[0,1], D2 determinism, backward-compat) | high | done | testing | 2026-07-11 | mdmanurung | — |
 | LFC B5: update ADR-0005/0006 + mr_multimodal.md to remove "not implemented" + record D-020–D-023 | medium | done | documentation | 2026-07-11 | mdmanurung | — |
+| P1-001: DA multi-seed calibration test in CI (currently only in .scratch; no seed-stability assertion for DA) | high | done | testing | 2026-07-13 | mdmanurung | — |
+| P1-002: n_labels==0 / unlabeled_category path untested — guard all classifier forward passes in MrTotalVI/MrMultiVI | medium | done | testing | 2026-07-13 | mdmanurung | — |
+| P1-003: Statistical tests lack fixed seeds → flakiness risk (test_donor_axis_separation, test_mrtotalvi_lfc_sign_known_positive_control, etc.) | medium | done | testing | 2026-07-13 | mdmanurung | — |
+| P1-004: Backward-compat guard test: new flags (protein_in_encoder, n_latent_u defaults) at defaults → latents match pre-change baseline | medium | done | testing | 2026-07-13 | mdmanurung | — |
+| P1-005: MrMultiVI load() error message for AnnData misleads (says "provide n_genes/n_regions" instead of "use MuData") | low | done | infrastructure | 2026-07-13 | mdmanurung | — |
+| P1-006: MrTotalVI DA instability root-cause investigation (why std=9.46 across 3 seeds vs MrMultiVI std=0.126) — COMPUTE/DATA-BLOCKED: requires GPU + real schistosomiasis data | high | open | analysis | 2026-07-13 | mdmanurung | — |
+| P2-001: Add per-seed DA breakdown (s0=+2.74 s1=−9.04 s2=+9.67 / s0=0.84 s1=0.94 s2=1.09) to mr_multimodal.md | low | done | documentation | 2026-07-13 | mdmanurung | — |
+| P2-002: Document Chi2 df = n_per_cell (admissible samples, not n_latent) in analysis notes | low | done | documentation | 2026-07-13 | mdmanurung | — |
+| P2-003: No-intercept design matrix: note in docs that eps pre-centering absorbs intercept (V1-006) | low | done | documentation | 2026-07-13 | mdmanurung | — |
+| P2-004: differential_accessibility stub: add explicit mention in user guide that the method raises NotImplementedError | low | done | documentation | 2026-07-13 | mdmanurung | — |
+| P2-005: Multi-dataset validation (macaque CITE-seq replication) — COMPUTE/DATA-BLOCKED: requires macaque dataset + GPU training | medium | open | analysis | 2026-07-13 | mdmanurung | — |

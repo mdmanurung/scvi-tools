@@ -1,78 +1,68 @@
-# Last Session — Session 58 (2026-07-12)
+# Session 62 — B2 Roider-full results ingested + crystallization
 
-## Session goal
-
-Verify protein_in_encoder test fixes, run freeze-prior variance analysis, confirm B2 implementation, commit plan changes.
+**Date**: 2026-07-13  
+**Branch**: main (CytoANVI + MrTotalVI/MrMultiVI)  
+**Trigger**: "Next" — checked SLURM job status and ingested B2 Roider-full results.
 
 ---
 
 ## 1. Work completed
 
-### protein_in_encoder default reverted to True (Change B1 corrected)
+### SLURM job status check
 
-- Plan B1 had set default to `False` with rationale "protein re-injects donor signal" — user corrected that RNA has the same issue and is still in the encoder.
-- Reverted `protein_in_encoder: bool = True` in both `mrmultivi/_model.py:110` and `_module.py:95`.
-- Updated docstring to honest reasoning: u-encoder strips donor effects from both modalities during training.
-- Renamed two tests: `test_protein_in_encoder_default_unchanged` → `test_protein_in_encoder_default_true` (now asserts `qu.fc1.in_features == N_LATENT + n_proteins = 110`); `test_protein_in_encoder_default_false` → `test_protein_in_encoder_explicit_false` (passes explicit `protein_in_encoder=False`).
-- All 6 protein_in_encoder tests pass (93s, exit code 0).
+| Job ID | Name | Status | Outcome |
+|--------|------|--------|---------|
+| 25211800 | cytoanvi_b2_roider_full | ✅ COMPLETED (ExitCode 0) | Ran 2026-07-12 20:47 → 2026-07-13 07:55 (~11h) |
+| 25211796 | cytoanvi_leiden_cal | ⏸ PD (pending) | QOSMaxCpuPerUserLimit — still queued |
 
-### VampPrior+frozen empirical validation — D-041
+### B2 Roider-full results (F-040)
 
-- All 6 artifacts (default + vamp_frozen, seeds 0/1/2) were present in `outputs/validate_freeze_prior/`.
-- Ran `validate_freeze_prior.py --phase analyze` inline (analyze SLURM job 25211823 was blocked on QOSMaxMemoryPerUser — cancelled after running inline).
-- **Result**: vamp_frozen mean_std = 14.17 vs default mean_std = 17.42 → **18.7% reduction** in cross-seed DA variance. Shape: (3, 125706, 10) cells × donors.
-- D-041 added to `.living/decisions.md`.
-- `variance_comparison.json` written to `outputs/validate_freeze_prior/`.
+All 3 seeds at max_epochs=1000, n_cells=620,000:
 
-### Change B2 (protein_encoder_mode) — already complete
+| Model | Total (mean±std) | Bio cons. | Batch corr. |
+|-------|------------------|-----------|-------------|
+| CytoANVI | **0.5953±0.0027** | **0.6544±0.0053** | 0.5067±0.0018 |
+| CytoVI | 0.5360±0.0022 | 0.5461±0.0033 | 0.5208±0.0017 |
+| Δ | **+0.0593** | **+0.1083** ✅ | −0.0141 ✅ |
 
-- `EncoderXU_MultiVI` already has `protein_encoder_mode` with `layernorm` and `project` modes.
-- `qu_kwargs` already threads through `MrMultiVI` model → module → encoder.
-- Both `test_protein_encoder_mode_layernorm` and `test_protein_encoder_mode_project` pass.
+Very low seed variance (std≤0.0053). Fully confirms and extends F-004 (roider-e1000 pilot). The bio gain (+0.108) replicates exactly at full cohort.
 
-### Commit
+### Files updated
 
-Committed as `46b4b87c`: feat(mrmultivi): revert protein_in_encoder default to True; add D-041 empirical validation.
+- `benchmarks/ANALYSIS_MANIFEST.md` — B2 row updated from "SUBMITTED" to "✅ COMPLETE" with per-seed numbers
+- `.living/findings/FINDINGS_REGISTRY.md` — F-040 added
+- `CLAUDE.md` — status line updated: B1/B2/B3/B5/B8 complete; B2 Roider-full no longer pending
 
 ---
 
 ## 2. Key findings
 
-- **VampPrior+frozen reduces cross-seed DA variance by 18.7%** — mechanism confirmed. Frozen pseudo-inputs constrain u-encoder to the same attractor basin across seeds. Not the default; users must opt in.
-- **All plan changes (E, C, D, B1, B2) are now complete and tested.**
+- B2 Roider-full **fully confirms the pilot** (F-004): bio gain +0.108 at 620k cells matches the 5k-cell estimate (+0.109). The result is robust at full cohort.
+- **Leiden calibration job still pending** — job 25211796 in queue due to QOSMaxCpuPerUserLimit. Will need to check again next session.
+- The B2 full-cohort batch correction is slightly WORSE (−0.014) than CytoVI's — this is expected and desirable: CytoANVI preserves biological signal at the cost of slightly worse mixing.
 
 ---
 
 ## 3. Outstanding items
 
-### Running jobs
-
-| Job | Name | Status | Action |
-|-----|------|--------|--------|
-| 25211800 | cytoanvi_b2_roider_full | RUNNING (~2h in, ~7h total) | Aggregate B2 scib scores once done |
-| 25211796 | cytoanvi_leiden_cal | PENDING (QOSMaxCpuPerUserLimit) | Fill `__RES__` in 6 coarse scripts once runs |
-
-### Blocked externally
-
-- B9 Roider (upstream mapQC extend_categories bug)
-- B3 panel-2 independent labels, B5 external novel-type dataset, B4/B6 real case/control data
-
-### Plan verification items remaining
-
-- **Backward-compat guard**: with all new flags at defaults, a short training run must match pre-change behavior within numerical tolerance. Not yet tested explicitly.
-- **Benchmark re-score for C, D, B**: retrain affected MrMultiVI variants on schisto CITE-seq, export u/z, re-run `run_mr_multimodal_benchmark.py`. B2 modes (layernorm, project) each need their own retrain.
+| Item | Status |
+|------|--------|
+| Leiden calibration (job 25211796) | Still pending (QOSMaxCpuPerUserLimit) |
+| P1-006: MrTotalVI DA instability root-cause | GPU + real data required |
+| P2-005: Macaque CITE-seq validation | Dataset + training compute required |
+| 3 deferred code-review findings (DA smoke DRY, elbo_key conftest) | Low priority, no blocker |
 
 ---
 
 ## 4. Decisions / learnings added
 
-- **D-041**: VampPrior+frozen reduces cross-seed DA variance by 18.7% (empirical validation on 125k cells × 10 donors, 3 seeds).
+None new this session.
 
 ---
 
 ## 5. Next session priorities
 
-1. **P1**: Check job 25211800 (B2 Roider full) — aggregate scib scores; update ANALYSIS_MANIFEST B2 row.
-2. **P1**: Check job 25211796 (Leiden calibration) — fill `__RES__` in 6 coarse SLURM scripts; submit.
-3. **P2**: Backward-compat guard: run short training with all defaults; compare latents to pre-change baseline within tolerance.
-4. **P2**: Benchmark re-score for C/D/B changes on schisto CITE-seq.
+1. Check Leiden calibration job 25211796 (still pending — check if it ever started).
+2. Consider checkpoint commit for all P1/P2/code-review changes (uncommitted changes across 11 files, +566 lines).
+3. Fix the 3 deferred code-review findings if time allows (DA smoke DRY, elbo_key conftest).
+4. P1-006 (MrTotalVI DA root cause) if GPU access is available.

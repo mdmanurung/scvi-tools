@@ -14,7 +14,7 @@ full-cohort numbers supersede all e1000/smoke figures below.
 | Task | File | Measures | Baseline | Status | Result |
 |------|------|----------|----------|--------|--------|
 | B1: Label transfer | `run.py --task b1` | Macro-F1 | CytoVI k-NN | roider-full 3-seed ✅ COMPLETE (jobs 25149326/27/28); nunez-full-inductive-e1000 ✓ | **ROIDER FULL-COHORT (FINAL):** CytoANVI **0.9317±0.0022** vs CytoVI-kNN **0.8928±0.0034**, Δ **+0.0388±0.0018** ✅ gate (≥+0.03). XGBoost 0.9516. Nuñez: CytoANVI 0.9751±0.0003 vs kNN 0.9581±0.0007 (Δ+0.017, near-ceiling). Prior Roider e1000 Δ+0.121±0.040 superseded by full-cohort. Aggregate: `aggregate_b1_roider_multiseed.py` → `roider_full_b1_multiseed.json`. |
-| B2: Integration | `run.py --task b2` | scib bio/batch | CytoVI latent | roider-e1000 3-seed ✓; nunez-r005-e1000 3-seed ✓; roider-full SUBMITTED (job 25211800, 2026-07-12) | Roider batch Δ−0.006 ✅; bio +0.108 gain; Nuñez batch Δ−0.005 ✅ (F-004, F-005). Roider-full 3-seed job pending. |
+| B2: Integration | `run.py --task b2` | scib bio/batch | CytoVI latent | roider-e1000 3-seed ✓; nunez-r005-e1000 3-seed ✓; roider-full 3-seed ✅ COMPLETE (job 25211800, 2026-07-13) | **ROIDER FULL-COHORT (FINAL, n=620k):** CytoANVI total **0.5953±0.0027** vs CytoVI **0.5360±0.0022**, Δtotal +0.0593. bio_conservation **0.6544±0.0053** vs **0.5461±0.0033**, Δbio **+0.1083** ✅. batch_correction **0.5067±0.0018** vs **0.5208±0.0017**, Δbatch **−0.0141** ✅ (batch slightly worse = bio preserved). Results: `roider_full_b2_s{0,1,2}.json`. Prior Roider batch Δ−0.006 ✅; bio +0.108 gain; Nuñez batch Δ−0.005 ✅ (F-004, F-005) fully replicated at full cohort. |
 | B3: Cross-panel mapping | `run.py --task b3` | Inter-method agreement (NOT accuracy) | CytoVI k-NN | roider-full 3-seed ✅ COMPLETE (jobs 25145151/52/53) | **FULL-COHORT (FINAL):** p1 holdout macro-F1 **0.828±0.015** (supervised headline); p2 inter-method agreement **0.671±0.008** (concordance with CytoVI-kNN, NOT accuracy — see F-012). Gate (≥0.80) on concordance is NOT met at full cohort; p1 F1 is the defensible supervised result. **LIMITATION: p2 concordance is agreement between CytoANVI and CytoVI-kNN (two methods sharing the CytoVI encoder), NOT ground-truth accuracy — no independent panel-2 labels exist.** Prior e1000 numbers (0.877±0.012) were on 5k-cell subset — superseded by F-012. |
 | B4: Continual update | `run.py --task b4` | F1 drift | Static CytoVI | roider-smoke only | **PLUMBING ONLY — pseudo-batch split, NOT real case/control cytometry data; drift 0.0 does NOT constitute evidence of catastrophic-forgetting mitigation** (F-008); blocked by real case/control data |
 | B5: Novelty detection | `run.py --task b5` | AUROC (mean over types is PRIMARY) | CytoVI kNN-distance OOD | roider-full 3-seed ✅ COMPLETE (jobs 25149032/33/34, 47 types, 2026-07-07); CytoANVI-latent kNN OOD diagnostic ✅ COMPLETE (computed from same runs, aggregate updated 2026-07-12) | **FULL-COHORT (FINAL — NEGATIVE TTA; DIAGNOSTIC COMPLETE):** TTA mean_auroc **0.484±0.005 (below chance)**; CytoVI kNN-OOD **0.855±0.001**; **CytoANVI-latent kNN-OOD 0.906±0.003** (best). **Diagnostic conclusion**: CytoANVI's own latent is an excellent OOD detector (stronger than CytoVI's), but TTA uncertainty is a poor OOD score. The failure is in the TTA method, not the latent. See F-013. best_auroc 0.959±0.006 (max over types) is NOT the headline. Aggregate: `roider_full_b5_sweep_multiseed.json`. |
@@ -225,6 +225,56 @@ Package-level readiness of MrTotalVI and MrMultiVI for a methods publication. No
 **Remaining honest caveat**: validation is single-dataset (schisto, human only). Macaque replication pending.
 
 **The IFN-suppression retraction is complete and well-documented.** No surviving claim of IFN suppression exists in user-facing docs.
+
+## Internal-Use Readiness Review — 2026-07-13
+
+**Scope**: Can internal scientists use MrTotalVI / MrMultiVI confidently on their own data? (single-dataset evidence acceptable; not a publication review)
+
+**Discriminating question**: *If an internal scientist runs this method, will they get a correct answer or be misled?*
+
+**Full report**: `.living/outputs/mr-internal-use-readiness.md`
+
+### Capability verdicts (summary)
+
+| Capability | MrTotalVI | MrMultiVI | Guardrail |
+|---|---|---|---|
+| Latent integration (u-space) | Ready-with-guardrail | Ready-with-guardrail | Batch-correction only (Δbatch +0.128, Δbio ≈ 0) |
+| Latent integration (z-space) | Ready | Ready | `give_z=True`; donor-drop fix confirmed |
+| **Differential abundance (DA)** | **Not ready** | **Ready-with-guardrail** | MrTotalVI std=9.46 (catastrophic, F-034); MrMultiVI std=0.126 (stable, F-035). Route DA through MrMultiVI. |
+| DE (eps-space, store_lfc=True) | Not ready for bio conclusions | Not ready for bio conclusions | Anti-concordant with pseudobulk, all 12 cell types (F-037). Directional sanity check only. |
+| Protein DE (MrTotalVI) | Ready-with-guardrail | Ready-with-guardrail | Same eps-space caveats |
+| Counterfactual / local distances | Ready | Ready | CRN u_anchor fix confirmed; `get_aggregated_posterior` correct |
+| Save / load roundtrip | Ready | Ready | MrMultiVI requires MuData at load (not AnnData) |
+| ATAC differential accessibility | N/A | Not ready (stub) | `NotImplementedError`; documented in user guide |
+
+### Adversarial findings
+
+| Claim | Verdict |
+|---|---|
+| D-041: VampPrior+frozen → 18.7% DA variance reduction | **REFUTED** — no supporting artifact (`outputs/` directory never created) |
+| F-034: MrTotalVI DA unstable (std=9.46) | **CONFIRMED** — stored artifacts `.scratch/mr-schisto-benchmark/results/` |
+| F-035: MrMultiVI DA stable (std=0.126) | **CONFIRMED** — same artifacts |
+| Jensen-gap, BH FDR, WLS estimators | **CONFIRMED** by V1 code audit |
+| Two-level KL (kl_u + kl_z both in ELBO) | **CONFIRMED** — V1-005 refuted "kl_u only" hypothesis |
+| CRN u_anchor lfc_std fix | **CONFIRMED** — V2-001 code audit |
+
+### P0 fixes implemented this session (2026-07-13)
+
+1. ✅ `mrtotalvi/_model.py:192` — `np.asarray()` polymorphism fix (DataFrame vs numpy in VampPrior init)
+2. ✅ `pyproject.toml` — added `pythonpath = ["src"]` to pytest ini options
+3. ✅ `test_vamprior_has_correct_parameters` — fixed stale shape assertion (`protein_in_encoder=False`)
+4. ✅ `test_mrmultivi_encode_covariates_expands_qu_input` — fixed stale width assertion (same)
+5. ✅ `test_differential_abundance_trained_model_smoke` — new DA CI test on actually-trained models (both files)
+
+**Test status**: 112 tests passing (107 original + 3 fixed + 2 new)
+
+### Cross-reference
+
+- **Publication review** (2026-07-12, above): overall Moderate-High with focused framing
+- **Internal-use review** agrees with publication review verdicts and adds: (1) MrTotalVI DA is Not Ready even internally; (2) five P0 infra fixes were needed; (3) D-041 is REFUTED
+- See `todo/TODO_REGISTRY.md` for P1/P2 backlog
+
+---
 
 ## Common utilities (`benchmarks/common/`)
 

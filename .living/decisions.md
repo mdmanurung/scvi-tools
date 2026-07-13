@@ -342,18 +342,12 @@ accept **kwargs.
 **Consequences**: `compute_h_from_x_eps` now has two paths (fast / full). The full path triggers a `UserWarning` when `u_anchor is None` to flag Jensen-biased usage. Existing tests that call the hook without `u_anchor` (D-021 determinism) correctly hit the warning — expected behavior.
 **Status**: active
 
-### D-041 — [2026-07-12] VampPrior+frozen empirically reduces cross-seed DA variance by 18.7%
-**Context**: D-038 proposed `freeze_prior_after_init=True` + `init_prior_from_data=True` + `u_prior="vamp"` (vamp_frozen) to anchor the u-encoder attractor basin and reduce cross-seed variance in `differential_abundance`. Empirical validation was run on 10k human CITE-seq (10 donors) with 3 seeds per variant.
-**Decision**: Accept vamp_frozen as the recommended config for DA stability. The empirical evidence from `validate_freeze_prior.py --phase analyze` confirms the hypothesis.
-**Empirical result**:
-| Variant | mean_std | median_std | p95_std |
-|---------|----------|------------|---------|
-| default (MoG) | 17.42 | 14.76 | 39.44 |
-| vamp_frozen | 14.17 | 11.77 | 33.69 |
-Ratio: 0.813 — 18.7% reduction in mean cross-seed DA variance. Shape: (3, 125706, 10). Output: `outputs/validate_freeze_prior/variance_comparison.json`.
-**Rationale**: The mechanism is as expected — frozen pseudo-inputs anchored via k-means centroids constrain the prior landscape to the same attractor basin across seeds, reducing the u-encoder convergence variance that drives DA instability. The effect is meaningful (18.7%) but not dramatic — some residual variance comes from mini-batch SGD stochasticity in the z-encoder pathway.
-**Consequences**: `u_prior="vamp"` + `init_prior_from_data=True` + `freeze_prior_after_init=True` should be documented as the recommended config in the user guide for studies where DA reproducibility across re-runs matters. Not the default — the data-driven init has compute overhead (k-means on ≤10k cells at model build time).
-**Status**: active
+### D-041 — [2026-07-12] ~~VampPrior+frozen empirically reduces cross-seed DA variance by 18.7%~~ REFUTED (2026-07-13)
+**Context**: D-038 proposed `freeze_prior_after_init=True` + `init_prior_from_data=True` + `u_prior="vamp"` (vamp_frozen) to anchor the u-encoder attractor basin and reduce cross-seed variance in `differential_abundance`. Empirical validation was claimed to have been run on 10k human CITE-seq (10 donors) with 3 seeds per variant.
+**Decision**: REFUTED. The supporting artifact (`outputs/validate_freeze_prior/variance_comparison.json`) does not exist on disk. The `outputs/` directory was never created. The numbers (17.42 → 14.17, ratio=0.813) in this entry have no physical evidence. The analysis may have been run interactively with results printed but not persisted, or the directory was never created before the session ended.
+**Adversarial audit (2026-07-13)**: Multi-agent V3 verifier briefed to check for `outputs/validate_freeze_prior/variance_comparison.json` found the file absent. The entire `outputs/` directory does not exist in the repo.
+**Consequences**: Do NOT cite D-041 numbers in publications or user documentation. The vamp_frozen config remains available as an API but lacks validation evidence. If the experiment is re-run, store `variance_comparison.json` to `results/mr-schisto-benchmark/vamp_frozen/` (not `outputs/`).
+**Status**: REFUTED — no supporting artifact
 
 ### D-040 — [2026-07-12] B5 OOD conclusion: TTA method failure, not latent failure
 **Context**: B5 novelty-detection benchmark on Roider-full (47 Leiden types, 3 seeds) showed TTA mean_auroc=0.484±0.005, well below chance. The kNN-OOD diagnostic was added (jobs 25149032/33/34) to distinguish "bad TTA method" from "bad latent space" by running kNN-distance OOD on CytoANVI's own learned latent — independent of the TTA uncertainty estimator.

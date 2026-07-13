@@ -103,8 +103,9 @@ ds = model.differential_expression(
 ```
 
 `MrMultiVI.differential_expression()` supports `store_lfc=True` for RNA-only or RNA+protein
-bimodal models. ATAC-containing models raise `NotImplementedError`; ATAC effects should use a
-future `differential_accessibility` API.
+bimodal models. ATAC-containing models raise `NotImplementedError`; a `differential_accessibility`
+method exists on `MrMultiVI` but currently raises `NotImplementedError` (users who call it receive
+a clear error rather than `AttributeError`; the implementation is deferred to v2).
 
 ## v1 Limitations
 
@@ -131,11 +132,13 @@ drawing biological conclusions from `store_lfc=True` output.
 
 **Differential abundance — sample-count sensitivity:**
 `MrTotalVI.differential_abundance` is unreliable when `sample_key` maps to many samples relative
-to the prior capacity. In one experiment with 20 donor-timepoint samples, MrTotalVI DA varied from
-−9.0 to +9.7 across seeds (std >> mean); MrMultiVI DA at the same setup was stable (mean +0.96
-± 0.13). If using `differential_abundance` with a `sample_key` that expands the sample count
-significantly (e.g. `sample_key="donor_timepoint"`), validate stability across seeds before
-reporting results.
+to the prior capacity. In one experiment with 20 donor-timepoint samples (schistosomiasis DTP
+cohort, 3 seeds), MrTotalVI DA varied from −9.0 to +9.7 across seeds (per-seed: s0 = +2.74,
+s1 = −9.04, s2 = +9.67; std 9.46 >> mean 1.12). MrMultiVI DA at the same setup was stable
+(per-seed: s0 = +0.84, s1 = +0.94, s2 = +1.09; mean +0.96 ± 0.13). If using
+`differential_abundance` with a `sample_key` that expands the sample count significantly (e.g.
+`sample_key="donor_timepoint"`), validate stability across seeds before reporting results. Prefer
+MrMultiVI for DA when both modalities are available.
 
 **Integration benchmarks (single dataset, batch-correction only):**
 MrMultiVI's integration improvement over MultiVI has been benchmarked on one CITE-seq dataset
@@ -163,3 +166,13 @@ model = scvi.external.MrTotalVI(adata, sample_key="donor", use_map=False)
 The `kl_u` term uses a single-sample Monte-Carlo estimate of `KL(q(u)‖p(u))` (unbiased, higher
 variance than analytic). The MrMultiVI mixed-posterior variance is regularized only via the
 `kl_div_paired` penalty, not through a KL-to-prior on the per-modality encoders.
+
+The Wald test (`differential_abundance`, `differential_expression`) uses a Chi² distribution
+whose degrees of freedom equal the number of admissible samples per cell (`n_per_cell`,
+`_stats.py:627`), matching the MRVI reference implementation. This is conservative (n_per_cell
+≫ n_latent) and is an intentional design choice, not a bug.
+
+The design matrix (`_construct_design_matrix`, `_stats.py:291`) is intentionally intercept-free.
+The response `eps` is mean-centred per cell across samples (`_stats.py:610`) before regression,
+making a constant term non-identifiable. The Wald test therefore operates on covariate slopes
+only; intercept-like shifts are absorbed by the per-cell centering step.

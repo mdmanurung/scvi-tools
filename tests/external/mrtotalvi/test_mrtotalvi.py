@@ -368,7 +368,8 @@ def test_mrtotalvi_label_conditioned_mog_prior(adata_basic):
         batch_key="batch",
         labels_key="cell_type",
     )
-    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4,
+                      u_prior="mog")
 
     assert model.label_order.tolist() == ["B", "T"] or model.label_order.tolist() == ["T", "B"]
     assert model.module.u_prior_logits.shape == (model.summary_stats.n_labels,)
@@ -436,6 +437,7 @@ def test_mrtotalvi_gaussian_u_prior_and_z_u_prior_off(adata_basic):
         adata_basic,
         sample_key="sample",
         n_latent=N_LATENT,
+        u_prior="mog",
         u_prior_mixture=False,
         z_u_prior=False,
     )
@@ -497,6 +499,7 @@ def test_mrtotalvi_save_load_preserves_latent_hierarchy(adata_basic, tmp_path):
         sample_key="sample",
         n_latent=N_LATENT,
         n_latent_u=4,
+        u_prior="mog",
         u_prior_mixture=True,
     )
 
@@ -1222,12 +1225,8 @@ def test_vamprior_trains_finite_elbo(adata_basic):
     )
 
 
-def test_vamprior_default_unchanged(adata_basic):
-    """u_prior='mog' (default) behaviour is bit-identical to pre-toggle default.
-
-    The default path must not change when u_prior_type attr is absent (backward
-    compat) or set to 'mog' — confirmed by checking u_prior_type on the module.
-    """
+def test_mog_default_unchanged(adata_basic):
+    """u_prior='mog' is the default — confirmed by checking module attributes."""
     model = _setup_and_train(adata_basic, max_epochs=1)
     assert getattr(model.module, "u_prior_type", "mog") == "mog"
     assert hasattr(model.module, "u_prior_means"), (
@@ -1396,7 +1395,7 @@ def test_freeze_prior_after_init_mog():
         batch_key="batch",
     )
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
-                      freeze_prior_after_init=True)
+                      u_prior="mog", freeze_prior_after_init=True)
     m = model.module
     assert not m.u_prior_means.requires_grad, "u_prior_means should be frozen"
     assert not m.u_prior_scales.requires_grad, "u_prior_scales should be frozen"
@@ -1424,7 +1423,7 @@ def test_freeze_prior_after_init_vamp():
 
 
 def test_freeze_prior_false_default():
-    """freeze_prior_after_init defaults to False — all prior params remain trainable."""
+    """MoG default: u_prior_means and u_prior_logits are trainable parameters."""
     adata = _make_adata()
     MrTotalVI.setup_anndata(
         adata,
@@ -1435,7 +1434,6 @@ def test_freeze_prior_false_default():
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT)
     m = model.module
     assert m.u_prior_means.requires_grad
-    assert m.u_prior_scales.requires_grad
     assert m.u_prior_logits.requires_grad
 
 
@@ -1602,7 +1600,8 @@ def test_mrtotalvi_lfc_sign_known_positive_control():
         sample_key="sample",
         batch_key="batch",
     )
-    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4,
+                      u_prior="mog")
     model.train(max_epochs=30, accelerator="cpu")
 
     de = model.differential_expression(

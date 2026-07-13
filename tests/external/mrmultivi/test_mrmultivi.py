@@ -610,11 +610,23 @@ def test_mrmultivi_encode_covariates_with_protein_in_encoder():
     )
     module = model.module
     n_proteins = module.n_input_proteins
-    expected_extra = model.summary_stats.n_batch + 2 + 1  # batch + stim-dummy + score
+    n_stim = mdata.obs["stim"].nunique()  # full one-hot width, not n-1 dummies
+    expected_extra = model.summary_stats.n_batch + n_stim + 1  # batch + stim + score
     expected_in_features = N_LATENT + n_proteins + expected_extra
     assert module.qu.fc1.in_features == expected_in_features, (
         f"fc1.in_features={module.qu.fc1.in_features}, "
         f"expected N_LATENT({N_LATENT}) + n_proteins({n_proteins}) + extra({expected_extra})"
+    )
+
+    # Liveness: forward pass must produce finite output under the combined flags.
+    import torch
+    dl = model._make_data_loader(adata=model.adata, batch_size=16)
+    tensors = next(iter(dl))
+    inf_inputs = model.module._get_inference_input(tensors)
+    with torch.no_grad():
+        out = model.module.inference(**inf_inputs)
+    assert torch.all(torch.isfinite(out["u"])), (
+        "encode_covariates=True + protein_in_encoder=True produced non-finite u"
     )
 
 
@@ -1896,14 +1908,7 @@ def test_mrmultivi_da_multiseed_stability():
         mdata.obs["condition"] = np.where(
             mdata.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
         )
-        MrMultiVI.setup_mudata(
-            mdata,
-            sample_key="donor",
-            batch_key="batch",
-            modalities=MODALITIES,
-        )
-        model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
-        model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+        model = _setup_and_train(mdata, n_latent_u=4)
 
         da = model.differential_abundance(
             sample_cov_keys=["condition"],
@@ -1916,11 +1921,12 @@ def test_mrmultivi_da_multiseed_stability():
         )
         results[seed] = float(log_probs.values.mean())
 
-    # Cross-seed drift must be bounded — catastrophic instability (std >> mean)
-    # would indicate a training or DA bug on synthetic data.
+    # Cross-seed drift must be bounded — catastrophic instability would indicate a
+    # training or DA bug on synthetic data.  Use an absolute threshold: log_probs are
+    # negative so a relative check (drift < k * magnitude) inflates the threshold
+    # proportionally to magnitude and is vacuous for typical values.
     drift = abs(results[0] - results[1])
-    magnitude = max(abs(results[0]), abs(results[1]), 1e-6)
-    assert drift < 5.0 * magnitude, (
+    assert drift < 50.0, (
         f"MrMultiVI DA cross-seed drift is catastrophic on synthetic data: "
         f"seed0={results[0]:.4f}, seed1={results[1]:.4f}, drift={drift:.4f}. "
         "Real-data instability contrast (MrTotalVI std=9.46 vs MrMultiVI std=0.126) "

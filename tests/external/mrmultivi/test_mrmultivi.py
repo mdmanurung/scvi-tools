@@ -159,6 +159,14 @@ def test_mrmultivi_rejects_logistic_normal_latent(mdata_basic):
         )
 
 
+def test_mrmultivi_mudata_guard_raises_typeerror():
+    """MrMultiVI.__init__ raises TypeError with a setup_mudata hint when given an AnnData."""
+    import anndata
+    adata = anndata.AnnData(np.zeros((4, 4)))
+    with pytest.raises(TypeError, match="setup_mudata"):
+        MrMultiVI(adata, sample_key="donor")
+
+
 def test_mrmultivi_hierarchy_uses_mixed_posterior_mean(mdata_basic):
     """qu receives MULTIVAE's mixed posterior mean, not a sampled base latent."""
     import torch
@@ -559,6 +567,7 @@ def test_mrmultivi_encode_covariates_expands_qu_input(mdata_basic):
         sample_key="donor",
         n_latent=N_LATENT,
         encode_covariates=True,
+        protein_in_encoder=False,  # isolate covariate expansion; protein widening tested separately
     )
 
     expected_extra = model.summary_stats.n_batch + 2 + 1
@@ -570,6 +579,41 @@ def test_mrmultivi_encode_covariates_expands_qu_input(mdata_basic):
     with torch.no_grad():
         out = model.module.inference(**inf_inputs)
     assert torch.all(torch.isfinite(out["u"]))
+
+
+def test_mrmultivi_encode_covariates_with_protein_in_encoder():
+    """encode_covariates=True + protein_in_encoder=True (default): fc1 widens by proteins AND covariates.
+
+    Covers the additive interaction that the two isolation tests cannot catch:
+    test_mrmultivi_encode_covariates_expands_qu_input pins protein_in_encoder=False;
+    test_protein_in_encoder_default_true pins encode_covariates=False.
+    """
+    mdata = _make_mdata()
+    mdata.obs["stim"] = np.where(np.arange(mdata.n_obs) % 2 == 0, "ctrl", "stim")
+    mdata.obs["score"] = np.linspace(0.0, 1.0, mdata.n_obs)
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        categorical_covariate_keys=["stim"],
+        continuous_covariate_keys=["score"],
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        encode_covariates=True,
+        protein_in_encoder=True,
+    )
+    module = model.module
+    n_proteins = module.n_input_proteins
+    expected_extra = model.summary_stats.n_batch + 2 + 1  # batch + stim-dummy + score
+    expected_in_features = N_LATENT + n_proteins + expected_extra
+    assert module.qu.fc1.in_features == expected_in_features, (
+        f"fc1.in_features={module.qu.fc1.in_features}, "
+        f"expected N_LATENT({N_LATENT}) + n_proteins({n_proteins}) + extra({expected_extra})"
+    )
 
 
 def test_mrmultivi_save_load_preserves_latent_hierarchy(mdata_basic, tmp_path):
@@ -1268,7 +1312,8 @@ def test_vamprior_has_correct_parameters(mdata_basic):
     )
     K = 6
     model = MrMultiVI(mdata_basic, sample_key="donor", n_latent=N_LATENT,
-                      u_prior="vamp", u_prior_mixture_k=K)
+                      u_prior="vamp", u_prior_mixture_k=K,
+                      protein_in_encoder=False)  # test pure latent-space pseudo-inputs
     module = model.module
     assert module.u_prior_type == "vamp"
     assert hasattr(module, "u_vamp_pseudo"), "u_vamp_pseudo must be registered"
@@ -1734,8 +1779,12 @@ def test_mrmultivi_lfc_sign_known_positive_control():
     Design matrix encodes 'a' as reference (drop_first=True, 'a' < 'b') so
     condition_b dummy=1 → expected lfc > 0 for gene 0.
     """
+    import scvi as _scvi
     import scipy.sparse as sp
     from mudata import MuData
+
+    # Explicit seed guards against CLI --seed override changing the statistical result.
+    _scvi.settings.seed = 0
 
     mdata_full = synthetic_iid(return_mudata=True)
     n_cells = mdata_full.n_obs
@@ -1781,4 +1830,207 @@ def test_mrmultivi_lfc_sign_known_positive_control():
     assert mean_lfc > 0, (
         f"Gene 0 LFC is not positive (mean={mean_lfc:.4f}) despite 20× inflation in "
         "condition='b'. LFC sign may be inverted or extra_eps is not reaching the decoder."
+    )
+
+
+def test_mrmultivi_differential_abundance_trained_model_smoke(mdata_basic):
+    """DA runs correctly on a real trained model (V4-001 coverage).
+
+    All other DA tests use ``model.is_trained_ = True`` (a manual bypass)
+    without actual training.  This test exercises the end-to-end trained-weights
+    code path: outputs must be finite and have the correct shape.
+    """
+    import numpy as np
+
+    mdata = mdata_basic.copy()
+    mdata.obs["condition"] = np.where(
+        mdata.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    da = model.differential_abundance(
+        sample_cov_keys=["condition"],
+        n_mc_samples=2,
+        batch_size=32,
+    )
+    n_cells = mdata.n_obs
+    n_samples = mdata.obs["donor"].nunique()
+    assert "log_probs" in da
+    assert "condition_log_probs" in da
+    assert da["log_probs"].shape == (n_cells, n_samples), (
+        f"log_probs shape {da['log_probs'].shape} != expected ({n_cells}, {n_samples})"
+    )
+    assert np.all(np.isfinite(da["log_probs"].values)), (
+        "DA log_probs must be finite after real training"
+    )
+    assert np.all(np.isfinite(da["condition_log_probs"].values)), (
+        "DA condition_log_probs must be finite after real training"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-001 — Multi-seed DA calibration (CI-appropriate synthetic stand-in)
+# ---------------------------------------------------------------------------
+
+
+def test_mrmultivi_da_multiseed_stability():
+    """MrMultiVI DA produces finite, cross-seed-stable output on synthetic data.
+
+    This is a CI-appropriate stand-in for the full-cohort contrast
+    (MrTotalVI DA std=9.46 vs MrMultiVI std=0.126 across 3 seeds on the
+    schistosomiasis DTP dataset).  Synthetic 3-epoch models cannot reproduce
+    that contrast — see .scratch/mr-schisto-benchmark/run_dtp_da.py and
+    results/da_mrmultivi_dtp_summary.json for the real-data evidence.
+
+    Here we check the minimum CI-verifiable property: with two seeds on
+    synthetic data, MrMultiVI DA must produce finite outputs and the
+    per-seed mean log_prob must not diverge catastrophically.
+    """
+    import scvi as _scvi
+
+    results = {}
+    for seed in (0, 1):
+        _scvi.settings.seed = seed
+
+        mdata = _make_mdata(n_donors=N_DONORS)
+        mdata.obs["condition"] = np.where(
+            mdata.obs["donor"].isin(["donor_0", "donor_1"]), "a", "b"
+        )
+        MrMultiVI.setup_mudata(
+            mdata,
+            sample_key="donor",
+            batch_key="batch",
+            modalities=MODALITIES,
+        )
+        model = MrMultiVI(mdata, sample_key="donor", n_latent=N_LATENT, n_latent_u=4)
+        model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+        da = model.differential_abundance(
+            sample_cov_keys=["condition"],
+            n_mc_samples=2,
+            batch_size=32,
+        )
+        log_probs = da["log_probs"]
+        assert np.all(np.isfinite(log_probs.values)), (
+            f"DA log_probs not finite at seed={seed}"
+        )
+        results[seed] = float(log_probs.values.mean())
+
+    # Cross-seed drift must be bounded — catastrophic instability (std >> mean)
+    # would indicate a training or DA bug on synthetic data.
+    drift = abs(results[0] - results[1])
+    magnitude = max(abs(results[0]), abs(results[1]), 1e-6)
+    assert drift < 5.0 * magnitude, (
+        f"MrMultiVI DA cross-seed drift is catastrophic on synthetic data: "
+        f"seed0={results[0]:.4f}, seed1={results[1]:.4f}, drift={drift:.4f}. "
+        "Real-data instability contrast (MrTotalVI std=9.46 vs MrMultiVI std=0.126) "
+        "is documented in .scratch/mr-schisto-benchmark/results/da_*_dtp_summary.json."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-002 — n_labels == 0 / unlabeled_category smoke
+# ---------------------------------------------------------------------------
+
+
+def test_mrmultivi_n_labels_zero_mog_prior_smoke():
+    """MrMultiVI with u_prior_mixture=True and NO labels_key must not crash.
+
+    This exercises the zero-label MoG-prior / classifier-guard branch (C-002).
+    Without a labels_key the n_labels summary stat is 0; the MoG prior must
+    degrade gracefully to a standard Normal (or equivalent) rather than
+    indexing an empty table and raising IndexError / division-by-zero.
+    """
+    mdata = _make_mdata(n_donors=N_DONORS)
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+        # Intentionally no labels_key → n_labels == 0
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        u_prior_mixture=True,   # MoG path must not crash with zero labels
+    )
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    # Training must produce finite ELBO — search for whichever key Lightning uses
+    history = model.history
+    elbo_key = next(
+        (k for k in ("elbo_train", "train_loss_epoch", "train_elbo_train") if k in history),
+        None,
+    )
+    assert elbo_key is not None, (
+        f"No ELBO history key found with n_labels=0. Available: {list(history.keys())}"
+    )
+    vals = history[elbo_key].to_numpy().astype(float).flatten()
+    assert np.all(np.isfinite(vals)), (
+        f"Training {elbo_key} is not finite with n_labels=0 + u_prior_mixture=True: {vals}"
+    )
+
+    # Latent representation must be finite (no NaN from empty label table)
+    z = model.get_latent_representation(give_z=True)
+    assert np.all(np.isfinite(z)), (
+        "get_latent_representation returned non-finite values with n_labels=0"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-004 — Default-flag determinism guard
+# ---------------------------------------------------------------------------
+
+
+def test_mrmultivi_default_latent_is_deterministic():
+    """Two MrMultiVI models trained with identical default flags and same seed
+    must produce the same latent representations.
+
+    This locks default behaviour against silent flag-default changes (L-090:
+    protein_in_encoder reverted to True in session 58 silently widened the
+    u_vamp_pseudo_dim, breaking tests).  If this test fails, a default has
+    drifted and the change was not intentional.
+    """
+    import scvi as _scvi
+
+    # Both runs must use identical input data — create one mdata and copy it
+    # so that any randomness in synthetic_iid does not cause divergence.
+    mdata_src = _make_mdata(n_donors=N_DONORS)
+
+    _scvi.settings.seed = 0
+    mdata_a = mdata_src.copy()
+    MrMultiVI.setup_mudata(
+        mdata_a,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model_a = MrMultiVI(mdata_a, sample_key="donor", n_latent=N_LATENT)
+    model_a.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    z_a = model_a.get_latent_representation(give_z=True)
+
+    _scvi.settings.seed = 0
+    mdata_b = mdata_src.copy()
+    MrMultiVI.setup_mudata(
+        mdata_b,
+        sample_key="donor",
+        batch_key="batch",
+        modalities=MODALITIES,
+    )
+    model_b = MrMultiVI(mdata_b, sample_key="donor", n_latent=N_LATENT)
+    model_b.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    z_b = model_b.get_latent_representation(give_z=True)
+
+    assert np.allclose(z_a, z_b, atol=1e-4), (
+        f"Two models with default flags + seed=0 produced different latents. "
+        f"Max |diff| = {np.abs(z_a - z_b).max():.2e}. "
+        "A flag default may have changed — audit recent commits."
     )

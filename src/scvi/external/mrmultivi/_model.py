@@ -128,6 +128,13 @@ class MrMultiVI(MULTIVI):
             )
         model_kwargs["latent_distribution"] = "normal"
 
+        if not isinstance(mdata, MuData):
+            raise TypeError(
+                f"MrMultiVI requires a MuData object (with rna/atac/protein modalities), "
+                f"not {type(mdata).__name__}. Build one and register it with "
+                f"MrMultiVI.setup_mudata(mdata, sample_key=..., modalities=...)."
+            )
+
         # MULTIVI.__init__ → creates MrMultiVAE(n_sample=0) internally.
         # Hierarchy params (n_latent_sample etc.) are NOT injected into model_kwargs here:
         # they are named args in MrMultiVI.__init__ and would cause duplicate-kwargs TypeError

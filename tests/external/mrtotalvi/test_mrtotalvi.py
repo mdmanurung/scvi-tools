@@ -963,6 +963,8 @@ def test_donor_axis_separation(adata_shifted):
     """
     import torch
 
+    # Explicit seed guards against CLI --seed override changing the statistical result.
+    scvi.settings.seed = 0
     model = _setup_and_train(adata_shifted, max_epochs=MAX_EPOCHS_FULL)
 
     dists = model.get_local_sample_distances(batch_size=64)  # (n_cell, n_sample, n_sample)
@@ -1575,6 +1577,9 @@ def test_mrtotalvi_lfc_sign_known_positive_control():
     """
     import scipy.sparse as sp
 
+    # Explicit seed guards against CLI --seed override changing the statistical result.
+    scvi.settings.seed = 0
+
     adata = _make_adata(n_donors=N_DONORS)
 
     # Two conditions: 'b' = donor_2 + donor_3; these will have inflated gene 0.
@@ -1611,4 +1616,139 @@ def test_mrtotalvi_lfc_sign_known_positive_control():
     assert mean_lfc > 0, (
         f"Gene 0 LFC is not positive (mean={mean_lfc:.4f}) despite 20× inflation in "
         "condition='b'. LFC sign may be inverted or extra_eps is not reaching the decoder."
+    )
+
+
+def test_differential_abundance_trained_model_smoke(adata_basic):
+    """DA runs correctly on a real trained model (V4-001 coverage).
+
+    All other DA tests use ``model.is_trained_ = True`` (a manual bypass)
+    without actual training.  This test exercises the end-to-end trained-weights
+    code path: outputs must be finite and have the correct shape.
+    """
+    adata = adata_basic.copy()
+    adata.obs["condition"] = np.where(
+        adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
+    )
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    da = model.differential_abundance(
+        sample_cov_keys=["condition"],
+        n_mc_samples=2,
+        batch_size=32,
+    )
+    n_cells = adata.n_obs
+    n_samples = adata.obs["sample"].nunique()
+    assert "log_probs" in da
+    assert "condition_log_probs" in da
+    assert da["log_probs"].shape == (n_cells, n_samples), (
+        f"log_probs shape {da['log_probs'].shape} != expected ({n_cells}, {n_samples})"
+    )
+    assert np.all(np.isfinite(da["log_probs"].values)), (
+        "DA log_probs must be finite after real training"
+    )
+    assert np.all(np.isfinite(da["condition_log_probs"].values)), (
+        "DA condition_log_probs must be finite after real training"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-002 — n_labels == 0 / unlabeled_category smoke
+# ---------------------------------------------------------------------------
+
+
+def test_mrtotalvi_n_labels_zero_mog_prior_smoke(adata_basic):
+    """MrTotalVI with u_prior_mixture=True and NO labels_key must not crash.
+
+    This exercises the zero-label MoG-prior / classifier-guard branch (C-002).
+    Without a labels_key the n_labels summary stat is 0; the MoG prior must
+    degrade gracefully to a standard Normal (or equivalent) rather than
+    indexing an empty table and raising IndexError / division-by-zero.
+    """
+    adata = adata_basic.copy()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+        # Intentionally no labels_key → n_labels == 0
+    )
+    model = MrTotalVI(
+        adata,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        u_prior_mixture=True,   # MoG path must not crash with zero labels
+    )
+    model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+
+    # Training must produce finite ELBO — search for whichever key Lightning uses
+    history = model.history
+    elbo_key = next(
+        (k for k in ("elbo_train", "train_loss_epoch", "train_elbo_train") if k in history),
+        None,
+    )
+    assert elbo_key is not None, (
+        f"No ELBO history key found with n_labels=0. Available: {list(history.keys())}"
+    )
+    vals = history[elbo_key].to_numpy().astype(float).flatten()
+    assert np.all(np.isfinite(vals)), (
+        f"Training {elbo_key} is not finite with n_labels=0 + u_prior_mixture=True: {vals}"
+    )
+
+    # Latent representation must be finite (no NaN from empty label table)
+    z = model.get_latent_representation(give_z=True)
+    assert np.all(np.isfinite(z)), (
+        "get_latent_representation returned non-finite values with n_labels=0"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-004 — Default-flag determinism guard
+# ---------------------------------------------------------------------------
+
+
+def test_mrtotalvi_default_latent_is_deterministic(adata_basic):
+    """Two MrTotalVI models trained with identical default flags and same seed
+    must produce the same latent representations.
+
+    This locks default behaviour against silent flag-default changes (L-090:
+    protein_in_encoder reverted to True in session 58 silently widened the
+    u_vamp_pseudo_dim, breaking tests).  If this test fails, a default has
+    drifted and the change was not intentional.
+    """
+    adata = adata_basic.copy()
+
+    scvi.settings.seed = 0
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model_a = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT)
+    model_a.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    z_a = model_a.get_latent_representation(give_z=True)
+
+    scvi.settings.seed = 0
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model_b = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT)
+    model_b.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+    z_b = model_b.get_latent_representation(give_z=True)
+
+    assert np.allclose(z_a, z_b, atol=1e-4), (
+        f"Two models with default flags + seed=0 produced different latents. "
+        f"Max |diff| = {np.abs(z_a - z_b).max():.2e}. "
+        "A flag default may have changed — audit recent commits."
     )

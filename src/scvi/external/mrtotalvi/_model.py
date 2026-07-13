@@ -189,7 +189,9 @@ class MrTotalVI(TOTALVI):
 
             n_proteins = self.module.n_input_proteins
             if n_proteins > 0:
-                X_prot = self.adata_manager.get_from_registry(REGISTRY_KEYS.PROTEIN_EXP_KEY).to_numpy()[idx]
+                # get_from_registry may return numpy array (synthetic data) or pandas DataFrame
+                # (obsm key with protein names); np.asarray handles both via row-integer indexing.
+                X_prot = np.asarray(self.adata_manager.get_from_registry(REGISTRY_KEYS.PROTEIN_EXP_KEY))[idx]
                 if issparse(X_prot):
                     X_prot = X_prot.toarray()
                 X_combined = np.hstack([X_genes, X_prot.astype(np.float32)])

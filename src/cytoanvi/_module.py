@@ -21,6 +21,12 @@ from ._hce import hierarchical_cross_entropy_loss
 
 _NON_DATA_INFERENCE_KEYS = frozenset({"batch_index", "cont_covs", "cat_covs", "panel_index"})
 _MIN_NORMAL_VARIANCE = 1e-6
+# The shared scvi Decoder computes ``p_v = torch.exp(self.var_decoder(p))``
+# (scvi/nn/_base_components.py), an unbounded linear output through exp(), which
+# overflows to +inf in float32 above ~88. An overflowed variance is recoverable
+# -- it means "very uncertain" -- so it is clamped rather than raised on. NaN and
+# negative variances are not recoverable and still raise.
+_MAX_NORMAL_VARIANCE = 1e6
 
 # Per-step finite/negative validation of loss tensors calls ``.any()``/``.item()``, each of which
 # forces a CUDA device sync and stalls the kernel queue on every training step (M-1). The checks
@@ -61,18 +67,26 @@ def _require_finite_tensor(tensor: torch.Tensor, name: str) -> torch.Tensor:
 def _stable_normal_scale(variance: torch.Tensor, name: str) -> torch.Tensor:
     """Return a finite Normal scale from a variance tensor.
 
-    The ``clamp_min`` floor always runs (guaranteeing a finite, positive scale even when the
-    diagnostic checks are disabled). The finite/negative *validation* is skipped when
+    The clamp to ``[_MIN_NORMAL_VARIANCE, _MAX_NORMAL_VARIANCE]`` always runs, so an
+    ``exp()`` overflow in the variance decoder saturates instead of poisoning the loss.
+    ``NaN`` and negative variances are *not* clamped away: neither is recoverable, and both
+    indicate a genuine divergence worth surfacing. That validation is skipped when
     ``CYTOANVI_DISABLE_FINITE_CHECKS=1`` — see the module-level note.
     """
     if _FINITE_CHECKS_ENABLED:
-        _require_finite_tensor(variance, name)
+        nan = torch.isnan(variance)
+        if nan.any():
+            raise ValueError(
+                f"{name} contains NaN value(s): {_count_true(nan)} during CytoANVI loss."
+            )
         negative = variance < 0
         if negative.any():
             raise ValueError(
                 f"{name} contains negative value(s): {_count_true(negative)} during CytoANVI loss."
             )
-    return torch.sqrt(torch.clamp_min(variance, _MIN_NORMAL_VARIANCE))
+    return torch.sqrt(
+        torch.clamp(variance, _MIN_NORMAL_VARIANCE, _MAX_NORMAL_VARIANCE)
+    )
 
 
 class CytoANVAE(SupervisedModuleClass, CytoVAE):

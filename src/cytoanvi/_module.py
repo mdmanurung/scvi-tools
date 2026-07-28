@@ -28,14 +28,18 @@ _MIN_NORMAL_VARIANCE = 1e-6
 _MAX_LOG_VARIANCE = 13.8
 
 # Per-step finite/negative validation of loss tensors calls ``.any()``/``.item()``, each of which
-# forces a CUDA device sync and stalls the kernel queue on every training step (M-1). The checks
-# are diagnostic — they produce a targeted "which tensor went non-finite" message — while the
-# actual NaN *prevention* is the ``clamp_min`` in ``_stable_normal_scale`` below, which always
-# runs.
-# They are therefore ON by default (preserving the safety net that caught prior NaN crashes and the
-# direct unit tests of ``_stable_normal_scale``) but can be disabled for throughput at cytometry
-# scale by exporting ``CYTOANVI_DISABLE_FINITE_CHECKS=1``. Disabling skips only the diagnostic
-# raises; the variance clamp still guarantees a finite Normal scale.
+# forces a CUDA device sync and stalls the kernel queue on every training step (M-1).
+#
+# These checks are PURELY DIAGNOSTIC. An earlier version of this note claimed the ``clamp_min``
+# in ``_stable_normal_scale`` was "the actual NaN prevention"; that was wrong and it misdirected
+# a multi-day investigation. ``clamp_min`` is a *lower* bound -- it cannot touch ``+inf`` and
+# cannot touch ``NaN`` (``clamp(nan) == nan``). Prevention lives in ``BoundedVarianceDecoder``
+# above, which bounds the variance pre-activation before ``exp`` so the overflow cannot occur.
+#
+# Measured cost of the checks: 2% of epoch wall time at 800k cells, batch 8192 -- so there is
+# little to buy by disabling them. ``CYTOANVI_DISABLE_FINITE_CHECKS=1`` still exists for
+# profiling, but note it removes the only signal that a genuine divergence (NaN, negative
+# variance) is in progress; such a run would train on a corrupted loss and report nothing.
 _FINITE_CHECKS_ENABLED = os.environ.get("CYTOANVI_DISABLE_FINITE_CHECKS", "0") != "1"
 
 if TYPE_CHECKING:
@@ -92,11 +96,17 @@ class BoundedVarianceDecoder(Decoder):
 
 
 def _stable_normal_scale(variance: torch.Tensor, name: str) -> torch.Tensor:
-    """Return a finite Normal scale from a variance tensor.
+    """Return a Normal scale from a variance tensor, raising on values it cannot fix.
 
-    The ``clamp_min`` floor always runs (guaranteeing a finite, positive scale even when the
-    diagnostic checks are disabled). The finite/negative *validation* is skipped when
-    ``CYTOANVI_DISABLE_FINITE_CHECKS=1`` — see the module-level note.
+    ``clamp_min`` guards variance *collapsing to zero* and nothing else: it cannot rescue
+    ``+inf`` (the clamp is a lower bound) and it cannot rescue ``NaN``. Both are therefore
+    raised on rather than silently passed through, which is what surfaced the variance-decoder
+    overflow in the first place. The overflow itself is prevented upstream by
+    :class:`BoundedVarianceDecoder`; this function is the backstop for anything that still
+    arrives non-finite, which by construction now means a genuine divergence.
+
+    The validation is skipped under ``CYTOANVI_DISABLE_FINITE_CHECKS=1`` — see the
+    module-level note for why that is rarely worth doing.
     """
     if _FINITE_CHECKS_ENABLED:
         _require_finite_tensor(variance, name)

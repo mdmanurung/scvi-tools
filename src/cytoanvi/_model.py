@@ -458,8 +458,15 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         n_epochs_kl_warmup
             Epochs to warm up the KL weight. Default 400 (40% of ``max_epochs``).
         adversarial_classifier
-            Use an adversarial classifier in the latent space for batch mixing. Defaults to
-            ``True`` when missing-marker panels are detected.
+            **Currently a no-op for CytoANVI, accepted only for signature compatibility.**
+            :meth:`~scvi.model.base.SemisupervisedTrainingMixin.train` consumes this argument
+            only under ``if type(self).__name__ == "TOTALANVI":``, and
+            ``CytoANVI._training_plan_cls`` resolves to
+            :class:`~scvi.train.SemiSupervisedTrainingPlan`, which has no such parameter, so the
+            value is silently discarded. Honouring it would require
+            :class:`~scvi.train.SemiSupervisedAdversarialTrainingPlan`, which hardcodes a
+            gradient-clip norm of 50 and would override any ``gradient_clip_norm`` passed via
+            ``plan_kwargs``. Do not rely on this for batch mixing.
         plan_kwargs
             Extra keyword arguments for the training plan (e.g.
             ``{"ewc_importance": 100}`` for continual update).

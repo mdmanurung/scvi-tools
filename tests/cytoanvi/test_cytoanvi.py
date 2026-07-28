@@ -162,6 +162,37 @@ def test_cytoanvi_train_predict_latent(adata):
     assert soft.shape == (adata.n_obs, model.n_labels)
 
 
+def test_cytoanvi_predict_is_deterministic_from_training_mode(adata):
+    """`predict` must force eval mode, or repeated calls disagree.
+
+    The inherited implementation does not. With the module left in training mode, dropout and
+    batch-norm running statistics stay active, so two identical calls return different
+    probabilities -- which under chunked projection means the same cell gets a different label
+    depending on which chunk it lands in.
+    """
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    model.train(max_epochs=N_EPOCHS)
+
+    # Deliberately leave the module in training mode: this is the state the guard exists for.
+    model.module.train()
+    assert model.module.training
+
+    first = model.predict(soft=True).to_numpy()
+    second = model.predict(soft=True).to_numpy()
+
+    np.testing.assert_allclose(first, second, rtol=0, atol=0)
+    # The guard must restore the mode it found, not silently leave the module in eval.
+    assert model.module.training
+
+
 def test_cytoanvi_from_cytovi_reproduces_latent(adata):
     CYTOVI.setup_anndata(
         adata,

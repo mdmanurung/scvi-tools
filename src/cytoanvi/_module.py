@@ -21,6 +21,11 @@ from ._hce import hierarchical_cross_entropy_loss
 
 _NON_DATA_INFERENCE_KEYS = frozenset({"batch_index", "cont_covs", "cat_covs", "panel_index"})
 _MIN_NORMAL_VARIANCE = 1e-6
+# ``exp`` overflows to +inf in float32 above 88.7228, so the shared decoder's unbounded variance
+# head can produce a non-finite variance. ``exp(13.8) ~ 1e6`` is already an enormous variance for
+# a unit-scale latent prior (scale ~1e3, where the Normal log-prob is effectively flat), so the
+# bound costs nothing in the regime the model actually occupies.
+_MAX_LOG_VARIANCE = 13.8
 
 # Per-step finite/negative validation of loss tensors calls ``.any()``/``.item()``, each of which
 # forces a CUDA device sync and stalls the kernel queue on every training step (M-1). The checks
@@ -56,6 +61,34 @@ def _require_finite_tensor(tensor: torch.Tensor, name: str) -> torch.Tensor:
             f"{name} contains non-finite value(s): {_count_true(bad)} during CytoANVI loss."
         )
     return tensor
+
+
+class BoundedVarianceDecoder(Decoder):
+    """:class:`~scvi.nn.Decoder` with the variance pre-activation bounded before ``exp``.
+
+    The base class ends with ``p_v = torch.exp(self.var_decoder(p))`` over an unbounded
+    ``nn.Linear`` (``scvi/nn/_base_components.py``), which overflows to ``+inf`` in float32
+    once the pre-activation exceeds 88.7228.
+
+    Bounding must happen *before* the exponential. Clamping the overflowed variance afterwards
+    looks equivalent but is not: ``clamp``'s backward is a hard range mask that emits zero
+    outside the range, and ``exp``'s backward multiplies that zero by the saved forward value,
+    giving ``0 * inf = nan``. The forward value saturates while the gradient silently becomes
+    NaN -- and ``torch.nn.utils.clip_grad_norm_`` then propagates that NaN to *every* parameter,
+    so a single overflow corrupts the whole model in one optimizer step with nothing raised.
+    Clamping the logits keeps the saved forward value finite, so a saturated element contributes
+    a clean zero gradient instead.
+
+    Below the bound this is numerically identical to the base class, and it adds no parameters
+    or submodules, so checkpoints written with a plain :class:`~scvi.nn.Decoder` load unchanged.
+    """
+
+    def forward(self, x: torch.Tensor, *cat_list: int):
+        """Decode ``x``, returning the mean and a variance that cannot overflow."""
+        p = self.decoder(x, *cat_list)
+        p_m = self.mean_decoder(p)
+        p_v = torch.exp(torch.clamp(self.var_decoder(p), max=_MAX_LOG_VARIANCE))
+        return p_m, p_v
 
 
 def _stable_normal_scale(variance: torch.Tensor, name: str) -> torch.Tensor:
@@ -190,7 +223,9 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
             return_dist=True,
         )
 
-        self.decoder_z1_z2 = Decoder(
+        # Bounded variance head: the shared Decoder's is unbounded and overflows at scale.
+        # Same parameters and same state-dict keys as ``Decoder``; see BoundedVarianceDecoder.
+        self.decoder_z1_z2 = BoundedVarianceDecoder(
             n_latent,
             n_latent,
             n_cat_list=[self.n_labels],

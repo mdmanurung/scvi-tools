@@ -74,6 +74,68 @@ def test_cytoanvi_loss_scale_rejects_invalid_variance(variance, message):
         _stable_normal_scale(variance, "pz1_v")
 
 
+def _decoder_pair(seed: int = 0):
+    """A bounded and a stock Decoder sharing identical weights."""
+    from scvi.nn import Decoder
+
+    from cytoanvi._module import BoundedVarianceDecoder
+
+    torch.manual_seed(seed)
+    bounded = BoundedVarianceDecoder(4, 3, n_layers=1, n_hidden=8)
+    torch.manual_seed(seed)
+    stock = Decoder(4, 3, n_layers=1, n_hidden=8)
+    stock.load_state_dict(bounded.state_dict())
+    return bounded, stock
+
+
+def test_bounded_variance_decoder_keeps_decoder_state_dict_keys():
+    """The bound must not change checkpoint layout, or saved models stop loading."""
+    bounded, stock = _decoder_pair()
+
+    assert set(bounded.state_dict()) == set(stock.state_dict())
+
+
+def test_bounded_variance_decoder_matches_decoder_below_the_bound():
+    """Below the bound the subclass must be the stock decoder, not an approximation."""
+    bounded, stock = _decoder_pair()
+    x = torch.randn(6, 4)
+
+    b_m, b_v = bounded(x)
+    s_m, s_v = stock(x)
+
+    torch.testing.assert_close(b_m, s_m)
+    torch.testing.assert_close(b_v, s_v)
+    assert torch.all(torch.isfinite(b_v))
+
+
+def test_bounded_variance_decoder_gradient_is_finite_on_overflow():
+    """The regression test for the defect a09a9e28 introduced.
+
+    Clamping an already-overflowed variance saturates the forward value but makes the
+    backward ``0 * inf = nan``. Bounding the pre-activation must leave the gradient finite.
+    The stock decoder is asserted to overflow on the same input, so this pins the fix rather
+    than restating an invariant that already held.
+    """
+    bounded, stock = _decoder_pair()
+    with torch.no_grad():
+        # Drive the variance pre-activation far past the float32 exp overflow line (88.7228).
+        bounded.var_decoder.bias.fill_(100.0)
+        stock.var_decoder.bias.fill_(100.0)
+    x = torch.randn(6, 4)
+
+    _, stock_v = stock(x)
+    assert torch.isinf(stock_v).any(), "stock Decoder must overflow, or this test proves nothing"
+
+    _, bounded_v = bounded(x)
+    assert torch.all(torch.isfinite(bounded_v))
+
+    bounded_v.sum().backward()
+    for name, parameter in bounded.named_parameters():
+        assert parameter.grad is None or torch.all(torch.isfinite(parameter.grad)), (
+            f"non-finite gradient on {name} after a saturated variance pre-activation"
+        )
+
+
 def test_cytoanvi_train_predict_latent(adata):
     CytoANVI.setup_anndata(
         adata,

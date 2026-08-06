@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default batch size for replay-related data loaders: the `fisher_importances` batch-mean loader
+# (when per_sample=False) and the `ContinualUpdate.configure` replay-buffer materialization loader.
+_DEFAULT_REPLAY_BATCH_SIZE = 256
+
 
 def zerolike_params_dict(module: torch.nn.Module) -> list[tuple[str, torch.Tensor]]:
     """``[(name, zeros_like(param))]`` for trainable params (Fisher accumulator init)."""
@@ -42,7 +46,7 @@ def fisher_importances(
     adata: AnnData,
     *,
     max_cells: int | None = 10_000,
-    batch_size: int = 256,
+    batch_size: int = _DEFAULT_REPLAY_BATCH_SIZE,
     seed: int = 0,
     per_sample: bool = True,
 ) -> list[tuple[str, torch.Tensor]]:
@@ -220,7 +224,7 @@ class ContinualUpdate:
         # which would draw from the global RNG and produce non-reproducible replay buffers.
         perm = np.random.default_rng(seed).permutation(len(replay_val))
         replay_dl = query_model._make_data_loader(
-            adata=replay_val, indices=perm, batch_size=256, shuffle=False
+            adata=replay_val, indices=perm, batch_size=_DEFAULT_REPLAY_BATCH_SIZE, shuffle=False
         )
         replay_batches = [
             {k: v.detach().cpu() for k, v in tensors.items()} for tensors in replay_dl

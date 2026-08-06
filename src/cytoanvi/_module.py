@@ -318,7 +318,7 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         _require_finite_tensor(z1, "z1")
         x: torch.Tensor = tensors[CYTOVI_REGISTRY_KEYS.X_KEY]
 
-        if CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK in tensors.keys():
+        if CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK in tensors:
             nan_mask = tensors[CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK]
         else:
             nan_mask = None
@@ -395,17 +395,17 @@ class CytoANVAE(SupervisedModuleClass, CytoVAE):
         inference_inputs = self._get_inference_input(labelled_dataset)
         data_inputs = {
             key: inference_inputs[key]
-            for key in inference_inputs.keys()
+            for key in inference_inputs
             if key not in _NON_DATA_INFERENCE_KEYS
         }
 
         y = labelled_dataset[REGISTRY_KEYS.LABELS_KEY]
         batch_idx = labelled_dataset[REGISTRY_KEYS.BATCH_KEY]
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-        cont_covs = labelled_dataset[cont_key] if cont_key in labelled_dataset.keys() else None
+        cont_covs = labelled_dataset[cont_key] if cont_key in labelled_dataset else None
 
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-        cat_covs = labelled_dataset[cat_key] if cat_key in labelled_dataset.keys() else None
+        cat_covs = labelled_dataset[cat_key] if cat_key in labelled_dataset else None
 
         logits = self.classify(
             **data_inputs, batch_index=batch_idx, cat_covs=cat_covs, cont_covs=cont_covs

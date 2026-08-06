@@ -85,7 +85,7 @@ Created: 2026-06-30
 ## Phase 4 — Data regeneration (requires GPU, days)
 
 ### 4a. Nuñez annotation v2 — train-only CytoVI + k-NN transfer (F1) — CRITICAL
-- [~] **P4-A (F1)**: `benchmarks/cytoanvi/annotate_nunez.py` has `annotate_inductive_knn()` + `--inductive` flag (verified); B1 inductive 3-seed re-run in progress via PID 1520357 (ETA ~07:00 Jul 1)
+- [x] **P4-A (F1)**: `benchmarks/cytoanvi/annotate_nunez.py` has `annotate_inductive_knn()` + `--inductive` flag (verified); B1 inductive 3-seed re-run is finalized (the "in progress via PID 1520357 (ETA ~07:00 Jul 1)" note is stale). Result: B1 Nuñez full inductive e1000 3-seed, CytoANVI 0.9751±0.0003 vs CytoVI kNN 0.9581±0.0007 (Δ+0.0170) — see `.living/findings/FINDINGS_REGISTRY.md` F-003 (`nunez-full-inductive-e1000-3seed`) and `benchmarks/ANALYSIS_MANIFEST.md` B1 row (`nunez-full-inductive-e1000 ✓`). Marked done during the 2026-08-06 pass.
 - [-] **P4-B (F1)**: `annotation_version` param in `load_nunez()` — deferred until v2 `.h5ad` exists (blocked on P4-A GPU run completing and file validation)
 - [-] **P4-C (idea 10)**: Archive to Figshare — blocked on user credentials; mark as user action
 

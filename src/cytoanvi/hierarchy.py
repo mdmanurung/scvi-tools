@@ -281,6 +281,116 @@ def set_hierarchy_from_schpl(
     model.set_hierarchy(matrix)
 
 
+def _run_learn(
+    reference_model: CytoANVI,
+    reference_adata: AnnData | None,
+    batch_key: str,
+    batch_order: list,
+    schpl_cell_type_key: str,
+    tree: Any | None,
+    obs_cols: Sequence[str] | None,
+    **schpl_kwargs: Any,
+) -> dict[str, Any]:
+    """``mode='learn'`` branch: build the reference latent and call scHPL ``learn_tree``."""
+    if reference_adata is None:
+        raise ValueError("reference_adata is required for mode='learn'")
+    if tree is not None:
+        raise ValueError("tree must be None for mode='learn'")
+    ref_latent = latent_to_anndata(reference_model, reference_adata, obs_cols=obs_cols)
+    tree, missing = learn_hierarchy(
+        ref_latent,
+        batch_key=batch_key,
+        batch_order=batch_order,
+        cell_type_key=schpl_cell_type_key,
+        **schpl_kwargs,
+    )
+    return {
+        "tree": tree,
+        "missing_populations": missing,
+        "reference_latent": ref_latent,
+    }
+
+
+def _run_predict(
+    query_latent: AnnData | np.ndarray | None,
+    tree: Any,
+    **schpl_kwargs: Any,
+) -> dict[str, Any]:
+    """``mode='predict'`` branch: run scHPL ``predict_labels`` against an existing tree."""
+    if query_latent is None:
+        raise ValueError("query_latent is required for mode='predict'")
+    predictions = predict_schpl(query_latent, tree, **schpl_kwargs)
+    return {"predictions": predictions, "tree": tree}
+
+
+def _run_update(
+    reference_adata: AnnData | None,
+    query_adata: AnnData | None,
+    combined_adata: AnnData | None,
+    combined_latent: AnnData | None,
+    query_model: CytoANVI | None,
+    batch_added: list | None,
+    batch_order: list,
+    batch_key: str,
+    schpl_cell_type_key: str,
+    obs_cols: Sequence[str] | None,
+    tree: Any,
+    **schpl_kwargs: Any,
+) -> dict[str, Any]:
+    """``mode='update'`` branch: resolve the combined latent and call scHPL ``learn_tree``.
+
+    Uses ``retrain=False``. Latent resolution (first match wins): ``combined_latent`` →
+    ``combined_adata`` + ``query_model`` → ``anndata.concat([reference_adata, query_adata])``
+    + ``query_model``.
+    """
+    if (
+        query_adata is None
+        and reference_adata is not None
+        and combined_latent is None
+        and combined_adata is None
+    ):
+        raise ValueError(
+            "query_adata is required for mode='update' when reference_adata is provided "
+            "without combined_latent or combined_adata."
+        )
+    if combined_latent is None and query_model is None:
+        raise ValueError(
+            "query_model is required for mode='update' when combined_latent is not provided "
+            "(trained CytoANVI query model for latent extraction)."
+        )
+    if batch_added is None:
+        raise ValueError("batch_added is required for mode='update'")
+
+    if combined_latent is not None:
+        latent_for_update = combined_latent
+    elif combined_adata is not None:
+        latent_for_update = latent_to_anndata(query_model, combined_adata, obs_cols=obs_cols)
+    elif reference_adata is not None and query_adata is not None:
+        merged_adata = anndata.concat(
+            [reference_adata, query_adata], join="outer", index_unique="-"
+        )
+        latent_for_update = latent_to_anndata(query_model, merged_adata, obs_cols=obs_cols)
+    else:
+        raise ValueError(
+            "mode='update' requires combined_latent, combined_adata, or both "
+            "reference_adata and query_adata to build reference+query latents."
+        )
+    tree, missing = update_hierarchy(
+        latent_for_update,
+        tree=tree,
+        batch_added=batch_added,
+        batch_order=batch_order,
+        cell_type_key=schpl_cell_type_key,
+        batch_key=batch_key,
+        **schpl_kwargs,
+    )
+    return {
+        "tree": tree,
+        "missing_populations": missing,
+        "combined_latent": latent_for_update,
+    }
+
+
 def run_tree_arches_pipeline(
     reference_model: CytoANVI,
     batch_key: str,
@@ -304,6 +414,10 @@ def run_tree_arches_pipeline(
     Update-mode latent resolution (first match wins): ``combined_latent`` → ``combined_adata`` +
     ``query_model`` → ``anndata.concat([reference_adata, query_adata])`` + ``query_model``.
     Query-only updates require ``combined_latent`` supplied by the caller.
+
+    Thin dispatcher: each mode's logic lives in a private helper (``_run_learn``,
+    ``_run_update``, ``_run_predict``) that takes explicit named parameters; this function
+    only picks out the mode-specific keys from ``kwargs`` and routes to the right helper.
     """
     _require_schpl()
     reference_model._check_if_trained(warn=False)
@@ -312,82 +426,40 @@ def run_tree_arches_pipeline(
         raise ValueError("mode must be one of 'learn', 'update', or 'predict'")
 
     if mode == "learn":
-        if reference_adata is None:
-            raise ValueError("reference_adata is required for mode='learn'")
-        if tree is not None:
-            raise ValueError("tree must be None for mode='learn'")
         obs_cols = kwargs.pop("obs_cols", None)
         schpl_cell_type_key = kwargs.pop("schpl_cell_type_key", cell_type_key)
-        ref_latent = latent_to_anndata(reference_model, reference_adata, obs_cols=obs_cols)
-        tree, missing = learn_hierarchy(
-            ref_latent,
+        return _run_learn(
+            reference_model=reference_model,
+            reference_adata=reference_adata,
             batch_key=batch_key,
             batch_order=batch_order,
-            cell_type_key=schpl_cell_type_key,
+            schpl_cell_type_key=schpl_cell_type_key,
+            tree=tree,
+            obs_cols=obs_cols,
             **kwargs,
         )
-        return {
-            "tree": tree,
-            "missing_populations": missing,
-            "reference_latent": ref_latent,
-        }
 
     if tree is None:
         raise ValueError("tree is required for mode='update' and mode='predict'")
 
     if mode == "predict":
-        if query_latent is None:
-            raise ValueError("query_latent is required for mode='predict'")
-        predictions = predict_schpl(query_latent, tree, **kwargs)
-        return {"predictions": predictions, "tree": tree}
+        return _run_predict(query_latent=query_latent, tree=tree, **kwargs)
 
-    if (
-        query_adata is None
-        and reference_adata is not None
-        and combined_latent is None
-        and combined_adata is None
-    ):
-        raise ValueError(
-            "query_adata is required for mode='update' when reference_adata is provided "
-            "without combined_latent or combined_adata."
-        )
     query_model = kwargs.pop("query_model", None)
-    if combined_latent is None and query_model is None:
-        raise ValueError(
-            "query_model is required for mode='update' when combined_latent is not provided "
-            "(trained CytoANVI query model for latent extraction)."
-        )
     batch_added = kwargs.pop("batch_added", None)
-    if batch_added is None:
-        raise ValueError("batch_added is required for mode='update'")
-
     obs_cols = kwargs.pop("obs_cols", None)
     schpl_cell_type_key = kwargs.pop("schpl_cell_type_key", cell_type_key)
-    if combined_latent is not None:
-        latent_for_update = combined_latent
-    elif combined_adata is not None:
-        latent_for_update = latent_to_anndata(query_model, combined_adata, obs_cols=obs_cols)
-    elif reference_adata is not None and query_adata is not None:
-        merged_adata = anndata.concat(
-            [reference_adata, query_adata], join="outer", index_unique="-"
-        )
-        latent_for_update = latent_to_anndata(query_model, merged_adata, obs_cols=obs_cols)
-    else:
-        raise ValueError(
-            "mode='update' requires combined_latent, combined_adata, or both "
-            "reference_adata and query_adata to build reference+query latents."
-        )
-    tree, missing = update_hierarchy(
-        latent_for_update,
-        tree=tree,
+    return _run_update(
+        reference_adata=reference_adata,
+        query_adata=query_adata,
+        combined_adata=combined_adata,
+        combined_latent=combined_latent,
+        query_model=query_model,
         batch_added=batch_added,
         batch_order=batch_order,
-        cell_type_key=schpl_cell_type_key,
         batch_key=batch_key,
+        schpl_cell_type_key=schpl_cell_type_key,
+        obs_cols=obs_cols,
+        tree=tree,
         **kwargs,
     )
-    return {
-        "tree": tree,
-        "missing_populations": missing,
-        "combined_latent": latent_for_update,
-    }

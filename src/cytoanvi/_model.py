@@ -200,15 +200,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             None if class_weights is None else class_weights.detach().cpu().numpy()
         )
 
-        reachability_tensor = None
-        if reachability_matrix is not None:
-            reachability_arr = np.asarray(
-                reachability_matrix.detach().cpu().numpy()
-                if isinstance(reachability_matrix, torch.Tensor)
-                else reachability_matrix
-            )
-            validate_reachability_matrix(reachability_arr, n_labels)
-            reachability_tensor = torch.tensor(reachability_arr, dtype=torch.float32)
+        reachability_tensor = self._resolve_reachability_tensor(reachability_matrix, n_labels)
 
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,
@@ -263,6 +255,85 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         finally:
             if was_training:
                 self.module.train()
+
+    @staticmethod
+    def _validate_backbone_present_in_query(backbone_markers, missing_markers) -> None:
+        """Fail if the query panel omits any backbone (encoder) marker.
+
+        CytoVI encodes only the shared backbone, so a missing backbone marker would make the
+        query re-derive a smaller backbone than the reference and break scArches surgery.
+        """
+        missing_backbone = backbone_markers.intersection(missing_markers)
+        if len(missing_backbone):
+            raise ValueError(
+                f"Query panel is missing backbone (encoder) markers {list(missing_backbone)}. "
+                "CytoVI encodes only the shared backbone, so the backbone must be present in "
+                "both reference and query; only panel-specific (non-backbone) markers may be "
+                "absent from the query. Add the missing backbone markers to the query, or use "
+                "a reference whose backbone is shared with this query."
+            )
+
+    @staticmethod
+    def _validate_backbone_fully_observed_in_query(adata, nan_layer_key, backbone_markers) -> None:
+        """Fail if the query's own ``nan_layer`` masks a backbone marker in any cell.
+
+        Such a marker drops out of the query-derived backbone exactly as a missing one would,
+        but a set difference on ``var_names`` cannot see it — the column is present, just masked.
+        Caught here so it fails fast with a clear message rather than as a cryptic resize error
+        inside ``load_query_data``.
+        """
+        if nan_layer_key not in adata.layers:
+            return
+        qmask = np.asarray(adata.layers[nan_layer_key])
+        present_backbone = backbone_markers.intersection(adata.var_names)
+        if not len(present_backbone):
+            return
+        cols = adata.var_names.get_indexer(present_backbone)
+        partial = present_backbone[(qmask[:, cols] == 0).any(axis=0)]
+        if len(partial):
+            raise ValueError(
+                f"Query's nan_layer masks backbone (encoder) markers {list(partial)} in "
+                "some cells, so the query would re-derive a smaller backbone than the "
+                "reference and scArches surgery would fail. Backbone markers must be "
+                "fully observed across all query cells."
+            )
+
+    @staticmethod
+    def _warn_observed_nonbackbone_markers(adata, ref_var_names, backbone_mask) -> None:
+        """Warn about panel-specific reference markers the query measured but that get masked.
+
+        They are masked so the query re-derives exactly the reference backbone, which means the
+        query's values for them are not used for mapping — worth saying out loud.
+        """
+        observed_nonbackbone = ref_var_names[~backbone_mask].intersection(adata.var_names)
+        if len(observed_nonbackbone):
+            warnings.warn(
+                "Query measured reference panel-specific (non-backbone) markers "
+                f"{list(observed_nonbackbone)}; these are masked so scArches re-derives the "
+                "reference backbone, so their query values are not used for mapping.",
+                UserWarning,
+                stacklevel=settings.warnings_stacklevel,
+            )
+
+    @staticmethod
+    def _resolve_reachability_tensor(
+        reachability_matrix: np.ndarray | torch.Tensor | None,
+        n_labels: int,
+    ) -> torch.Tensor | None:
+        """Validate an optional reachability matrix and return it as a float32 tensor.
+
+        Accepts either a numpy array or a torch tensor; returns ``None`` when no matrix was
+        supplied (the flat, non-hierarchical case).
+        """
+        if reachability_matrix is None:
+            return None
+        reachability_arr = np.asarray(
+            reachability_matrix.detach().cpu().numpy()
+            if isinstance(reachability_matrix, torch.Tensor)
+            else reachability_matrix
+        )
+        validate_reachability_matrix(reachability_arr, n_labels)
+        return torch.tensor(reachability_arr, dtype=torch.float32)
 
     def _sync_encoder_marker_mask_attr(self) -> None:
         """Persist backbone mask on the model for save/load and path-only query prep."""
@@ -374,9 +445,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 }
                 batch = tensors[REGISTRY_KEYS.BATCH_KEY]
                 cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-                cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+                cont_covs = tensors[cont_key] if cont_key in tensors else None
                 cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-                cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+                cat_covs = tensors[cat_key] if cat_key in tensors else None
 
                 pred = self.module.classify(
                     **data_inputs,
@@ -398,7 +469,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
         y_pred = torch.cat(y_pred).numpy()
         if not soft:
-            return np.array([self._code_to_label[p] for p in y_pred])
+            return np.asarray(self._label_mapping)[y_pred]
         return pd.DataFrame(
             y_pred,
             columns=self._observed_label_names(),
@@ -592,6 +663,20 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         idx = np.argsort(unc)[-n:]
         return adata[idx].copy()
 
+    def _label_counts(self, labeled_vals: np.ndarray, n_labels: int) -> np.ndarray:
+        """Count labeled cells per class code, ordered by ``self._label_mapping[:n_labels]``.
+
+        ``labeled_vals`` holds raw label values (not codes); ``self._label_mapping`` maps
+        code -> label value by position, i.e. ``self._label_mapping[c]`` is the label for code
+        ``c``. It is not guaranteed to be sorted (the unlabeled category is swapped into the
+        final slot, see ``LabelsWithUnlabeledObsField``), so codes are recovered via
+        ``pd.Categorical`` against that exact ordering rather than ``np.searchsorted``. Values
+        outside ``self._label_mapping[:n_labels]`` get code -1 and are dropped, matching the
+        original per-class boolean-mask loop's silent-drop behavior.
+        """
+        codes = pd.Categorical(labeled_vals, categories=self._label_mapping[:n_labels]).codes
+        return np.bincount(codes[codes >= 0], minlength=n_labels).astype(np.float64)
+
     def _resolve_y_prior(
         self, y_prior: Literal["uniform", "empirical"] | torch.Tensor | None, n_labels: int
     ) -> torch.Tensor | None:
@@ -605,10 +690,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 )
             # frequencies of observed labels among labeled cells, Laplace-smoothed
             labeled_vals = self.labels_[self._labeled_indices]
-            counts = np.array(
-                [(labeled_vals == self._label_mapping[c]).sum() for c in range(n_labels)],
-                dtype=np.float64,
-            )
+            counts = self._label_counts(labeled_vals, n_labels)
             counts += 1.0
             freqs = counts / counts.sum()
             return torch.tensor(freqs[None, :], dtype=torch.float32)
@@ -652,10 +734,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             labeled_vals = self.labels_[self._labeled_indices]
             if len(labeled_vals) == 0:
                 return None
-            counts = np.array(
-                [(labeled_vals == self._label_mapping[c]).sum() for c in range(n_labels)],
-                dtype=np.float64,
-            )
+            counts = self._label_counts(labeled_vals, n_labels)
             if (counts <= 0).any():
                 return None
             inv = counts.sum() / (n_labels * counts)
@@ -937,43 +1016,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         missing_markers = ref_var_names.difference(adata.var_names)
 
         backbone_markers = ref_var_names[backbone_mask]
-        missing_backbone = backbone_markers.intersection(missing_markers)
-        if len(missing_backbone):
-            raise ValueError(
-                f"Query panel is missing backbone (encoder) markers {list(missing_backbone)}. "
-                "CytoVI encodes only the shared backbone, so the backbone must be present in "
-                "both reference and query; only panel-specific (non-backbone) markers may be "
-                "absent from the query. Add the missing backbone markers to the query, or use "
-                "a reference whose backbone is shared with this query."
-            )
-        # A backbone marker the query *keeps* but masks in some cells (via its own pre-existing
-        # nan_layer) drops out of the query-derived backbone just as a missing one would — but
-        # `missing_markers` (set difference on var_names) can't see it. Catch it here, so it fails
-        # fast with a clear message instead of a cryptic resize error in load_query_data.
-        if nan_layer_key in adata.layers:
-            qmask = np.asarray(adata.layers[nan_layer_key])
-            present_backbone = backbone_markers.intersection(adata.var_names)
-            if len(present_backbone):
-                cols = adata.var_names.get_indexer(present_backbone)
-                partial = present_backbone[(qmask[:, cols] == 0).any(axis=0)]
-                if len(partial):
-                    raise ValueError(
-                        f"Query's nan_layer masks backbone (encoder) markers {list(partial)} in "
-                        "some cells, so the query would re-derive a smaller backbone than the "
-                        "reference and scArches surgery would fail. Backbone markers must be "
-                        "fully observed across all query cells."
-                    )
-        # Panel-specific reference markers the query *did* measure: they'll be masked below so
-        # the query re-derives the reference backbone, so their values won't be used. Warn.
-        observed_nonbackbone = ref_var_names[~backbone_mask].intersection(adata.var_names)
-        if len(observed_nonbackbone):
-            warnings.warn(
-                "Query measured reference panel-specific (non-backbone) markers "
-                f"{list(observed_nonbackbone)}; these are masked so scArches re-derives the "
-                "reference backbone, so their query values are not used for mapping.",
-                UserWarning,
-                stacklevel=settings.warnings_stacklevel,
-            )
+        cls._validate_backbone_present_in_query(backbone_markers, missing_markers)
+        cls._validate_backbone_fully_observed_in_query(adata, nan_layer_key, backbone_markers)
+        cls._warn_observed_nonbackbone_markers(adata, ref_var_names, backbone_mask)
 
         # Whether the query already carries a nan mask (overlapping internal panels). If so, the
         # base pad/sort already zeros the padded (missing) columns and preserves present-marker

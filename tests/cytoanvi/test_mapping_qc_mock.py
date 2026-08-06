@@ -54,6 +54,119 @@ def test_build_mapqc_anndata_shapes():
     }
 
 
+def test_build_mapqc_anndata_handles_label_category_absent_from_reference():
+    """F-039: query has a label category the model's registry never saw.
+
+    Reproduces the real Roider B9 failure mode (``ValueError: Category 31 not found in source
+    registry. Cannot transfer setup without extend_categories=True``) at unit-test scale: the
+    model is trained on a reference subset that excludes one label category entirely, and
+    ``query`` (a disjoint AnnData, structurally like the post-scArches query model's own
+    ``.adata`` differs from both ``reference_adata``/``query_adata`` in the real B9 pipeline)
+    carries cells of that category. Before the fix this raised at
+    ``model.get_latent_representation`` inside ``build_mapqc_anndata``.
+    """
+    adata = make_adata()
+    work, is_ref = _assign_mapqc_samples(adata)
+    novel_label = "label_4"
+    assert novel_label in work.obs[LABELS_KEY].astype(str).unique()
+
+    # Keep the existing batch-based ref/query split, but additionally strip the novel label
+    # out of the reference side so the trained model's registry never observes it.
+    ref_mask = is_ref & (work.obs[LABELS_KEY].astype(str) != novel_label).to_numpy()
+    query_mask = ~ref_mask
+    ref = work[ref_mask].copy()
+    query = work[query_mask].copy()
+    assert novel_label not in ref.obs[LABELS_KEY].astype(str).unique()
+    assert novel_label in query.obs[LABELS_KEY].astype(str).unique()
+
+    model = setup_and_train(ref.copy())
+
+    # The pre-fix code path (`self.adata_manager.transfer_fields(adata)` with no
+    # `extend_categories`) must not be reached — build_mapqc_anndata should register `ref`/
+    # `query` explicitly instead of falling back to it. Fail loudly if it is.
+    def _unsafe_transfer_fields(*args, **kwargs):
+        raise AssertionError(
+            "build_mapqc_anndata must not fall back to the unkwarg'd "
+            "adata_manager.transfer_fields path"
+        )
+
+    model.adata_manager.transfer_fields = _unsafe_transfer_fields
+
+    joint = mapping_qc.build_mapqc_anndata(
+        model,
+        ref,
+        query,
+        sample_key="mapqc_sample",
+    )
+
+    assert joint.n_obs == ref.n_obs + query.n_obs
+    assert mapping_qc.DEFAULT_EMB_KEY in joint.obsm
+    assert joint.obsm[mapping_qc.DEFAULT_EMB_KEY].shape[0] == joint.n_obs
+
+    # The true label column must survive untouched — build_mapqc_anndata must only neutralize
+    # out-of-registry categories on a throwaway registration copy, never on the returned data.
+    query_rows = joint.obs[mapping_qc.DEFAULT_REF_Q_KEY] == mapping_qc.QUERY_CAT
+    assert (joint.obs.loc[query_rows, LABELS_KEY].astype(str) == novel_label).any()
+
+
+def test_build_mapqc_anndata_handles_label_only_category_absent_from_reference():
+    """F-039, isolated to the labels field specifically.
+
+    The previous test's ref/query split is batch-partitioned (via ``_assign_mapqc_samples``), so
+    its pre-fix failure is actually raised by the *batch* field (``ref`` never sees ``batch_1``),
+    not the labels field — both are fixed by the same change, but that test alone doesn't prove
+    the labels-specific half of the fix (remapping an out-of-registry label to
+    ``unlabeled_category`` on a scratch copy), which is the half that ``extend_categories=True``
+    cannot rescue (``LabelsWithUnlabeledObsField.transfer_field`` hard-codes
+    ``extend_categories=False``).
+
+    Here ``ref``/``query`` share **both** original batches (split by index parity instead), so
+    the only out-of-registry category anywhere is the excluded label. Verified against the real
+    production traceback (job 25211799,
+    ``.scratch/cytoanvi-benchmark/slurm/out/cytoanvi_b9_roider_full_25211799.log``): the
+    ``ValueError`` there is raised from ``scvi/data/fields/_scanvi.py``
+    (``LabelsWithUnlabeledObsField.transfer_field`` -> ``CategoricalObsField.transfer_field``),
+    confirming the real B9 failure was the labels field, matching this test's construction.
+    """
+    adata = make_adata()
+    novel_label = "label_4"
+    labels = adata.obs[LABELS_KEY].astype(str)
+    assert novel_label in labels.unique()
+
+    is_novel = (labels == novel_label).to_numpy()
+    idx = np.arange(adata.n_obs)
+    ref_mask = (idx % 2 == 0) & ~is_novel
+    query_mask = ~ref_mask
+    ref = adata[ref_mask].copy()
+    query = adata[query_mask].copy()
+    assert novel_label not in ref.obs[LABELS_KEY].astype(str).unique()
+    assert novel_label in query.obs[LABELS_KEY].astype(str).unique()
+    # Both sides must see both batches, so the batch field never sees a novel category either —
+    # isolating the labels-field bypass from the (already-covered) batch-field one.
+    assert set(ref.obs[BATCH_KEY].astype(str)) == set(adata.obs[BATCH_KEY].astype(str))
+    assert set(query.obs[BATCH_KEY].astype(str)) == set(adata.obs[BATCH_KEY].astype(str))
+
+    ref.obs["mapqc_sample"] = np.take(["r0", "r1", "r2", "r3"], np.arange(ref.n_obs) % 4)
+    query.obs["mapqc_sample"] = np.take(["q0", "q1"], np.arange(query.n_obs) % 2)
+
+    model = setup_and_train(ref.copy())
+
+    def _unsafe_transfer_fields(*args, **kwargs):
+        raise AssertionError(
+            "build_mapqc_anndata must not fall back to the unkwarg'd "
+            "adata_manager.transfer_fields path"
+        )
+
+    model.adata_manager.transfer_fields = _unsafe_transfer_fields
+
+    joint = mapping_qc.build_mapqc_anndata(model, ref, query, sample_key="mapqc_sample")
+
+    assert joint.n_obs == ref.n_obs + query.n_obs
+    assert joint.obsm[mapping_qc.DEFAULT_EMB_KEY].shape[0] == joint.n_obs
+    query_rows = joint.obs[mapping_qc.DEFAULT_REF_Q_KEY] == mapping_qc.QUERY_CAT
+    assert (joint.obs.loc[query_rows, LABELS_KEY].astype(str) == novel_label).any()
+
+
 def test_build_mapqc_anndata_raises_on_few_ref_samples():
     adata = make_adata()
     model = setup_and_train(adata)

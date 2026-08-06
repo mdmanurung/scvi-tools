@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 
 from anndata import concat
 
+from scvi.data._constants import _FIELD_REGISTRIES_KEY, _SETUP_ARGS_KEY, _STATE_REGISTRY_KEY
+from scvi.external.cytovi._constants import CYTOVI_REGISTRY_KEYS
+
 if TYPE_CHECKING:
     from typing import Any, Literal
 
@@ -86,6 +89,79 @@ def _patch_mapqc_empty_mode() -> None:
     _ms._get_per_cell_filtering_info = _patched_get_per_cell_filtering_info
 
 
+def _embed_foreign_adata(model: CytoANVI, adata: AnnData) -> Any:
+    """Compute ``model.get_latent_representation`` for an ``adata`` not already registered.
+
+    ``build_mapqc_anndata`` is typically called with a ``model`` that is neither
+    ``reference_adata`` nor ``query_adata`` (e.g. the post-scArches query model, whose own
+    ``.adata`` is the query cells with labels forced to ``unlabeled_category`` for surgery
+    training — see ``benchmarks/cytoanvi/tasks.py::task_b9_mapqc``). Both ``ref`` and ``query``
+    are therefore "foreign" AnnData objects relative to ``model``, and a plain
+    ``model.get_latent_representation(adata)`` falls through to
+    ``BaseModelClass._validate_anndata`` -> ``self.adata_manager.transfer_fields(adata)`` with no
+    kwargs, i.e. ``extend_categories=False``. Any category absent from the model's registry (e.g.
+    a Leiden cluster ID present only in the query split of a pseudo reference/query split) then
+    raises ``ValueError: Category ... not found in source registry``.
+
+    Fix, following the ``source_registry=`` + ``extend_categories=True`` pattern used to attach a
+    new AnnData to an existing model's registry in ``scvi.model._destvi.DestVI.from_rna_model``:
+
+    1. Register a scratch copy of ``adata`` against ``model``'s own registry via
+       ``type(model).setup_anndata(scratch, source_registry=model.registry_,
+       extend_categories=True, **model.registry_[_SETUP_ARGS_KEY])``. This lets genuinely novel
+       *batch* / *sample* / *covariate* categories be absorbed instead of rejected.
+    2. Explicitly associate the resulting :class:`~scvi.data.AnnDataManager` with this specific
+       model instance via ``model._register_manager_for_instance(...)``. ``setup_anndata`` (a
+       classmethod) only records the manager in the class-wide ``_setup_adata_manager_store``;
+       without this step ``get_anndata_manager`` still can't find it for ``model.id``, and
+       ``get_latent_representation`` would fall back to the same unsafe ``transfer_fields(adata)``
+       call this function exists to avoid.
+    3. The **labels** field is a deliberate exception:
+       ``LabelsWithUnlabeledObsField.transfer_field`` (``scvi.data.fields._scanvi``) hard-codes
+       ``extend_categories=False`` regardless of what is passed in ("don't extend labels for
+       query data") — the classifier head has a fixed
+       ``n_labels`` dimensionality, so a frozen model cannot absorb a new class at inference time.
+       So passing ``extend_categories=True`` alone does **not** rescue an out-of-registry label
+       value; step 1 would still raise for it. Since :meth:`get_latent_representation`'s encoder
+       never consumes the labels field (``CYTOVI._module.py::_get_inference_input`` builds ``x``,
+       ``batch_index``, ``cont_covs``, ``cat_covs`` only — the label tensor is pulled separately,
+       only for the classifier loss), any label value not already in the model's registry is
+       remapped to ``unlabeled_category`` on the scratch copy before registration. This is done on
+       a throwaway copy, not on ``adata`` itself, so the caller's true label column (needed
+       downstream by mapQC's ``grouping_key``, which reads ``joint_adata.obs`` directly and never
+       touches the scvi-tools registry) is left untouched.
+    """
+    model_cls = type(model)
+    setup_args = dict(model.registry_[_SETUP_ARGS_KEY])
+    labels_key = setup_args.get("labels_key")
+    unlabeled_category = setup_args.get("unlabeled_category")
+
+    scratch = adata.copy()
+    if labels_key is not None and labels_key in scratch.obs:
+        known_labels = set(
+            model.registry_[_FIELD_REGISTRIES_KEY][CYTOVI_REGISTRY_KEYS.LABELS_KEY][
+                _STATE_REGISTRY_KEY
+            ]["categorical_mapping"]
+        )
+        col = scratch.obs[labels_key]
+        unseen = ~col.astype(str).isin({str(c) for c in known_labels})
+        if unseen.any():
+            col = col.astype(object)
+            col[unseen.to_numpy()] = unlabeled_category
+            scratch.obs[labels_key] = col
+
+    model_cls.setup_anndata(
+        scratch,
+        source_registry=model.registry_,
+        extend_categories=True,
+        **setup_args,
+    )
+    model._register_manager_for_instance(
+        model._get_most_recent_anndata_manager(scratch, required=True)
+    )
+    return model.get_latent_representation(scratch)
+
+
 def build_mapqc_anndata(
     model: CytoANVI,
     reference_adata: AnnData,
@@ -104,6 +180,14 @@ def build_mapqc_anndata(
 
     ``model`` should be a CytoANVI model that can embed **both** adatas (typically the trained
     query model after scArches surgery, not the reference-only model when query batches differ).
+
+    Both ``reference_adata`` and ``query_adata`` are treated as data ``model`` was not
+    necessarily trained on: each is explicitly (re-)registered against ``model``'s registry
+    before embedding (see :func:`_embed_foreign_adata`) so that categories absent from ``model``'s
+    training registry — e.g. a Leiden-cluster label only present in one side of a pseudo
+    reference/query split — do not raise ``ValueError: Category ... not found in source
+    registry``. The **true** ``ref``/``query`` label/hierarchy columns returned in the joint
+    AnnData are unaffected; only a throwaway registration copy is touched.
     """
     if sample_key not in reference_adata.obs:
         raise ValueError(f"sample_key {sample_key!r} not found in reference_adata.obs.")
@@ -121,8 +205,8 @@ def build_mapqc_anndata(
     model._check_if_trained(warn=False)
     ref = reference_adata.copy()
     query = query_adata.copy()
-    ref.obsm[emb_key] = model.get_latent_representation(ref)
-    query.obsm[emb_key] = model.get_latent_representation(query)
+    ref.obsm[emb_key] = _embed_foreign_adata(model, ref)
+    query.obsm[emb_key] = _embed_foreign_adata(model, query)
     return concat([ref, query], label=ref_q_key, keys=[r_cat, q_cat], index_unique="-")
 
 

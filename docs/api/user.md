@@ -64,6 +64,7 @@ import scvi
    external.TorchMRVI
    external.JaxMRVI
    external.MrTotalVI
+   external.combine_mrtotalvi_seed_results
    external.MrMultiVI
    external.METHYLVI
    external.METHYLANVI

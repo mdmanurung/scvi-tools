@@ -10,6 +10,7 @@ notebooks/multimodal/cite_scrna_integration_w_totalVI
 notebooks/multimodal/MultiVI_tutorial
 notebooks/multimodal/DiagVI_spatial_proteomics.ipynb
 notebooks/multimodal/DiagVI_spatial_transcriptomics.ipynb
+parameter_selection/MrTotalVI_parameter_selection
 ```
 
 ```{customcard}
@@ -60,4 +61,11 @@ Perform integration of spatial proteomics and single-cell transcriptomics data w
 :tags: Analysis, Integration, Modality-imputation, Dimensionality-reduction
 
 Perform integration of spatial and single-cell transcriptomics data with DiagVI
+```
+
+```{customcard}
+:path: parameter_selection/MrTotalVI_parameter_selection
+:tags: Analysis, Integration, Hyperparameters, Differential-comparison
+
+Choose MrTotalVI parameters using evidence-graded guidance, including which defaults are contested
 ```

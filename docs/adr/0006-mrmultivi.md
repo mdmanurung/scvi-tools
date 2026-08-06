@@ -10,7 +10,7 @@
 
 MultiVI jointly models RNA, ATAC, and optional protein data in a single latent space, but treats
 donor identity as a batch covariate to be removed — not a biological axis to be modelled.  MrVI
-decomposes cell state into a *sample-unaware* base `u` and a *sample-aware* residual
+decomposes cell state into a sample-conditioned base `u` and a sample-aware residual
 `z = z_base + eps`, where `eps` is produced by an attention block over a per-donor embedding.
 This ADR records the decision to graft that hierarchy onto MULTIVAE, yielding MrMultiVI.
 

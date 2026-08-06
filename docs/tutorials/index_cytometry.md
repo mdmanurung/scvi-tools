@@ -5,6 +5,7 @@
 
 notebooks/cytometry/CytoANVI_tutorial
 notebooks/cytometry/CytoANVI_treeArches_tutorial
+parameter_selection/CytoANVI_parameter_selection
 ```
 
 ```{customcard}
@@ -19,6 +20,13 @@ Semi-supervised label transfer and panel-aware query mapping with CytoANVI
 :tags: Integration, Analysis, Cytometry, Hierarchy, Template
 
 Template for learning and updating cell-type hierarchies on CytoANVI latents with scHPL
+```
+
+```{customcard}
+:path: parameter_selection/CytoANVI_parameter_selection
+:tags: Cytometry, Analysis, Hyperparameters
+
+Choose CytoANVI parameters using evidence-graded guidance, including which defaults are unvalidated
 ```
 
 ## Runnable scripts

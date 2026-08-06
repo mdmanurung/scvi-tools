@@ -1,0 +1,11 @@
+{
+  "anndata": "0.12.11",
+  "executable": "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/bin/python",
+  "numpy": "2.4.3",
+  "platform": "Linux-4.18.0-553.137.1.el8_10.x86_64-x86_64-with-glibc2.28",
+  "python": "3.13.11 | packaged by conda-forge | (main, Dec  6 2025, 11:24:03) [GCC 14.3.0]",
+  "scvi_tools": "0.1.0",
+  "source_commit": "d8c8e997a67997a53f55923eb3ab14e6cf06f94c",
+  "source_root": "/tmp/mrtotalvi-v2-clean.wriwTN/repo",
+  "torch": "2.11.0+cu128"
+}

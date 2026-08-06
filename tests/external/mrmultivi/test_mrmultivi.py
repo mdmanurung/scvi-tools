@@ -23,9 +23,7 @@ sys.path.insert(0, "src")
 
 from scvi.data import synthetic_iid
 from scvi.external import MrMultiVI
-
 from tests.external.conftest import get_elbo_key
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -370,8 +368,9 @@ def test_mrmultivi_mc_samples_with_size_factors_and_missing_modalities(mdata_bas
 
     mdata = _make_mdata()
     mdata.obs["size_factor_rna"] = np.asarray(mdata["rna"].X.sum(1)).reshape(-1) + 1.0
-    mdata.obs["size_factor_atac"] = (np.asarray(mdata["accessibility"].X.sum(1)).reshape(-1) + 1.0) / (
-        np.asarray(mdata["accessibility"].X.sum(1)).max() + 1.01
+    atac_totals = np.asarray(mdata["accessibility"].X.sum(1))
+    mdata.obs["size_factor_atac"] = (atac_totals.reshape(-1) + 1.0) / (
+        atac_totals.max() + 1.01
     )
 
     def zero_rows(mod_key, rows):
@@ -569,7 +568,8 @@ def test_mrmultivi_encode_covariates_expands_qu_input(mdata_basic):
         sample_key="donor",
         n_latent=N_LATENT,
         encode_covariates=True,
-        protein_in_encoder=False,  # isolate covariate expansion; protein widening tested separately
+        # Isolate covariate expansion; protein widening is tested separately.
+        protein_in_encoder=False,
     )
 
     expected_extra = model.summary_stats.n_batch + 2 + 1
@@ -584,7 +584,7 @@ def test_mrmultivi_encode_covariates_expands_qu_input(mdata_basic):
 
 
 def test_mrmultivi_encode_covariates_with_protein_in_encoder():
-    """encode_covariates=True + protein_in_encoder=True (default): fc1 widens by proteins AND covariates.
+    """Test that proteins and covariates both widen fc1 when enabled.
 
     Covers the additive interaction that the two isolation tests cannot catch:
     test_mrmultivi_encode_covariates_expands_qu_input pins protein_in_encoder=False;
@@ -881,7 +881,8 @@ def test_mrmultivi_store_lfc_pde_in_range():
 
     assert "pde" in de.data_vars
     pde = de["pde"].values
-    assert np.all(pde >= 0.0) and np.all(pde <= 1.0)
+    assert np.all(pde >= 0.0)
+    assert np.all(pde <= 1.0)
     assert np.all(np.isfinite(pde))
 
 
@@ -1129,7 +1130,6 @@ def test_mrmultivi_qu_encoder_gradients_flow(mdata_basic):
     Directly verifies that the sample-conditioned u-encoder parameters are
     connected to the loss in a single forward-backward pass on an untrained model.
     """
-    import torch
 
     mdata = _make_mdata()
     MrMultiVI.setup_mudata(
@@ -1467,7 +1467,7 @@ def test_protein_in_encoder_save_load(tmp_path):
 
 
 def test_protein_in_encoder_with_vamprior(mdata_basic):
-    """protein_in_encoder=True + u_prior='vamp' trains to finite ELBO and has correct pseudo shape."""
+    """Test finite VampPrior training and its pseudoinput shape with proteins."""
     import math
 
     MrMultiVI.setup_mudata(
@@ -1502,7 +1502,7 @@ def test_protein_in_encoder_with_vamprior(mdata_basic):
 # ---------------------------------------------------------------------------
 
 def test_n_obs_per_sample_in_state_dict(mdata_basic):
-    """Change E: n_obs_per_sample is persistent → present in state_dict and survives load_state_dict."""
+    """Test that persistent n_obs_per_sample survives a state-dict round trip."""
     import torch
 
     MrMultiVI.setup_mudata(
@@ -1793,9 +1793,10 @@ def test_mrmultivi_lfc_sign_known_positive_control():
     Design matrix encodes 'a' as reference (drop_first=True, 'a' < 'b') so
     condition_b dummy=1 → expected lfc > 0 for gene 0.
     """
-    import scvi as _scvi
     import scipy.sparse as sp
     from mudata import MuData
+
+    import scvi as _scvi
 
     # Explicit seed guards against CLI --seed override changing the statistical result.
     _scvi.settings.seed = 0

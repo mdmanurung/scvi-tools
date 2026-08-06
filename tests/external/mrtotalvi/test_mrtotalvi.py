@@ -21,9 +21,7 @@ sys.path.insert(0, "src")
 
 import scvi
 from scvi.external import MrTotalVI
-
 from tests.external.conftest import get_elbo_key
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -335,7 +333,9 @@ def test_mrtotalvi_mc_samples_with_size_factor_and_protein_batch_mask(adata_basi
     loss_out = module.loss(tensors, inf_out, gen_out)
 
     batch_size = tensors[scvi.REGISTRY_KEYS.X_KEY].shape[0]
-    assert loss_out.reconstruction_loss["reconst_loss_protein"].shape == torch.Size([2, batch_size])
+    assert loss_out.reconstruction_loss["reconst_loss_protein"].shape == torch.Size(
+        [2, batch_size]
+    )
     assert loss_out.kl_local["kl_div_z"].shape == torch.Size([batch_size])
     assert torch.isfinite(loss_out.loss)
 
@@ -747,7 +747,8 @@ def test_mrtotalvi_store_lfc_pde_in_range(adata_basic):
 
     assert "pde" in de.data_vars
     pde = de["pde"].values
-    assert np.all(pde >= 0.0) and np.all(pde <= 1.0)
+    assert np.all(pde >= 0.0)
+    assert np.all(pde <= 1.0)
     assert np.all(np.isfinite(pde))
 
 
@@ -1002,7 +1003,7 @@ def test_donor_axis_separation(adata_shifted):
     )
     # Sanity: trained distances are non-trivially positive
     assert cross_donor_trained > 0.0, (
-        f"Trained cross-donor distances are 0 — hierarchy encodes no signal."
+        "Trained cross-donor distances are 0 — hierarchy encodes no signal."
     )
 
     # get_local_sample_representation should have matching shape
@@ -1022,7 +1023,6 @@ def test_qu_encoder_gradients_flow(adata_basic):
     Directly verifies that the sample-conditioned u-encoder parameters are
     connected to the loss in a single forward-backward pass on an untrained model.
     """
-    import torch
 
     MrTotalVI.setup_anndata(
         adata_basic,
@@ -1155,7 +1155,6 @@ def test_learnable_prior_scale_clamp(adata_basic):
     with torch.no_grad():
         inf_out = module._regular_inference(**module._get_inference_input(batch))
         eps = inf_out["eps"]
-        import math
         from torch.distributions import Normal
         peps = Normal(0.0, torch.exp(pz_scale.clamp(min=-4.0)))
         kl_z = -peps.log_prob(eps).sum(dim=-1)
@@ -1304,7 +1303,7 @@ def test_vamprior_save_load(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_n_obs_per_sample_in_state_dict():
-    """Change E: n_obs_per_sample is persistent → present in state_dict and survives load_state_dict."""
+    """Test that persistent n_obs_per_sample survives a state-dict round trip."""
     import torch
 
     adata = _make_adata()
@@ -1356,7 +1355,6 @@ def test_kl_weights_stored_and_non_default_differ():
 
 def test_init_prior_from_data_vamprior():
     """Change D: init_prior_from_data=True yields finite pseudo-inputs near the data manifold."""
-    import math
 
     import torch
 
@@ -1385,7 +1383,6 @@ def test_init_prior_from_data_vamprior():
 
 def test_freeze_prior_after_init_mog():
     """freeze_prior_after_init=True freezes MoG location/scale but keeps logits trainable."""
-    import torch
 
     adata = _make_adata()
     MrTotalVI.setup_anndata(
@@ -1404,7 +1401,6 @@ def test_freeze_prior_after_init_mog():
 
 def test_freeze_prior_after_init_vamp():
     """freeze_prior_after_init=True freezes VampPrior pseudo-inputs but keeps logits trainable."""
-    import torch
 
     adata = _make_adata()
     MrTotalVI.setup_anndata(
@@ -1739,3 +1735,348 @@ def test_mrtotalvi_default_latent_is_deterministic(adata_basic):
         f"Max |diff| = {np.abs(z_a - z_b).max():.2e}. "
         "A flag default may have changed — audit recent commits."
     )
+
+
+# ---------------------------------------------------------------------------
+# batch_representation="embedding"
+# ---------------------------------------------------------------------------
+
+def test_mrtotalvi_batch_representation_default_is_one_hot(adata_basic):
+    """The default must not change the architecture: no embedding, stock decoder."""
+    from scvi.nn import DecoderTOTALVI
+
+    model = _setup_and_train(adata_basic, encode_covariates=True)
+
+    assert model.module.batch_representation == "one-hot"
+    assert model.module._batch_dim is None
+    # No embedding table is created, so no extra parameters enter the state dict.
+    assert len(model.module.embeddings_dict) == 0
+    assert isinstance(model.module.decoder, DecoderTOTALVI)
+    # Batch still enters the u-encoder one-hot when covariates are encoded.
+    assert model.module.qu.batch_dim is None
+
+
+def test_mrtotalvi_batch_representation_embedding_widths(adata_basic):
+    """Embedding replaces n_batch columns with embedding_dim in encoder and decoder."""
+    from scvi.external.mrtotalvi._components import BatchEmbeddingDecoderAdapter
+
+    embedding_dim = 3
+    one_hot = _setup_and_train(adata_basic, encode_covariates=True)
+    embedded = _setup_and_train(
+        adata_basic,
+        encode_covariates=True,
+        batch_representation="embedding",
+        batch_embedding_kwargs={"embedding_dim": embedding_dim},
+    )
+
+    n_batch = one_hot.module.n_batch
+    assert n_batch > 0
+
+    # u-encoder: -n_batch one-hot columns, +embedding_dim embedding columns.
+    assert (
+        embedded.module.qu.fc1.in_features
+        == one_hot.module.qu.fc1.in_features - n_batch + embedding_dim
+    )
+
+    # Decoder: the batch category is dropped and the input widened instead.
+    assert isinstance(embedded.module.decoder, BatchEmbeddingDecoderAdapter)
+    one_hot_in = one_hot.module.decoder.px_decoder.fc_layers[0][0].in_features
+    embedded_in = embedded.module.decoder.decoder.px_decoder.fc_layers[0][0].in_features
+    assert embedded_in == one_hot_in - n_batch + embedding_dim
+
+
+def test_mrtotalvi_batch_representation_embedding_runs(adata_basic):
+    """Embedding mode trains and every downstream tensor stays finite."""
+    embedding_dim = 3
+    model = _setup_and_train(
+        adata_basic,
+        encode_covariates=True,
+        batch_representation="embedding",
+        batch_embedding_kwargs={"embedding_dim": embedding_dim},
+    )
+
+    latent = model.get_latent_representation()
+    assert latent.shape == (adata_basic.n_obs, N_LATENT)
+    assert np.isfinite(latent).all()
+
+    representation = model.get_batch_representation()
+    assert representation.shape == (adata_basic.n_obs, embedding_dim)
+    assert np.isfinite(representation).all()
+
+
+def test_mrtotalvi_batch_representation_embedding_deterministic_decoder(adata_basic):
+    """The counterfactual decode path routes through the embedding adapter."""
+    import torch
+
+    model = _setup_and_train(
+        adata_basic,
+        encode_covariates=True,
+        batch_representation="embedding",
+        batch_embedding_kwargs={"embedding_dim": 3},
+    )
+
+    decoded = model.module._deterministic_decoder_parameters(
+        torch.zeros(5, N_LATENT),
+        torch.ones(5, 1),
+        torch.zeros(5, 1, dtype=torch.long),
+    )
+    assert decoded
+    for name, value in decoded.items():
+        assert torch.isfinite(value).all(), f"{name} is not finite"
+
+
+def test_mrtotalvi_batch_representation_embedding_save_load(adata_basic, tmp_path):
+    """The embedding table survives a save/load round-trip."""
+    model = _setup_and_train(
+        adata_basic,
+        encode_covariates=True,
+        batch_representation="embedding",
+        batch_embedding_kwargs={"embedding_dim": 3},
+    )
+    before = model.get_latent_representation()
+
+    path = tmp_path / "mrtotalvi_embedding"
+    model.save(str(path), overwrite=True)
+    reloaded = MrTotalVI.load(str(path), adata=adata_basic)
+
+    assert reloaded.module._batch_dim == 3
+    assert np.allclose(before, reloaded.get_latent_representation(), atol=1e-5)
+
+
+def test_mrtotalvi_batch_representation_invalid(adata_basic):
+    """An unknown batch_representation fails loudly at construction."""
+    MrTotalVI.setup_anndata(
+        adata_basic,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    with pytest.raises(ValueError, match="one-hot"):
+        MrTotalVI(
+            adata_basic,
+            sample_key="sample",
+            n_latent=N_LATENT,
+            batch_representation="nope",
+        )
+
+
+def test_mrtotalvi_one_hot_numerics_unchanged_by_embedding_support(adata_basic):
+    """The one-hot path must be numerically untouched by batch-embedding support.
+
+    ``_append_covariates`` and ``_covariate_n_input`` gained optional ``batch_rep`` /
+    ``batch_dim`` arguments to support ``batch_representation="embedding"``. Both helpers
+    sit on the hot path of *every* MrTotalVI model, so a mistake there would silently move
+    latents for existing one-hot configurations. Structural assertions do not catch that;
+    this pins the numerics.
+
+    Trains with ``encode_covariates=True`` specifically, since that is the configuration
+    where batch actually flows through the modified helper.
+    """
+    import torch
+
+    adata = adata_basic.copy()
+    latents = []
+
+    for _ in range(2):
+        scvi.settings.seed = 0
+        MrTotalVI.setup_anndata(
+            adata,
+            protein_expression_obsm_key="protein_expression",
+            sample_key="sample",
+            batch_key="batch",
+        )
+        model = MrTotalVI(
+            adata,
+            sample_key="sample",
+            n_latent=N_LATENT,
+            encode_covariates=True,
+        )
+        model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
+        latents.append(model.get_latent_representation(give_z=True))
+
+    assert np.allclose(latents[0], latents[1], atol=1e-4), (
+        "One-hot latents are not reproducible at seed=0 with encode_covariates=True. "
+        f"Max |diff| = {np.abs(latents[0] - latents[1]).max():.2e}."
+    )
+    # The one-hot branch must never build a batch representation.
+    assert model.module._batch_representation_for(torch.zeros(4, 1, dtype=torch.long)) is None
+
+
+# ---------------------------------------------------------------------------
+# _stats.py internals: branches unreachable through the public API
+#
+# `collect_u_posterior` lives in shared code ("Shared u-space statistical APIs for
+# Mr multimodal models"), but MrTotalVAE.inference always returns "qu", so its two
+# fallback branches are dead for every other test in this file. Monkeypatching
+# `inference` is the only way to reach them.
+# ---------------------------------------------------------------------------
+
+
+def _untrained_model(adata):
+    """setup + construct without training; `is_trained_` bypassed as elsewhere in this file."""
+    adata = adata.copy()
+    MrTotalVI.setup_anndata(
+        adata,
+        protein_expression_obsm_key="protein_expression",
+        sample_key="sample",
+        batch_key="batch",
+    )
+    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
+    model.is_trained_ = True
+    return model, adata
+
+
+def test_collect_u_posterior_falls_back_to_qz(adata_basic, monkeypatch):
+    """When inference emits `qz` but no `qu`, the posterior is collected from `qz`."""
+    import torch
+    from torch.distributions import Normal
+
+    from scvi.external.mrtotalvi._stats import collect_u_posterior
+
+    model, adata = _untrained_model(adata_basic)
+    real_inference = model.module.inference
+
+    def fake(**kwargs):
+        out = real_inference(**kwargs)
+        return {"qz": Normal(out["qu"].loc, out["qu"].scale)}
+
+    monkeypatch.setattr(model.module, "inference", fake)
+
+    loc, scale = collect_u_posterior(model, adata=adata, indices=np.arange(20), batch_size=8)
+
+    assert loc.shape == (20, 4)
+    assert scale.shape == (20, 4)
+    assert torch.isfinite(loc).all()
+    assert (scale > 0).all()
+
+
+def test_collect_u_posterior_falls_back_to_qz_m_and_qz_v(adata_basic, monkeypatch):
+    """The oldest shape -- raw `qz_m`/`qz_v` tensors rather than a distribution object."""
+    import torch
+
+    from scvi.external.mrtotalvi._stats import collect_u_posterior
+
+    model, adata = _untrained_model(adata_basic)
+    real_inference = model.module.inference
+
+    def fake(**kwargs):
+        out = real_inference(**kwargs)
+        n, d = out["qu"].loc.shape
+        return {"qz_m": torch.zeros(n, d), "qz_v": torch.full((n, d), 4.0)}
+
+    monkeypatch.setattr(model.module, "inference", fake)
+
+    loc, scale = collect_u_posterior(model, adata=adata, indices=np.arange(20), batch_size=8)
+
+    assert loc.shape == (20, 4)
+    torch.testing.assert_close(loc, torch.zeros(20, 4))
+    # scale is a standard deviation: sqrt of the variance that was supplied
+    torch.testing.assert_close(scale, torch.full((20, 4), 2.0))
+
+
+# ---------------------------------------------------------------------------
+# _construct_design_matrix: pure function over a DataFrame, no model required
+# ---------------------------------------------------------------------------
+
+
+def test_construct_design_matrix_normalizes_numeric_and_dummies_categorical():
+    import pandas as pd
+
+    from scvi.external.mrtotalvi._stats import _construct_design_matrix
+
+    df = pd.DataFrame({"cond": ["a", "b", "a", "b"], "num": [1.0, 2.0, 3.0, 4.0]})
+
+    xmat, names, n_fixed = _construct_design_matrix(df, ["cond", "num"])
+
+    assert list(names) == ["cond_b", "num"]
+    assert n_fixed == 2
+    # numeric column is min-max normalized onto [0, 1]
+    assert float(xmat[:, 1].min()) == 0.0
+    assert float(xmat[:, 1].max()) == 1.0
+
+
+def test_construct_design_matrix_constant_column_does_not_divide_by_zero():
+    """xmax == xmin must fall back to a scale of 1.0 rather than producing NaN."""
+    import pandas as pd
+    import torch
+
+    from scvi.external.mrtotalvi._stats import _construct_design_matrix
+
+    df = pd.DataFrame({"const": [5.0, 5.0, 5.0]})
+
+    xmat, _, _ = _construct_design_matrix(df, ["const"])
+
+    assert not torch.isnan(xmat).any()
+    torch.testing.assert_close(xmat, torch.zeros_like(xmat))
+
+
+def test_construct_design_matrix_donor_key_from_index_name():
+    """`donor_key` matching the index name adds donor dummies after the fixed effects."""
+    import pandas as pd
+
+    from scvi.external.mrtotalvi._stats import _construct_design_matrix
+
+    df = pd.DataFrame(
+        {"cond": ["a", "b", "a"]},
+        index=pd.Index(["s0", "s1", "s2"], name="sample"),
+    )
+
+    xmat, names, n_fixed = _construct_design_matrix(df, ["cond"], donor_key="sample")
+
+    assert n_fixed == 1  # only `cond_b` is a fixed effect
+    assert list(names)[0] == "cond_b"
+    assert any(str(n).startswith("sample_") for n in names)
+    assert xmat.shape[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# compute_h_from_x_eps: the u_anchor=None legacy branch
+#
+# Every existing caller in this file passes `u_anchor` explicitly, so the biased
+# fallback (and its warning) is the one genuinely uncovered path.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_h_from_x_eps_warns_and_falls_back_without_u_anchor(adata_basic):
+    import torch
+
+    model, adata = _untrained_model(adata_basic)
+    model.module.eval()
+
+    dl = model._make_data_loader(adata=adata, batch_size=16)
+    inference_inputs = model.module._get_inference_input(next(iter(dl)))
+    n_cells = inference_inputs["x"].shape[0]
+    extra_eps = torch.zeros(n_cells, model.module.n_latent)
+
+    with pytest.warns(UserWarning, match="without u_anchor"):
+        out = model.module.compute_h_from_x_eps(extra_eps=extra_eps, **inference_inputs)
+
+    n_proteins = adata.obsm["protein_expression"].shape[1]
+    assert out.shape == (n_cells, adata.n_vars + n_proteins)
+    assert torch.isfinite(out).all()
+
+
+def test_use_vmap_is_currently_ignored_by_differential_expression(adata_basic):
+    """Pins `use_vmap` as a genuine no-op so a future partial implementation is caught.
+
+    The parameter is accepted and documented as "currently ignored (reserved for future opt-in
+    vmap acceleration)" -- it appears nowhere in `_stats.py` beyond its signature and docstring.
+    A caller passing `use_vmap=True` therefore gets no behaviour change and no warning. This
+    asserts byte-identical LFCs across both settings; if vmap is ever partially wired up and
+    changes results, this fails rather than silently shifting numbers.
+
+    `mc_samples=1` is required: it takes the deterministic `qu.loc` fast path, so any difference
+    is attributable to `use_vmap` rather than to fresh `rsample` draws.
+    """
+    model, _ = _de_lfc_model(adata_basic)
+    kwargs = {
+        "sample_cov_keys": ["condition"],
+        "mc_samples": 1,
+        "batch_size": 32,
+        "store_lfc": True,
+    }
+
+    de_true = model.differential_expression(use_vmap=True, **kwargs)
+    de_false = model.differential_expression(use_vmap=False, **kwargs)
+
+    np.testing.assert_array_equal(de_true["lfc"].values, de_false["lfc"].values)

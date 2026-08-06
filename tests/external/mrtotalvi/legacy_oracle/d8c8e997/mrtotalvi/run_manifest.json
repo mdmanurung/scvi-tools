@@ -1,0 +1,19 @@
+{
+  "batch_size": 7,
+  "forward_seed": 9817,
+  "kl_weight": 0.73,
+  "model_seed": 7301,
+  "model_type": "MrTotalVI",
+  "oracle_stage": "post_checkpoint_roundtrip",
+  "protein_reconstruction_weight": 0.61,
+  "sample_order": [
+    "sample_0",
+    "sample_1",
+    "sample_2"
+  ],
+  "source_commit": "d8c8e997a67997a53f55923eb3ab14e6cf06f94c",
+  "tolerances": {
+    "atol": 1e-07,
+    "rtol": 1e-06
+  }
+}

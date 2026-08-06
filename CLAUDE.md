@@ -1,15 +1,33 @@
-# CLAUDE.md — scvi-tools (CytoANVI branch)
+# CLAUDE.md — scvi-tools (MrTotalVI/MrMultiVI fork)
 
 ## Project overview
 
-This is a fork of [scvi-tools](https://scvi-tools.org/) extended with **CytoANVI** — a semi-supervised, annotation-aware variational autoencoder for antibody-based single-cell cytometry (mass cytometry, flow cytometry, CITE-seq protein).
+This is a fork of [scvi-tools](https://scvi-tools.org/) developed around two tracks:
 
-**Active branch**: `feat/cytoanvi`
-**Status**: Full-cohort B1/B2/B3/B5/B8 complete (max_epochs=1000, 3 seeds); B9 blocked (upstream mapqc bug). Leiden calibration job 25211796 still pending (QOSMaxCpuPerUserLimit).
+- **MrTotalVI / MrMultiVI** (active) — semi-supervised, multi-resolution VAEs extending scvi-tools'
+  TOTALVI/MultiVI with an MrVI-style two-level (u/z) donor latent space, for CITE-seq and multimodal
+  data. See `docs/adr/0006-mrmultivi.md` and `docs/user_guide/models/mr_multimodal.md` for the model
+  design and public API.
+- **CytoANVI** (shelved 2026-07-12) — a semi-supervised, annotation-aware variational autoencoder for
+  antibody-based single-cell cytometry (mass cytometry, flow cytometry, CITE-seq protein). Code,
+  benchmarks, and tests remain in the tree for when it is revived; its `todo/TODO_REGISTRY.md` items
+  are marked `shelved` with revival conditions rather than deleted.
+
+**Active branch**: `main`
+
+**Status**: current status lives in the living trackers below, not in this file — a status line
+hardcoded here goes stale the moment work continues:
+- `todo/TODO_REGISTRY.md` — full work-item registry, tagged by track (`mrtotalvi` / `cytoanvi` / `infra`), priority, and status
+- `todo/2026-08-06-remaining-work.md` — one-page orientation brief, read this first
+- `todo/2026-08-06-next-steps-plan.md` — phased sequencing plan (what to do in what order, which gates are HITL)
 
 ## Domain language
 
-See `CONTEXT.md` for the canonical CytoANVI glossary. Key terms:
+**MrTotalVI / MrMultiVI** — see `docs/adr/0006-mrmultivi.md` (architecture decision record) and
+`docs/user_guide/models/mr_multimodal.md` (user guide: setup, prior options, batch representation,
+statistical APIs) for canonical terminology and the current public API.
+
+**CytoANVI** (shelved) — see `CONTEXT.md` for the canonical glossary. Key terms:
 - **Panel / backbone markers / missing markers** — antibody marker sets; backbone = shared across panels
 - **Unlabeled category** — cells without ground-truth annotation (remapped to last integer code)
 - **M1+M2 hierarchy** — two-level latent (z1 → classifier, z2 → per-label prior); scANVI-style
@@ -20,33 +38,44 @@ See `CONTEXT.md` for the canonical CytoANVI glossary. Key terms:
 
 | Path | Description |
 |------|-------------|
-| `src/cytoanvi/` | CytoANVI implementation |
-| `benchmarks/cytoanvi/` | Benchmark harness (B1–B9 tasks) |
-| `benchmarks/common/` | Shared training loop, result aggregation |
-| `data/` | Nuñez and Roider cytometry datasets |
-| `tests/cytoanvi/` | Unit tests |
-| `tests/benchmarks/test_cytoanvi_smoke.py` | Benchmark smoke tests |
-| `vignettes/cytoanvi_showcase.py` | End-to-end showcase vignette |
-| `.scratch/cytoanvi-benchmark/` | Benchmark planning, issues, results |
+| `src/scvi/external/mrtotalvi/` | MrTotalVI implementation (active) |
+| `src/scvi/external/mrmultivi/` | MrMultiVI implementation (active) |
+| `benchmarks/mrtotalvi/` | MrTotalVI/MrMultiVI benchmark & convergence-diagnosis harness (active) |
+| `tests/external/mrtotalvi/` | MrTotalVI unit tests (active) |
+| `tests/external/mrmultivi/` | MrMultiVI unit tests (active) |
+| `docs/adr/0006-mrmultivi.md` | MrMultiVI architecture decision record |
+| `docs/user_guide/models/mr_multimodal.md` | MrTotalVI/MrMultiVI user guide |
+| `src/cytoanvi/` | CytoANVI implementation (shelved 2026-07-12) |
+| `benchmarks/cytoanvi/` | CytoANVI benchmark harness — B1–B9 tasks (shelved) |
+| `benchmarks/common/` | Shared training loop, result aggregation (used by both tracks) |
+| `data/` | Nuñez, Roider, and other cytometry/CITE-seq datasets — see `data/DATA_MANIFEST.md` |
+| `tests/cytoanvi/` | CytoANVI unit tests (shelved) |
+| `tests/benchmarks/test_cytoanvi_smoke.py` | CytoANVI benchmark smoke tests (shelved) |
+| `vignettes/cytoanvi_showcase.py` | CytoANVI end-to-end showcase vignette (shelved) |
+| `.scratch/cytoanvi-benchmark/` | CytoANVI benchmark planning, issues, results (shelved) |
 
 ## Running tests
 
 ```bash
-# Unit tests
+# MrTotalVI / MrMultiVI unit tests (active track)
+pytest tests/external/mrtotalvi/ tests/external/mrmultivi/ -v
+
+# CytoANVI unit tests (shelved track)
 pytest tests/cytoanvi/ -v
 
-# Benchmark smoke tests
+# CytoANVI benchmark smoke tests (shelved track)
 pytest tests/benchmarks/test_cytoanvi_smoke.py -v
 
-# Full benchmark (GPU required)
+# CytoANVI full benchmark (GPU required, shelved track)
 python benchmarks/cytoanvi/run.py --task b1 --seed 0
 ```
 
 ## Benchmark tasks
 
-See `benchmarks/ANALYSIS_MANIFEST.md` for full task table and status.
-
-Publication gate: all B1–B9 tasks at max_epochs=1000, ≥3 seeds, full Nuñez and Roider cohorts.
+- **MrTotalVI/MrMultiVI**: see `benchmarks/mrtotalvi/README.md` for what the harness currently
+  measures, and `todo/TODO_REGISTRY.md` (track `mrtotalvi`) for open work and status — this changes
+  often enough that it is not repeated here.
+- **CytoANVI** (shelved): see `benchmarks/ANALYSIS_MANIFEST.md` for the B1–B9 task table as of shelving.
 
 ## Living repository protocol
 
@@ -85,10 +114,11 @@ Run the post-action protocol:
 
 ## Active conventions
 
-See `.living/conventions.md`. Key ones:
-- **C-001**: Mask per-cell (not per-panel) when aggregating over marker dimensions with `nan_layer`
-- **C-002**: Guard all classifier forward passes against `n_labels == 0`
-- **C-003**: Subsample to ≤10k cells for Fisher/EWC importance computation
+See `.living/conventions.md` for the full list. Key ones:
+- **C-001** (CytoANVI): Mask per-cell (not per-panel) when aggregating over marker dimensions with `nan_layer`
+- **C-002** (CytoANVI): Guard all classifier forward passes against `n_labels == 0`
+- **C-003** (CytoANVI): Subsample to ≤10k cells for Fisher/EWC importance computation
+- **C-004** (general, added 2026-07-28): Never compare embeddings with a statistic whose denominator or operating point encodes the effect under test — pair every variance-share/fixed-setting statistic with a denominator-free counterpart before drawing a conclusion. See `.living/conventions.md` for the full checklist.
 
 ## Bioinformatics conventions
 

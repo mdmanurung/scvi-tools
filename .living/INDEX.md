@@ -1,8 +1,13 @@
 # Living Repository Index
 
-**Project**: scvi-tools — CytoANVI extension
-**Branch**: feat/cytoanvi
-**Last updated**: 2026-07-08
+**Project**: scvi-tools — dual-track repo: MrTotalVI/MrMultiVI (active) + CytoANVI extension (shelved 2026-07-12)
+**Branch**: main
+**Last updated**: 2026-08-06
+**Current source of truth**: `todo/TODO_REGISTRY.md` — this index (and the ID ranges quoted in the
+table below, e.g. `D-001…D-015`, `L-001…L-050`, `F-001…F-011`) predates ~30 sessions of MrTotalVI
+work and is known incomplete (e.g. D-041, L-055+, F-034/F-035/F-039 already exist but aren't
+reflected below). Treat the table and knowledge summary as a historical partial index, not a
+current count.
 
 ## Quick navigation
 

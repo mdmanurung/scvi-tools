@@ -31,3 +31,19 @@ Conventions crystallized from recurring learnings. Each entry links to the sourc
 **Source**: L-003
 **Rule**: Fisher importance matrices are computed on a ≤10k cell subsample with a log-progress callback.
 **Details**: Applies to all `ContinualUpdate` construction paths. The 10k limit prevents OOM on GPU for large atlases. Log the subsample fraction for auditability.
+
+### C-004 — Never compare embeddings with a statistic whose denominator or operating point encodes the effect under test
+**Pack**: local
+**Source**: L-094, L-097, and the 2026-07-28 review (F1)
+**Rule**: When comparing two representations, use a measure that is free of the quantity being compared. Pair every variance-share or fixed-setting statistic with a denominator-free counterpart before drawing a conclusion.
+**Details**: Three separate confident-but-wrong conclusions in this project came from the same class of error:
+- **L-094** — multivariate η² = trace(between)/trace(total). The denominator is each embedding's own total variance, which is exactly what compression changes. Fix: kNN label recovery (no denominator).
+- **L-097** — best-matching-cluster F1 at a single Leiden resolution. Different embeddings peak at different resolutions, so a fixed setting measures where each sits on its curve. Fix: sweep and report best-achievable.
+- **Review F1 (2026-07-28)** — kNN purity for `timepoint` where same-sample neighbours are trivially same-timepoint. The statistic contained the sample-mixing quantity inside it. Fix: decompose, `(knnP_a − knnP_ab)/(1 − knnP_ab)`.
+
+Checklist before reporting any cross-embedding comparison:
+1. What is in the denominator, and does it differ between the arms? If yes, the number is not comparable.
+2. Is this a single operating point (resolution, k, threshold)? If yes, sweep it.
+3. Does the statistic contain a trivially-satisfied component (same-sample, same-batch)? If yes, decompose it out.
+4. Is there a rank-based or recovery-based alternative? Prefer it, or report both.
+Also record the detection floor: a global pooled kNN statistic at k only resolves subpopulations above roughly 1/k of the total, so it cannot be used to rule out rare states.

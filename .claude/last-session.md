@@ -1,34 +1,61 @@
-# Session 67 — MrTotalVI default reverted to MoG; clustering-compactness rationale
+# Session 68 — MrTotalVI u/z vs TOTALVI vs Multigrate; three review passes; RDX-03 lost
 
-**Date**: 2026-07-13
+**Date**: 2026-07-27 → 2026-07-28
 **Branch**: main
-**Trigger**: T/NK UMAP comparison showed VampPrior disperses 6 clusters (all worse); user decision to keep MoG as default and expose VampPrior as explicit recipe.
+**Trigger**: "pick up from last work on MrTotalVI from codex" — found a live 48-fit RDX-03 run and
+a user question about which embedding to cluster on for sample-robust cell typing.
+
+*(Session 67 notes preserved at `.claude/last-session-67.md.bak`.)*
 
 ---
 
 ## 1. Work completed
 
-### MrTotalVI default reverted to MoG (`_model.py`)
+### RDX-03 48-fit run — FOUND LIVE, NOW LOST
 
-Three defaults reverted:
-- `u_prior`: `"vamp"` → `"mog"`
-- `init_prior_from_data`: `True` → `False`
-- `freeze_prior_after_init`: `True` → `False`
+Discovered running inside a Codex `bwrap` sandbox on `res-hpc-exe029` (orchestrator PID 675127),
+42/48 fits sealed. Its SLURM allocation (`25325917`) ends **2026-07-28 13:06:59** and the extension
+was never applied. `canonical_human/B3/seed0` has run **15h46m** and is only at epoch 244/400, with
+five fits after it. **The run dies today with 42/48 and nothing promotable** — no resume path
+(`run_convergence_diagnosis.py` always `mkdtemp`s fresh), and RDX-03's own review forbids splicing.
 
-Architecture defaults (`use_batch_norm="none"`, `use_layer_norm="both"`) retained — these were already the validated architecture and are independent of the prior choice.
+`relaunch-rdx03-grid.sbatch` is written and ready (7-day `all` partition, 12 CPUs, detached) if a
+rerun is wanted. **But see §3 — the grid's headline gate is now in question.**
 
-### Two tests updated (`tests/external/mrtotalvi/test_mrtotalvi.py`)
+### New analysis: `.scratch/mrtotalvi-z-vs-totalvi/` (16 scripts, FINDINGS.md)
 
-| Test | Change |
-|------|--------|
-| `test_vamprior_default_unchanged` | Renamed to `test_mog_default_unchanged`; asserts `u_prior_means` present, `u_vamp_pseudo` absent |
-| `test_freeze_prior_false_default` | Updated to check MoG attrs (`u_prior_means.requires_grad`, `u_prior_logits.requires_grad`) |
+Compared stock TOTALVI, MrTotalVI (MoG/VampPrior × u/z) and Multigrate on schisto 10k human
+CITE-seq (97,954 cells, 10 donors × 4 timepoints, 24 cell types).
 
-**Result**: 54/54 passed.
+- **3-seed matched TOTALVI baseline trained** (GPU, early-stopped 141/87/108) replacing an n=1
+  baseline; effective rank **17.08 ± 0.53** vs MrTotalVI z 10.91 ± 1.18 (Welch t=8.24, p=0.005).
+- **Multigrate installed in an isolated venv** (NOT `scvi-test`, which the live run imports).
+  Diverged to NaN on **2 of 6 seeds** at epoch ~180 (L-096); survivors are runs whose early
+  stopping fired first.
+- **Cross-seed stability**: kNN Jaccard 0.119–0.375 across all arms — only ~3–7 of 15 neighbours
+  survive a seed change, stock TOTALVI included.
+- **Cluster-level donor purity** (closes review F8): **no arm produces patient-specific clusters**,
+  TOTALVI included (0–1.3% of clusters ≥80% one donor). `u` reduces *residual* donor structure
+  ~30% vs TOTALVI (+0.065 vs +0.094 excess over the 0.152 chance level); Vamp `u` closest to chance.
+- **Answer to the user's question**: cluster on `u`, prefer **VampPrior** — but the stakes are
+  smaller than assumed, since plain TOTALVI would not have broken clustering here.
 
-### Rationale recorded
+### Three review passes (2 mycelium + 1 ultracode workflow)
 
-T/NK comparison (57k cells, 21 L3 labels) showed 6 clusters more dispersed under VampPrior (all increases, 0 improvements): Proliferating NK +90%, CM CD4 T TSHZ2+ +64%, SOX4+ Naïve CD4 T +57%, CM CD4 T +54%, KLRB1+ CM CD4 T Th17-like +46%, Treg +32%. VampPrior remains the recommended explicit recipe for DA analysis (D-041 std=0.192), but MoG gives better cell-type compactness for the more common clustering-first workflow.
+Reports in `.living/outputs/reviews/`: `2026-07-27-…md`, `2026-07-28-…-pass2.md`,
+`2026-07-28-…-pass3-ultra.md`. 14 agents in pass 3 with adversarial refutation of every finding.
+
+**Four instances of one error class were found, each inside the fix for the previous one** —
+crystallised as **C-004**:
+1. L-094 — multivariate η² (denominator is what compression changes)
+2. L-097 — cluster F1 at a single Leiden resolution
+3. pass-2 F1 — kNN timepoint purity containing same-sample neighbours
+4. pass-3 F7 — `separation_ratio`/`within_dispersion` (r=−0.64/+0.85 with effective rank)
+
+Also caught: **sycophancy drift in the assistant's own scorecard** (omitted the two stability
+metrics favouring MoG). Corrected symmetrically — applying the same compression test to VampPrior's
+metrics removed whitened CKA (r=+0.63) from its side too. **Clean scorecard is 2–2 with one tie**,
+not the 5–2 first reported.
 
 ---
 
@@ -36,8 +63,16 @@ T/NK comparison (57k cells, 21 L3 labels) showed 6 clusters more dispersed under
 
 | File | Change |
 |------|--------|
-| `src/scvi/external/mrtotalvi/_model.py` | Revert u_prior/init_prior_from_data/freeze_prior_after_init defaults to MoG |
-| `tests/external/mrtotalvi/test_mrtotalvi.py` | 2 test updates to match MoG default |
+| `.scratch/mrtotalvi-z-vs-totalvi/` | NEW — 16 scripts, FINDINGS.md, TSVs, UMAP figure, venv |
+| `docs/user_guide/models/mr_multimodal.md` | VampPrior DA recipe; corrected `freeze_prior_after_init` claim (it is NOT ignored under MoG) |
+| `.living/learnings.md` | L-094, L-095, L-096, L-097 |
+| `.living/conventions.md` | **C-004** — never compare embeddings with a statistic whose denominator or operating point encodes the effect under test |
+| `.living/outputs/reviews/` | 3 review reports |
+| `todo/TODO_REGISTRY.md` | P2-006, P2-007, P2-008 |
+| `.scratch/mrtotalvi-v2-redesign/` | RUN-STATUS-20260727.md, relaunch-rdx03-grid.sbatch |
+
+**No file under `src/scvi/` or `benchmarks/mrtotalvi/` was touched** — the live run byte-verifies
+all 277 of them; verified intact mid-session.
 
 ---
 
@@ -45,170 +80,50 @@ T/NK comparison (57k cells, 21 L3 labels) showed 6 clusters more dispersed under
 
 | Item | Status |
 |------|--------|
-| Leiden calibration (job 25211796) | ⏳ Still pending (QOSMaxCpuPerUserLimit) |
-| P1-006: MrTotalVI DA instability root-cause | GPU + real data required |
-| P2-005: Macaque CITE-seq validation | Dataset + training compute required |
+| **RDX-03 rank gate may be unsound on `canonical_human`** | Its `latent_collapse` hard gate rejected representations that lose nothing recoverable (kNN retest: B2 z 0.798 vs B1 0.811). Since `latent_collapse` is one of four Stage-A prune gates, the D1–D5 screen could discard viable redesigns. **Raise with the RDX-03 reviewer before rerunning anything.** |
+| D1–D5 redesign screen | Never started. Stage A = B1/B2/B3/D0 + D1–D5, seed 0, ≤2 survivors; Stage B = survivors + B1/B2, 3 seeds |
+| Review F2 | `celltype` ground truth is an automated ensemble call self-documented as superseded — undisclosed beyond a generic "coarse label" caveat |
+| Review F4/F5 | Stale n=1 stock-TOTALVI values in two tables |
+| Review F9 / P2-008 | FINDINGS.md recommends re-running the session-67 T/NK comparison; P2-008 records that data as unrecoverable. Reconcile |
+| P1-006 | DA instability — this session narrowed it: representation instability is a *contributor, not the mechanism* (18–30% neighbourhood-stability gain vs 78% DA-variance reduction) |
+| Leiden calibration job 25211796 | Still pending since session 67 |
 
 ---
 
 ## 4. Next session priorities
 
-1. Check Leiden calibration job 25211796 status.
-2. Update `mr_multimodal.md` user guide with explicit VampPrior recipe + D-041 std=0.192 as recommended DA config.
+1. **Decide RDX-03's fate.** The run is gone either way; the question is whether to resubmit
+   `relaunch-rdx03-grid.sbatch` (~44h) *given* the gate concern above. Resolving the gate first is
+   probably cheaper than a second 48-fit grid.
+2. ~~Reproducibility is the real blocker~~ — **RETRACTED, measured directly and false.** Clusters
+   DO reproduce: at Leiden 1.0, 83–95% of clusters recur across a seed change holding 93–99% of
+   cells (ARI 0.67–0.90), despite kNN Jaccard of 0.119–0.375. The neighbourhood churn happens
+   *inside* clusters. The kNN-Jaccard proxy measured something finer-grained than the conclusions
+   drawn from it — fifth instance of C-004 in this session, first running pessimistic.
+   **What survives**: Leiden 2.0 is genuinely unstable (ARI 0.57–0.67, ~1 in 5 clusters not
+   recurring), so fine-resolution findings need multi-seed confirmation; the main partition does
+   not. Stock TOTALVI is the most reproducible arm at res 1.0 (ARI 0.903).
+3. Close review F2/F4/F5/F9.
+4. Multi-cohort validation (P2-005 macaque) — everything here is one confounded cohort
+   (NMI(donor,batch)=0.796, so donor-specific integration cannot be tested on it at all).
 
 ---
 
-# Session 66 — MrTotalVI defaults changed to VampPrior+LN; 7 tests fixed; float32 softplus-inverse bug patched
+## 5. Notes for whoever picks this up
 
-**Date**: 2026-07-13  
-**Branch**: main  
-**Trigger**: Continuation from session 65; D-041 confirmed (std=0.192); adjust MrTotalVI defaults to validated VampPrior+LN recipe.
-
----
-
-## 1. Work completed
-
-### MrTotalVI defaults updated (`_model.py`)
-
-Three defaults flipped + two architecture params surfaced explicitly:
-- `u_prior`: `"mog"` → `"vamp"`
-- `init_prior_from_data`: `False` → `True`
-- `freeze_prior_after_init`: `False` → `True`
-- `use_batch_norm="none"` (explicit, matching MULTIVI)
-- `use_layer_norm="both"` (explicit, matching MULTIVI)
-
-### Float32 softplus-inverse bug fixed (`_model.py`)
-
-`init_prior_from_data=True` k-means centroid softplus-inverse used `log(expm1(c))`, which overflows float32 for c > ~88.7 (exp overflow → inf pseudo-inputs → NaN in encoder). Fixed with numerically stable identity approximation for c > 20: `torch.where(c > 20.0, c, torch.log(torch.expm1(safe_c)))`. Logged as L-093.
-
-### 7 failing tests fixed (`tests/external/mrtotalvi/test_mrtotalvi.py`)
-
-| Test | Fix |
-|------|-----|
-| `test_vamprior_default_unchanged` | Update assertions to reflect `"vamp"` as new default |
-| `test_freeze_prior_false_default` | Rewrite to pass `freeze_prior_after_init=False` explicitly; check `u_vamp_pseudo.requires_grad` |
-| `test_freeze_prior_after_init_mog` | Add `u_prior="mog"` (tests MoG-specific behavior) |
-| `test_mrtotalvi_gaussian_u_prior_and_z_u_prior_off` | Add `u_prior="mog"` |
-| `test_mrtotalvi_save_load_preserves_latent_hierarchy` | Add `u_prior="mog"` |
-| `test_mrtotalvi_label_conditioned_mog_prior` | Add `u_prior="mog"` |
-| `test_mrtotalvi_lfc_sign_known_positive_control` | Add `u_prior="mog"` (LFC sign test; VampPrior needs >30 epochs to converge on synthetic signal) |
-
-**Result**: 54/54 passed.
-
----
-
-## 2. Files modified
-
-| File | Change |
-|------|--------|
-| `src/scvi/external/mrtotalvi/_model.py` | VampPrior+LN defaults; float32 softplus-inverse fix |
-| `tests/external/mrtotalvi/test_mrtotalvi.py` | 7 test fixes to reflect new defaults |
-| `.living/learnings.md` | L-093 (float32 softplus-inverse overflow) |
-
----
-
-## 3. Outstanding items
-
-| Item | Status |
-|------|--------|
-| Leiden calibration (job 25211796) | ⏳ Still pending (QOSMaxCpuPerUserLimit) |
-| P1-006: MrTotalVI DA instability root-cause | GPU + real data required |
-| P2-005: Macaque CITE-seq validation | Dataset + training compute required |
-
----
-
-## 4. Next session priorities
-
-1. Consider adding a VampPrior-default smoke test that validates the full default config trains without NaN.
-2. Check Leiden calibration job status.
-
----
-
-# Session 65 — Skills installation complete; VampPrior jobs still pending
-
-**Date**: 2026-07-13  
-**Branch**: main  
-**Trigger**: Continuation from session 64 after context compaction; skills install + plan verification.
-
----
-
-## 1. Work completed
-
-### ericmjl/skills installation
-Installed 4 skills from `https://github.com/ericmjl/skills` to `~/.claude/skills/`:
-
-| Skill | Files |
-|-------|-------|
-| `write-like-eric` | SKILL.md |
-| `atomic-commits` | SKILL.md |
-| `coherent-writing` | SKILL.md + references/coherence-patterns.md + references/subagent-prompts.md |
-| `skill-creator` | SKILL.md + 3 reference files + 3 scripts (init_skill.py, package_skill.py, quick_validate.py) |
-
-### scvi skills package
-Verified complete: bundled `src/scvi/_skills/data/` with SKILL.md + 6 reference files; `cytoanvi-install-skills` console script in `pyproject.toml`.
-
-### P1/P2 backlog
-Verified: P1-001 through P1-005 and P2-001 through P2-004 all `done` in the TODO registry (done in sessions 60–63).
-
----
-
-# Session 64 — VampPrior+freeze D-041 revalidation launched
-
-**Date**: 2026-07-13  
-**Branch**: main  
-**Trigger**: User request to run empirical VampPrior validation (D-041 refuted in session 62; no artifact existed).
-
----
-
-## 1. Work completed
-
-### D-041 revalidation: LN+VampPrior+freeze+DTP training submitted
-
-Added `train_mrtotalvi_ln_vamp()` to `train_multiseed.py` and `mrtotalvi_ln_vamp` to `run_dtp_da.py`. CPU smoke test passed (2-epoch, save/load verified). Three SLURM training jobs submitted:
-
-| Seed | Job ID | Status |
-|------|--------|--------|
-| s0 | 25214226 | PENDING |
-| s1 | 25214227 | PENDING |
-| s2 | 25214228 | PENDING |
-
-Config: `use_batch_norm="none"`, `use_layer_norm="both"`, `u_prior="vamp"`, `u_prior_mixture_k=20`, `init_prior_from_data=True`, `freeze_prior_after_init=True`, `sample_key="donor_timepoint"`.
-
-Models will save to: `outputs/models/mrtotalvi_10k_human_ln_vamp_dtp_s{0,1,2}/`
-
-DA script ready: `slurm/submit_da_dtp_mrtotalvi_ln_vamp.sh` — submit after all 3 training jobs complete.
-
-### Pre-registered success criterion
-
-**Success**: W22-enrichment std ≤ 0.30 (>65% reduction from LN-MoG baseline std=0.875) AND all 3 seeds positive.  
-**Failure**: VampPrior does not rescue MrTotalVI-LN DA; use MrMultiVI for publication DA.
-
----
-
-## 2. Files modified
-
-| File | Change |
-|------|--------|
-| `schisto_citeseq/analysis/integration/mr_multimodal_publication/train_multiseed.py` | Added `train_mrtotalvi_ln_vamp()` + argparse choice |
-| `.scratch/mr-schisto-benchmark/run_dtp_da.py` | Added `mrtotalvi_ln_vamp` entry + argparse choice |
-| `.scratch/mr-schisto-benchmark/slurm/submit_train_mrtotalvi_dtp_ln_vamp_s{0,1,2}.sh` | New SLURM training scripts |
-| `.scratch/mr-schisto-benchmark/slurm/submit_da_dtp_mrtotalvi_ln_vamp.sh` | New SLURM DA script |
-| `.living/decisions.md` (D-041) | Added revalidation launch note + pre-registered criterion |
-
----
-
-## 3. Outstanding items
-
-| Item | Status |
-|------|--------|
-| D-041 LN+VampPrior | ✅ CONFIRMED — std=0.192, mean=+0.445 (artifact: `results/da_mrtotalvi_ln_vamp_dtp_summary.json`) |
-| Leiden calibration (job 25211796) | ⏳ Still pending (QOSMaxCpuPerUserLimit) |
-| P1-006: MrTotalVI DA instability root-cause | GPU + real data required |
-| P2-005: Macaque CITE-seq validation | Dataset + training compute required |
-
----
-
-## 4. Next session priorities
-
-1. Check Leiden calibration job 25211796 status.
-2. Consider updating `mr_multimodal.md` user guide with D-041 confirmed VampPrior recipe and std=0.192 number.
+- **Apply C-004 before believing any cross-embedding number.** Four instances in one session, each
+  found inside the previous fix. The checklist is in `.living/conventions.md`.
+- **A schema-conformant agent response is not evidence of work.** The pass-3 completeness critic
+  returned literal `"test"` in every field; re-running it with a mandatory tool-use procedure
+  produced the single best finding of all three passes.
+- **Positive controls earn their keep.** The cluster-donor-purity measurement included `z` arms
+  specifically so the measurement could fail; it didn't, which is why its numbers are trustworthy.
+- **`z` cannot equal TOTALVI's latent by construction** (user's question, source-verified):
+  `z_base = u` is the identity under isomorphic dims, so `z = u + eps` exactly; and `kl_z` is
+  `-log N(eps;0,1)` on a *deterministic* eps under `use_map=True` — pure `eps²/2` shrinkage with no
+  entropy term, unlike TOTALVI's `KL(q‖N(0,I))`. Measured: eps carries 2–17% of z's variance,
+  `rank(z) ≈ rank(u) + 1`. A `z_u_prior=False` ablation was run to test whether the penalty is the
+  cause — see `.scratch/mrtotalvi-z-vs-totalvi/z_u_prior_ablation.tsv`.
+- The schisto MrTotalVI models were trained with `labels_key="celltype"`, which silently makes the
+  MoG prior label-supervised (L-095). Stock TOTALVI was not. Any celltype-based comparison between
+  them is supervised-vs-unsupervised.

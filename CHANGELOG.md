@@ -19,6 +19,12 @@ Not final journal/PyPI release (GitHub-only, branch feat/cytoanvi); preprint in 
 
 #### Added
 
+- Add opt-in MrTotalVI centered-v2 registered-sample counterfactual datasets,
+    a state-dict-compatible sample-blind encoder mode, deterministic RNA/protein
+    expression estimands, descriptive local enrichment, atomic Zarr output,
+    and separate posterior/training-seed summaries. Legacy behavior remains the
+    default; these package interfaces do not constitute scientific validation
+    or causal inference.
 - Add support for rapids-singlecell, {pr}`3811`.
 - Add {class}`cytoanvi.CytoANVI`, a semi-supervised, annotation-aware extension of
     {class}`scvi.external.CYTOVI` (cell-type classifier head + partially-observed-label objective,

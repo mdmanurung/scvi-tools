@@ -8,15 +8,19 @@ import torch.nn.functional as F
 from torch.distributions import Normal, kl_divergence
 
 from scvi import REGISTRY_KEYS
-from scvi.module._multivae import MULTIVAE, get_reconstruction_loss_protein
-from scvi.module.base import LossOutput, auto_move_data
-
-from ..mrtotalvi._components import EncoderUZ, EncoderXU_MultiVI
-from ..mrtotalvi._components import (
-    build_u_prior as _build_u_prior,
+from scvi.external.mrtotalvi._components import (
+    EncoderUZ,
+    EncoderXU_MultiVI,
     init_u_prior,
+)
+from scvi.external.mrtotalvi._components import (
+    build_u_prior as _build_u_prior,
+)
+from scvi.external.mrtotalvi._components import (
     kl_u as _kl_u,
 )
+from scvi.module._multivae import MULTIVAE, get_reconstruction_loss_protein
+from scvi.module.base import LossOutput, auto_move_data
 
 
 def _expand_to_match_mc(target: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
@@ -27,7 +31,7 @@ def _expand_to_match_mc(target: torch.Tensor, reference: torch.Tensor) -> torch.
 
 
 class MrMultiVAE(MULTIVAE):
-    """MULTIVAE with an MrVI-style u→z hierarchical latent space.
+    r"""MULTIVAE with an MrVI-style u→z hierarchical latent space.
 
     Grafts MrVI's hierarchical design onto MULTIVAE.  A sample-conditioned
     u-encoder (:class:`~scvi.external.mrtotalvi._components.EncoderXU_MultiVI`)
@@ -155,7 +159,12 @@ class MrMultiVAE(MULTIVAE):
             )
 
         if n_sample > 0:
-            self._setup_hierarchy(n_sample, n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale)
+            self._setup_hierarchy(
+                n_sample,
+                n_latent_sample,
+                z_u_prior_scale,
+                learn_z_u_prior_scale,
+            )
 
     # ------------------------------------------------------------------
     # Hierarchy setup
@@ -217,12 +226,14 @@ class MrMultiVAE(MULTIVAE):
             self.n_labels = int(n_labels)
 
         n_latent_u = (
-            self.n_latent if self._n_latent_u_requested is None else int(self._n_latent_u_requested)
+            self.n_latent
+            if self._n_latent_u_requested is None
+            else int(self._n_latent_u_requested)
         )
 
-        # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, takes MULTIVAE mixed latent
-        # u is the sample-uninformed cell-state representation: never condition on batch.
-        # Batch conditioning belongs in the parent MultiVAE z-encoder and decoder only.
+        # The sample-conditioned u-encoder mirrors MrVI's EncoderXU and takes
+        # MULTIVAE's mixed latent. Batch conditioning remains opt-in through
+        # encode_covariates.
         n_protein_in = self.n_input_proteins if getattr(self, "protein_in_encoder", False) else 0
         self.qu = EncoderXU_MultiVI(
             n_input=self.n_latent,
@@ -267,7 +278,7 @@ class MrMultiVAE(MULTIVAE):
                 torch.full((self.n_latent,), float(z_u_prior_scale)),
             )
 
-        # Per-sample cell counts for observation reweighting (persistent so load_state_dict restores it)
+        # Persistent per-sample cell counts restore observation reweighting.
         if scale_observations and n_obs_per_sample is not None:
             self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=True)
         else:
@@ -389,7 +400,14 @@ class MrMultiVAE(MULTIVAE):
         # encode_covariates=True (opt-in; default False for MrMultiVI).  When False
         # the encoder stays fully batch-uninformed, making u comparable across
         # donors and batches.
-        y_protein = y if (getattr(self, "protein_in_encoder", False) and self.n_input_proteins > 0) else None
+        y_protein = (
+            y
+            if (
+                getattr(self, "protein_in_encoder", False)
+                and self.n_input_proteins > 0
+            )
+            else None
+        )
         qu = self.qu(
             u0,
             sample_index,
@@ -547,7 +565,7 @@ class MrMultiVAE(MULTIVAE):
         generative_outputs: dict[str, torch.Tensor],
         kl_weight: float = 1.0,
     ) -> LossOutput:
-        """Extend MULTIVAE's loss with the second-level KL for the sample residual.
+        r"""Extend MULTIVAE's loss with the second-level KL for the sample residual.
 
         MULTIVAE's ``kl_divergence_z`` term is repurposed as ``kl_u =
         KL(q_u \\| p_u)`` where ``p_u`` is the configured prior (default: a
@@ -610,7 +628,11 @@ class MrMultiVAE(MULTIVAE):
                 + loss_out.reconstruction_loss["reconstruction_loss_accessibility"]
                 + loss_out.reconstruction_loss["reconstruction_loss_protein"]
             )
-            per_cell = recon + kl_weight * kl_local["kl_divergence_z"] + kl_local["kl_divergence_paired"]
+            per_cell = (
+                recon
+                + kl_weight * kl_local["kl_divergence_z"]
+                + kl_local["kl_divergence_paired"]
+            )
             loss = (per_cell / prefactors).mean()
         else:
             if self._scale_observations:

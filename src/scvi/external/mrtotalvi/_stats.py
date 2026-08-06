@@ -566,13 +566,19 @@ def _differential_expression(
                         "cannot compute MC eps samples."
                     )
 
-                def _eps_from_u(u: torch.Tensor) -> torch.Tensor:
+                def _eps_from_u(
+                    u: torch.Tensor,
+                    batch_n_cells: int = n_cells,
+                ) -> torch.Tensor:
                     # For each kept sample d, compute eps_d = qz(u, d)[1].
                     # u is held fixed across donors: counterfactual substitution.
                     eps_list = []
                     for d_idx in sample_indices_kept:
                         cf = torch.full(
-                            (n_cells, 1), d_idx, dtype=torch.long, device=u.device
+                            (batch_n_cells, 1),
+                            d_idx,
+                            dtype=torch.long,
+                            device=u.device,
                         )
                         _, eps_d, _ = model.module.qz(u, cf)
                         eps_list.append(eps_d)
@@ -748,7 +754,8 @@ def _differential_expression(
                         if delta is not None:
                             pde_wsum += w_b * (lfc_mc_cov.abs() >= delta).float().mean(1)
 
-                    # lfc_wsum: (n_fixed, n_cells, n_features) → permute to (n_cells, n_fixed, n_features)
+                    # Permute from (n_fixed, n_cells, n_features) to
+                    # (n_cells, n_fixed, n_features).
                     lfc_list.append(lfc_wsum.permute(1, 0, 2).cpu().numpy())
                     lfc_std_list.append(
                         torch.sqrt(lfc_var_wsum).permute(1, 0, 2).cpu().numpy()

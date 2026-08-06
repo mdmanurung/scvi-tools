@@ -12,22 +12,29 @@ import xarray as xr
 from mudata import MuData
 from tqdm import tqdm
 
-from scvi import REGISTRY_KEYS, settings
+from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
 from scvi.data._utils import _get_adata_minify_type, _validate_adata_dataloader_input
+from scvi.external.mrtotalvi._stats import (
+    _differential_expression,
+)
+from scvi.external.mrtotalvi._stats import (
+    differential_abundance as _differential_abundance,
+)
+from scvi.external.mrtotalvi._stats import (
+    get_aggregated_posterior as _get_aggregated_posterior,
+)
+from scvi.external.mrtotalvi._stats import (
+    get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
+)
 from scvi.model._multivi import MULTIVI
 from scvi.utils import setup_anndata_dsp
 
-from ..mrtotalvi._stats import (
-    _differential_expression,
-    differential_abundance as _differential_abundance,
-    get_aggregated_posterior as _get_aggregated_posterior,
-    get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
-)
 from ._module import MrMultiVAE
 
 if TYPE_CHECKING:
-    from typing import Iterator, Literal, Sequence
+    from collections.abc import Iterator, Sequence
+    from typing import Literal
 
     import numpy.typing as npt
     from torch import Tensor
@@ -631,7 +638,7 @@ class MrMultiVI(MULTIVI):
         give_z
             If ``True`` (default), returns the sample-aware hierarchical
             ``z = z_base + eps`` using each cell's actual donor index.
-            If ``False``, returns the sample-unaware base ``u``.
+            If ``False``, returns the sample-conditioned base ``u``.
 
         Returns
         -------

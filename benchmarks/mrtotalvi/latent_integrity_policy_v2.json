@@ -1,0 +1,44 @@
+{
+  "convergence": {
+    "non_convergence_geometry": "no_call_all_representations",
+    "separate_hard_failure": true
+  },
+  "downstream_scientific_gates": "frozen_v1_unchanged",
+  "effective_rank": {
+    "comparison": "configured_dimension_fraction_lt",
+    "disposition": "low_rank_alert_only",
+    "suppresses_geometry": false,
+    "value": 0.5
+  },
+  "factual_human_da": "locked_not_computed_or_inspected",
+  "historical_behavior": "preserve_exact_v1_replay",
+  "knn_rescue_rule": false,
+  "metric_preprocessing": "frozen_v1_unchanged",
+  "outcome_derived_thresholds": false,
+  "policy_id": "mrtotalvi-rdx03-latent-integrity-v2",
+  "representation_isolation": {
+    "representations": [
+      "u",
+      "factual_z"
+    ],
+    "terminal_failure_scope": "affected_representation_only"
+  },
+  "schema_version": "mrtotalvi-latent-integrity-policy-v2",
+  "scope": "prospective_v2_only",
+  "supersedes": "adr-0008-effective-rank-terminal-clause-only",
+  "terminal_integrity": {
+    "exact_zero_centered_variation": "fail",
+    "invalid_diagnostics": "explicit_no_calls_continue_grid",
+    "nonfinite_integrity_inputs": "fail",
+    "posterior_scale_elements": "all_present_finite_strictly_positive",
+    "registered_residual_gradient_coverage": {
+      "applicable_model_families": [
+        "mrtotalvi"
+      ],
+      "comparison": "absolute_eq",
+      "failure_scope": "affected_representation_only",
+      "representation": "factual_z",
+      "value": 1.0
+    }
+  }
+}

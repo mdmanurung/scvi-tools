@@ -1,0 +1,2018 @@
+{
+  "annotation": {
+    "column": "cell_label_l1p5",
+    "ordered_labels_sha256": "420db70e69a1007a9c4b406da298dc07960856f6276951b22672ce7c5dcb7c3c",
+    "ordered_selection_sha256": "5435b6d60f128d6c8490be337adc549797447fcf3664cc0a77be5c9cb17b8d05",
+    "source_h5ad_path": "/exports/para-lipg-hpc/mdmanurung/schisto_citeseq/analysis/harmonized_integration/outputs/human_immune_joint.h5ad",
+    "source_h5ad_sha256": "520ff544daae6192efd7f3501669e05b0122e6fbaf8e9de0246122cecd1de2da"
+  },
+  "fixture": {
+    "fixture_id": "sealed_500",
+    "h5ad_path": ".scratch/mrtotalvi-v2/engineering-runs/20260725T233701Z-seed0-520ff544/checkpoint/adata.h5ad",
+    "h5ad_sha256": "b63a7df6b57d4db5bf0ce9e091ca36db9d19ad7c6ea798c7224a52f3a7d51dff",
+    "ordered_cell_ids_sha256": "8bf6870148eb7621e68a25a5002601f0d121244f3ffed7006027aa2c70ea82e1"
+  },
+  "records": [
+    {
+      "cell_id": "B1a_AAAGATGTCAGCTGGC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_ACCAGTATCCAAAGTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_ACGAGGACATACCATG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1a_AGAGTGGCAGGGATTG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_AGAGTGGGTCTGCAAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_AGCCTAAGTGCCTGCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_AGGTCATTCGGATGTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_AGGTCCGCATCCGTGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_AGTCTTTCACAACTGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CAAGTTGCAAGCTGGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_CACAGTAGTCGTGGCT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_CAGAATCAGCTAACAA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_CATCAAGTCAAACAAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_CCACCTACAATGGTCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CCATGTCCATTATCTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CCTTACGAGTAGGTGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CCTTACGAGTGTACGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CGATGTACAGACGCAA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_CGATTGAGTTGTTTGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CTACGTCTCGTGGTCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_CTGCCTAGTTAAGATG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1a_CTTACCGAGCTTCGCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_GACGTTAAGCCTCGTG-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B1a_GATGAGGCAGATGAGC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_GATGCTATCTACTATC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_GATTCAGGTCCGAAGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_GGGTCTGGTTAGGGTG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_GGTATTGCAGTCCTTC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_GTGCATAAGCAATCTC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_GTGGGTCAGACCCACC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_TAAGTGCAGTCTTGCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_TCACAAGAGATTACCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_TCAGCAACAGCTCCGA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1a_TCAGCTCTCCAATGGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_TGAGGGAAGTGGCACA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_TGGCCAGGTTGAGGTG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_TGGCGCATCATGCAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_TGGTTAGGTCGCATAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_TTCGAAGCACTCAGGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1a_TTCGAAGTCTACTATC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1a_TTTACTGCAGATCTGT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1b_AATCCAGTCAATACCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_AATCGGTAGCGTTCCG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_ACAGCCGAGCAAATCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_ACAGCTAGTGGTAACG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_ACGAGCCTCGGCGCTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_ACTTGTTAGTATCGAA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_AGTGGGAAGGGCTTCC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1b_ATAAGAGTCTCCAGGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_ATTCTACTCTTCTGGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_CAACTAGAGTTACGGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_CAACTAGCACGAGAGT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_CACACTCAGTAGGCCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_CCACGGACAGGCTCAC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_CCACTACGTTCTGGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_CCAGCGATCAGTCCCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_CCATGTCGTCGATTGT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B1b_CCCAGTTCAAGTCATC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_CGAGCCAGTTCCACGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_CGATGGCGTCGCTTCT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_CGGAGTCGTAATAGCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_CGTGTCTTCCTATGTT-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B1b_CGTTCTGAGGAGCGTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_GACAGAGCACAGACAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_GATCGATAGGGTTCCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_GGCTGGTGTAAGTTCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_GGGAATGGTATCACCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_GTCACAAAGTACTTGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_GTGCATACAGGAATCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_TCAGCAAGTCGACTAT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_TCTGGAACAGGAACGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_TTAGTTCCAGCCACCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_TTCGGTCCAACTGCTA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_TTGACTTCATATACCG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B1b_TTGGAACAGTGTTAGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1b_TTTGCGCGTGCAGTAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AACATAACAAATATCT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AACCGCAGTCTTGGTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AACGGTACACGCCATA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AACTCTACAGTTCACG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AAGCAAATCGCGTCAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_AAGCCGCGTCCATAGG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AAGGAGGCAAATTGCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AATCCGTCAGCTACGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AATCTTCGTGGGTTAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AATTGTATCGTAAGCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ACAACATTCCCTATGT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_ACAGACACAACATAGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ACAGCGTTCCGTTACT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ACAGGTTGTGGTGTGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_ACATAGAAGGTAAGCG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_ACATTTCGTCGTTAAA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_ACGCGAAAGGCACGAA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ACTAACGTCGCAGTAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ACTGCACAGACACATT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ACTTGGGGTCTAGTAA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AGAGAACTCGTTGCCC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AGCATCATCACTTACC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AGCATTTAGAACGCGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AGCGAATAGAACCCGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_AGCTTTACAAAGGACC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_AGTTTGGTCAGTTGGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_ATAGCAGCAAAAGCGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATCAGCTCAACGAAGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATCCCGACAAGCGCTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATCGAGTGTGGGTAGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATCTGTTGTCATCGGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATGGAGTAGATACAAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_ATGGGACCACCTGTAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATGGGTCTCATCGGCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_ATTGGCATCACATATA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CAATGCGGTCTCCTGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CAATTGTAGCGTAACC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CAGTCCACAAATTCGC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B2_CATGGAGAGATCAGGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CATGGGTTCAGGCCCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CATTCCCCAGTACGGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCAAGCTAGGTGTTAT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_CCAATACCAATCACGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCAGAATGTACTACGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCAGGTAGTCCAGCTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCATAGCAGCGATTTG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_CCATCTGTCCACCCTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCCTTATAGCTAGTGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_CCGCACTTCATCACTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCGCTTGGTGCCTGCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CCGTTTAGTACCACCT-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B2_CCTTCCGCAAACATGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_CCTTTGAGTGCCTTTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CGACCATAGAGCAACG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CGACTAGGTAAAGCGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_CGCACATAGCCTAGAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CGCACCCGTGTTCAGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CGCGGTATCACCCTGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CGTTGGAGTGGAGCCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CTAGCTAAGCTTAAGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CTCAGCCTCGCCATGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CTCAGCCTCGGTTTAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CTCATTTCACAGCACC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_CTCGGACCACAATTCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_CTGCGATAGCAGCGTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GCAATCTCAATGGGCG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GCAGTCAGTCATCAGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GCCATACAGGGCTAGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GCGGGATAGAATCTGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GCTAGGCGTAGGACTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GCTTGGAGTCCTCTCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GGACCCATCCGTGAGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GGAGCTAAGGTCGAGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GGAGGTATCCGGTCGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GGCGCAACAATGCGCC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_GGCGTTCCAATCAGTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GGGACTCGTAGGACCC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B2_GGGTGCACAACGGTCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GTAAACGCAGTTAGTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GTATTATCAACAATCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GTCTAGCAGCAAGGGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B2_GTGCGCGGTGGTATTA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B2_GTTGCCCTCCAAATCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_AAAGTGCAGAGCTTAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_AACCAATTCCGTATCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_AATCATATCACTACCT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_AATGGCTGTAAGCCGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_AATGGGTAGGTTGCCG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_AATGTAGAGGTCTGCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_AATTCCTGTCAATTTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACAACGCTCCCGGTTC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B3_ACAGAACAGCGGCTTG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACCAATGTCCATTGTC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_ACCCTAAAGGTAGTTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACCCTGCTCCAGTAGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACGCGTCCACACCCAA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_ACGGATTGTCTAAGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACGGGGTAGGTGCCCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACTAATCAGACTTACG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACTAATCAGGCTGTCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACTTCTGGTGCCATAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ACTTGTGAGCTGAATT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_AGAGATTCAGTGTCGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_AGGCCAAAGCCGCTGA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_AGTACGGAGACGCGTT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_AGTTGGGAGACAGCGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ATAGCGACAGCATGCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ATATTAGTCAAATGCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ATCCCCGGTCCAACAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ATGATGCGTGTTAGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ATGCTCCGTCTGTTGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_ATTACTTTCGTTCGGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CAACCTTTCAACGTGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CAAGTCTCAGCAGGAT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_CACCCTATCATCCCCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CACTAACCACGTTCGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_CATAACTAGCACCTCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_CATATCCTCCGGTAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CCAGAGGCAAAGCATG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_CCTGATTTCCGAGTGT-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B3_CCTTATGGTAGCCCTT-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B3_CGAAGCCGTACTTGGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CGGCGTATCCACAAGC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_CGGTTCTGTCCAGTTC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_CGTGCCCGTCTTAGCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CGTTCTGTCGTGACTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CTAAGTAGTATCAATG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CTAGTGCAGCGAAGTG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_CTATAGCCACAGGTCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_CTCGACACAGCAGGCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CTCTCCGCAAGAGATT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CTGACCGAGCGTACAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CTGCACCTCCTTCAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_CTTCTAGGTGGAATCT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_GCATGGGCACAGTCAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GCCCACAAGCCCAAGT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_GCGTATGGTCGACGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GCTCTTAGTAGGTTTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GGAATCGAGCGTCTAA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_GGAATGTAGAAAGCTA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_GGCATTATCGGTCGCA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_GGCTCATAGGCGTAGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GGCTCCCGTCCGTCTG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GGCTGAAAGATTACCG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_GGTAAAGGTACCCATC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GGTACGTTCAAGCATT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GGTCATTCAAAAGGGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GGTGTGCGTGGGGTTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GTAGGCAAGCCCACGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GTGAACCTCGGCAACT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B3_GTGCAACTCCGATAAT-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B3_GTGCAGGCACTCTAGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B3_GTTAGTCCAAAGCAAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GTTGCGAGTCGTGCCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B3_GTTGCGCCAAGGTTCT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_AAACCAGCACCTGCAA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_AAATTCGGTCCAGCTT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_AAGCCAACAACGTGCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_AAGCCAGAGAGCCGTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_AATGGCACACTGGGAG-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_AATGTTATCACTCCCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_AATGTTGGTGGCGCAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_AATTAAGCAAACCTTA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_ACCCGTTGTATCTGGG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_ACTCTCCCACTACGAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_AGCAAATCAAACCATC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_AGGCCAAAGATGGGTG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_AGTCCGCCACATGGTT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATACAACTCATCCTAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATACAGCGTCATAGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATATGTATCATACGCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_ATCACTCTCGTAACGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATCAGGCTCAGCGCAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATCGCCACAATTCGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATCTCTTCACACTATA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATGAGCTGTACGGTGC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_ATGTATCAGGGCGAGT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_ATTAAGGAGGCCCACA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_ATTGCGGGTCGCATAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CAAATTCAGAACTCAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CAACGGGCAACCCGAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CACAACATCGCTGTGG-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_CACTTACTCGTTGACA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CAGGAGCAGGGACAAT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_CAGTGGGCAGGACAAC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CATATCGAGATCATCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CATCAATAGAGCCCCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CATCAGGGTAGTTTAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CATGTATAGCTCAGCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CATTCACTCCAACGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CCAATACCAATGCTCG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CCCTTTACAAGGTAAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CCTTCATAGATGCGGA-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_CCTTTAATCAAAGGTA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CCTTTGAGTAGACGTT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B4_CGAAGGGGTCCGCCTA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CGAATTGTCATCCCAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CGCAGCATCGCCTCTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CGCAGTTAGCGCCTAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CGCGAAGCAATGCAGA-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_CGCGGATGTATCGTGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CGCGGTATCCGTCATT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CGGGTATTCAGCCAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CGTAAAGCAGCGTCTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CTACATACACAGCAGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CTAGTATAGAACGAAC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_CTCACCCAGATCCGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CTCGCATGTCAGCATG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CTGGGAGCAGGCGACA-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_CTGTAACCACGCAGGA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CTTAAGTAGGCATTCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_CTTCTAATCGCTGAGT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_CTTGTACTCGGACTAC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_GCCATAATCATAGGGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GCCATATCAGCGGGTA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GCCCAACCAAAATTTC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_GCCTGCTTCCCATCAT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GCGCGAACAAGGATAT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GCGGTAAAGAAGTACA-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_GCGGTTTAGGCGGATA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GCTTGCTGTAATCAGC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B4_GGACTGCGTACTCAGG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GGCGCTATCGCGTAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GGCGTCATCCATTCCG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GGCTCCTTCCTAGTTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GGCTGAAAGATTACCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GGGACGTAGAATGACA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GGGAGATGTACAGCGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GGGTTCGTCCGGCGTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GGTGATTGTACGAGTT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GGTTATGTCGCCTTGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GTATAGCGTCTATCCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GTATGGGAGCACTGCG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GTATTCACACTGACCA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GTCACGAGTAAGCGCC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GTGCGTTAGACACATT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GTTAGTCCAAGCGAGT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GTTCATCTCCTTCATA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B4_GTTCTAGAGGTTAGTT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B4_GTTGATTAGAGGCTGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_AAACCTCCAGGTGATA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_AAATGACCAAACTAGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_AAGCAATCAGTTGCCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_AATCCGTCACAATCCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_ACAATTATCACGATAT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_ACACAATTCGTTGCAA-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_ACCTGTAAGAATGCCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_ACGGATTGTATAGGAG-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_ACGTATTAGGTAGAGT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_ACTATAGGTGCTAAGT-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_ACTGGCGTCCTTGTCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_AGACTCGGTAGCTTGG-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B5_AGCCTTCGTGGCTTCT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_AGCGCGACAAGTTTCA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_AGCTGATGTCTACGGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_AGGTTAAAGCCTGTGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_AGGTTCTCAGGGCTCT-1",
+      "label": "Proliferating T"
+    },
+    {
+      "cell_id": "B5_AGTGAGAGTAGCCTCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_ATACGAAAGCCGCACA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_ATCGAGTGTAAAGTGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_ATGGTTAGTCTGCAAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CAACAGCTCGTATAAC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_CAACCGTAGAGGTAAC-1",
+      "label": "Proliferating T"
+    },
+    {
+      "cell_id": "B5_CACCCACTCGCCCTAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CACGCACCACGCCAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CAGCGAGCAGGAGCCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CAGTTACCAATGGCCC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CATGGCGTCCTATACC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CCATCGCTCACATTAA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CCGACTCTCAATTCGG-1",
+      "label": "Proliferating T"
+    },
+    {
+      "cell_id": "B5_CCGGCAATCAAATCAC-1",
+      "label": "Proliferating T"
+    },
+    {
+      "cell_id": "B5_CGATTTGAGACGACGA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CGTAACTCAGCGTGCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CGTTCTAGTGGTACTG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CTAAGGTGTATCGGGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_CTAATCGAGGTAGTAA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CTAGGTCAGCCGATTA-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_CTCCACATCACTGTCT-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_CTCCTCTTCACTGCCC-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B5_CTCTAGCGTGTCATGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_CTCTCCGCAGTTCACG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_CTGCAAGGTAACCCCT-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GCCCGTCGTATTACAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GCGACATTCAAATGTC-1",
+      "label": "Proliferating T"
+    },
+    {
+      "cell_id": "B5_GCGCTACCAATCATCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GCTATAGTCAACACGC-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_GCTGCCCGTGGATCGC-1",
+      "label": "CD8 T"
+    },
+    {
+      "cell_id": "B5_GGACATCTCATGTCAG-1",
+      "label": "NK"
+    },
+    {
+      "cell_id": "B5_GGCCATTAGAAGCGGC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GGGCATAAGGGTTTCA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GGTCAGTTCGGTTCGG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GGTGATACAGGACAAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GGTTCGGTCCGGCTTC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GGTTGGCGTGCATCAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GGTTTAGTCGCTTTCG-1",
+      "label": "Unconventional/Innate T"
+    },
+    {
+      "cell_id": "B5_GTCACGTAGCATTCAG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GTGCCGGGTCTGTCCG-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GTGGTTATCCTCCGAC-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B5_GTTGTCTTCCGGGCTA-1",
+      "label": "CD4 T"
+    },
+    {
+      "cell_id": "B1a_AAACGGGGTTCGTGAT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_AACACGTAGTTACCCA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_AACTCAGTCACAAACC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1a_ATTATCCAGCGACGTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1a_CTGGTCTAGTTGAGTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1a_GAGGTGATCCTAGGGC-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_GCTTCCAGTCGCGAAA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_GGTGCGTTCCGCATAA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_TACGGGCGTATTCTCT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_TCTTCGGCAAGCGCTC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1a_TGACTTTGTAACGTTC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1a_TTAACTCAGCTGTCTA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1a_TTAGTTCGTAGCTTGT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_ATCCACCAGTGGGCTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_ATTCTACTCTCACATT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_CACATAGAGCCAGTTT-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B1b_CATTATCTCAAACAAG-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1b_CCGTTCAAGCCCGAAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_CCTCAGTAGACGACGT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1b_CGATTGAAGCCGCCTA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B1b_GAAACTCGTATCTGCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_GAGGTGAAGGGATACC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_GGTGTTAGTAGCGCTC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B1b_TGAGAGGCACGCATCG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_AACATGGCACCCAAAT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_ACAGAACAGATCCGTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_ACCAACTCAGTTGGTT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B2_ACGGCCATCGCGATGT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_AGGGGAACAAATCTCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_ATGACGGAGATCGTTG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_ATTCGTACAGCAGCGA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B2_CAATACCCACCCAGAC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_CCCTTTGAGAATACGA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_CCTACGACAAACGGTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_CGATTCCGTCCTACGT-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B2_CTAAATCAGATTAAGG-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B2_CTCTAGTTCCTTCGCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B2_GCATCGGTCCTCTCCT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B2_GCCCTAACACTTCTAT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B2_GCTTGACAGCATTAAC-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B2_GTTGCAGGTGGTCTAG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_AACGCACTCACATAAC-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B3_AAGCAAGGTGCACAGC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_AATGCGCTCCTCCAGC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_ACATTGGTCAGACGCT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_ACCTACAAGCACCGCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_ACCTATACACAACGAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_AGCATATTCGGTTCGG-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_AGGCTTGGTAAGCCCA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_ATAGGCGAGAGAGGAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_ATGAATACACCTAAAC-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CAAGTGCTCGGTCTAA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CACGCCCGTCTCCTGG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CACGGTCCAACCCGTA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CCGCTAACACTAGCAT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CCGCTGTTCCGGGATT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CCTGGCAAGCGTGTCG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CCTTTCCTCACTATCC-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CGAAGATAGCCGCCAA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CGATTATAGATCCGTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CGCCGTCGTATGGCGC-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CGGAATTGTACAACGT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_CGTATCTTCGGCGTTG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CTATAACAGCAGTCTA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CTCATAGAGGTCATGC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B3_CTCGGTTGTGCGAGGA-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B3_CTGTGAGGTCGTTCTA-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_GGAATCACACTGACGC-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B3_GTTAGCTCACTCCATC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_AACCGTGGTCCGTTGT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B4_ACACCGTAGGTTGCGT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B4_ACCCCAACAGCTCCAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_AGTACTGTCGTTGCTT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_ATAGGAGGTAGGCATT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_ATGCGGAAGGCAATTT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_CATATCACACTGATTA-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B4_CCATAATAGCAAAGGT-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B4_CCTCGAACAGTAAACG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_CGCACTCTCGGGCTCA-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B4_CTTCATTCACGTTTCC-1",
+      "label": "Progenitor"
+    },
+    {
+      "cell_id": "B4_GGGCGTTGTACGCTGA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_GGTATGTGTCTGTACC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_GTAGGCGCACTCATTT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B4_GTGCGGACACATGCGC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_AACCATGTCGCTATAG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_AACTCGGGTGCCATTC-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B5_AAGCGTACACCTCACT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_AAGGTAATCGGCGTTG-1",
+      "label": "Progenitor"
+    },
+    {
+      "cell_id": "B5_AATCGCATCCGTCGTC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_ACATAGCGTAGTCGAT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_ACGGTTGGTAGGCTCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_ACTTACCTCGTGAACC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_AGGAAATGTGTGTCCT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_ATCGCCCTCAGCGTAC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_ATCTTCGGTAAGCCCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_ATTGTATCACTAAATT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAAATCCCAACCAGAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAAGATAAGAACCCCG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAAGGCAAGGTTGCGT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAATCGGGTACTGGGC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAATGCCAGGGAGAGG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAATTAGGTCCCTCTC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CAATTGGTCCCTTTAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CACTAGCAGCCCTTAT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CACTGTAAGCGGAATG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CATGTCAAGAGTGGCA-1",
+      "label": "DC"
+    },
+    {
+      "cell_id": "B5_CATGTCGCAGCCCTAA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CCACTAAAGATAACAG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CCACTATTCGGCAACT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CCCATAGCACAATGTC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CCGTTAGCAAGCGTCC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CCTAGTCGTACCACGA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CGATTATAGAGCTTAT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CGTCAGTAGGGCCATT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CGTGAGTTCACTCATC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CTATAACAGAGACTTT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_CTATGTGAGCCAACCG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GCCATAGGTCAATATG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GCTAGTGGTATAGTCA-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GCTTTAGAGCTTCTAC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GGCGAGTAGGCAATTT-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GGTCGTCCAACGGTCC-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GTAGGCAAGCCAGCAT-1",
+      "label": "B cell"
+    },
+    {
+      "cell_id": "B5_GTCTAGCAGCTGTATG-1",
+      "label": "Monocyte"
+    },
+    {
+      "cell_id": "B5_GTTAGGCTCCCTTTAA-1",
+      "label": "Monocyte"
+    }
+  ],
+  "schema_version": "mrtotalvi-sealed-500-state-annotations-v1"
+}

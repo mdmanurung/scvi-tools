@@ -10,10 +10,14 @@ from .decipher import Decipher
 from .diagvi import DIAGVI
 from .gimvi import GIMVI
 from .methylvi import METHYLANVI, METHYLVI
+from .mrmultivi import MrMultiVAE, MrMultiVI
+from .mrtotalvi import (
+    MrTotalVAE,
+    MrTotalVI,
+    combine_mrtotalvi_seed_results,
+)
 from .mrvi import MRVI
 from .mrvi_torch import TorchMRVI
-from .mrmultivi import MrMultiVI, MrMultiVAE
-from .mrtotalvi import MrTotalVI, MrTotalVAE
 from .poissonvi import POISSONVI
 from .resolvi import RESOLVI
 from .scar import SCAR
@@ -45,6 +49,7 @@ __all__ = [
     "MrMultiVAE",
     "MrTotalVI",
     "MrTotalVAE",
+    "combine_mrtotalvi_seed_results",
     "METHYLVI",
     "METHYLANVI",
     "RESOLVI",

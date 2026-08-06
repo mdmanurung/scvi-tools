@@ -10,17 +10,29 @@ import torch
 import xarray as xr
 from tqdm import tqdm
 
-from scvi import REGISTRY_KEYS, settings
+from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
 from scvi.model._totalvi import TOTALVI
+from scvi.model.base import EmbeddingMixin
 from scvi.module._constants import MODULE_KEYS
 from scvi.utils import setup_anndata_dsp
 
+from ._counterfactual import (
+    get_counterfactual_expression as _get_counterfactual_expression,
+)
+from ._counterfactual import get_counterfactual_latent as _get_counterfactual_latent
+from ._counterfactual import local_sample_enrichment as _local_sample_enrichment
 from ._module import MrTotalVAE
 from ._stats import (
     _differential_expression,
+)
+from ._stats import (
     differential_abundance as _differential_abundance,
+)
+from ._stats import (
     get_aggregated_posterior as _get_aggregated_posterior,
+)
+from ._stats import (
     get_outlier_cell_sample_pairs as _get_outlier_cell_sample_pairs,
 )
 
@@ -30,25 +42,27 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     from anndata import AnnData
 
-class MrTotalVI(TOTALVI):
+class MrTotalVI(EmbeddingMixin, TOTALVI):
     """TotalVI with an MrVI-style hierarchical donor latent space.
 
     Grafts MrVI's per-sample attention residual onto TotalVI, enabling cell-
     and donor-level variability to be **jointly modelled** rather than treating
     donor identity as a nuisance covariate.
 
-    * A sample-conditioned u-encoder (:class:`~._components.EncoderXU_TotalVI`)
-      produces the base ``u ~ q_u(x_rna, x_protein, donor)`` — mirroring MrVI's
-      ``EncoderXU`` with multimodal input.
+    * A mode-selectable u-encoder (:class:`~._components.EncoderXU_TotalVI`)
+      produces the base ``u``. The backward-compatible default is
+      sample-conditioned; ``u_encoder_mode="sample_blind"`` bypasses biological
+      sample conditioning while retaining registered technical covariates.
     * A donor-specific residual ``eps`` is computed via
       :class:`~._components.EncoderUZ` (attention over a per-donor embedding
       table), giving ``z = z_base + eps``.
     * The decoder is **unchanged**; ``z`` drops in with the same shape as
       TotalVI's ``z``.
 
-    Counterfactual queries ask "what would cell ``i`` look like in donor
-    ``d``?" by substituting donor ``d``'s embedding into the attention block
-    while holding ``u`` (from the real donor's encoder) fixed.
+    ``hierarchy_mode="centered_v2"`` evaluates every registered sample residual
+    and subtracts their equal-sample mean before factual gathering or public
+    counterfactual decoding. These outputs are registered-sample model
+    transformations, not causal interventions.
 
     Parameters
     ----------
@@ -65,6 +79,14 @@ class MrTotalVI(TOTALVI):
         ``0.0`` → ``p(eps) = N(0, 1)``.
     learn_z_u_prior_scale
         Whether ``pz_scale`` is a learnable parameter.
+    hierarchy_mode
+        ``"legacy"`` preserves historical numerics. ``"centered_v2"`` opts
+        into full-registered-universe residual centering and requires
+        ``use_map=True`` and ``z_u_prior=True``.
+    u_encoder_mode
+        ``"sample_conditioned"`` preserves the historical encoder.
+        ``"sample_blind"`` bypasses conditional-normalization affine embeddings
+        and the explicit sample embedding without changing checkpoint topology.
     kl_u_weight
         Static scalar weight applied to ``KL(q_u ‖ p_u)`` before the global
         ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
@@ -81,9 +103,8 @@ class MrTotalVI(TOTALVI):
     freeze_prior_after_init
         If ``True`` and ``u_prior="vamp"``, freeze the VampPrior pseudo-input
         parameters after data-driven initialisation so they do not drift during
-        training.  Together with ``init_prior_from_data=True`` this was
-        empirically validated (D-041) to reduce cross-seed DA variance from
-        std=0.875 to std=0.192 on 10-donor CITE-seq data.
+        training.  This configuration is an unvalidated candidate; no
+        differential-abundance stability improvement is established.
     use_batch_norm
         Where to apply batch normalisation (``"encoder"``, ``"decoder"``,
         ``"both"``, ``"none"``).  Defaults to ``"none"``; layer normalisation
@@ -91,6 +112,21 @@ class MrTotalVI(TOTALVI):
         with batch statistics.
     use_layer_norm
         Where to apply layer normalisation.  Defaults to ``"both"``.
+    batch_representation
+        How the batch covariate is fed to the networks.  ``"one-hot"`` (default) is the
+        historical behaviour and is bit-for-bit unchanged.  ``"embedding"`` replaces the
+        one-hot encoding with a single learned embedding table shared by the u-encoder and
+        the decoder, so their input width grows by the embedding dimension rather than by
+        ``n_batch`` — useful when there are many batches.  Per-batch parameter tables
+        (dispersion, per-batch efficiency, protein background prior, library-size priors)
+        remain one-hot indexed in both modes, matching :class:`~scvi.module.VAE`.
+        Retrieve the learned vectors with :meth:`get_batch_representation`.
+
+        ``EXPERIMENTAL``: existing checkpoints are unaffected, but ``"embedding"`` changes
+        the architecture, so a model trained with it cannot be loaded as ``"one-hot"``.
+    batch_embedding_kwargs
+        Keyword arguments passed to :class:`~scvi.nn.Embedding` when
+        ``batch_representation="embedding"``, e.g. ``{"embedding_dim": 5}``.
     **model_kwargs
         Additional keyword arguments forwarded to :class:`~._module.MrTotalVAE`
         (and transitively to :class:`~scvi.module._totalvae.TOTALVAE`).
@@ -130,6 +166,8 @@ class MrTotalVI(TOTALVI):
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,
+        hierarchy_mode: Literal["legacy", "centered_v2"] = "legacy",
+        u_encoder_mode: Literal["sample_conditioned", "sample_blind"] = "sample_conditioned",
         scale_observations: bool = False,
         kl_u_weight: float = 1.0,
         kl_z_weight: float = 1.0,
@@ -137,8 +175,20 @@ class MrTotalVI(TOTALVI):
         freeze_prior_after_init: bool = False,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "both",
+        batch_representation: Literal["one-hot", "embedding"] = "one-hot",
+        batch_embedding_kwargs: dict | None = None,
         **model_kwargs,
     ) -> None:
+        if hierarchy_mode not in {"legacy", "centered_v2"}:
+            raise ValueError("hierarchy_mode must be one of {'legacy', 'centered_v2'}.")
+        if u_encoder_mode not in {"sample_conditioned", "sample_blind"}:
+            raise ValueError(
+                "u_encoder_mode must be one of {'sample_conditioned', 'sample_blind'}."
+            )
+        if hierarchy_mode == "centered_v2" and not use_map:
+            raise ValueError("hierarchy_mode='centered_v2' requires use_map=True.")
+        if hierarchy_mode == "centered_v2" and not z_u_prior:
+            raise ValueError("hierarchy_mode='centered_v2' requires z_u_prior=True.")
         if model_kwargs.get("latent_distribution", "normal") != "normal":
             raise ValueError(
                 "MrTotalVI requires latent_distribution='normal'. "
@@ -166,10 +216,14 @@ class MrTotalVI(TOTALVI):
             u_prior=u_prior,
             qz_kwargs=qz_kwargs,
             qu_kwargs=qu_kwargs,
+            hierarchy_mode=hierarchy_mode,
+            u_encoder_mode=u_encoder_mode,
             kl_u_weight=kl_u_weight,
             kl_z_weight=kl_z_weight,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
+            batch_representation=batch_representation,
+            batch_embedding_kwargs=batch_embedding_kwargs,
             **model_kwargs,
         )
 
@@ -231,6 +285,8 @@ class MrTotalVI(TOTALVI):
             z_u_prior_scale=z_u_prior_scale,
             learn_z_u_prior_scale=learn_z_u_prior_scale,
             use_map=use_map,
+            hierarchy_mode=hierarchy_mode,
+            u_encoder_mode=u_encoder_mode,
             scale_observations=scale_observations,
             n_obs_per_sample=n_obs_per_sample,
             n_labels=self.summary_stats.get("n_labels", 0),
@@ -241,6 +297,8 @@ class MrTotalVI(TOTALVI):
         # Sample-level metadata for coordinate labelling
         self._sample_key = sample_key
         self.sample_key = sample_key
+        self.hierarchy_mode = hierarchy_mode
+        self.u_encoder_mode = u_encoder_mode
         self.sample_order = (
             self.adata_manager.get_state_registry(REGISTRY_KEYS.SAMPLE_KEY).categorical_mapping
         )
@@ -261,6 +319,87 @@ class MrTotalVI(TOTALVI):
         )
         # Overwrite init_params_ from TOTALVI with MrTotalVI's full local scope
         self.init_params_ = self._get_init_params(locals())
+
+    @classmethod
+    def load(
+        cls,
+        dir_path,
+        *args,
+        hierarchy_mode_override: Literal["legacy", "centered_v2"] | None = None,
+        u_encoder_mode_override: Literal[
+            "sample_conditioned", "sample_blind"
+        ] | None = None,
+        allow_semantic_override: bool = False,
+        **kwargs,
+    ):
+        """Load a checkpoint with explicit, auditable mode overrides.
+
+        Missing mode metadata is handled by the constructor defaults. A
+        differing override requires ``allow_semantic_override=True`` because it
+        changes model meaning without changing tensor topology.
+        """
+        if hierarchy_mode_override not in {None, "legacy", "centered_v2"}:
+            raise ValueError(
+                "hierarchy_mode_override must be one of {None, 'legacy', 'centered_v2'}."
+            )
+        if u_encoder_mode_override not in {
+            None,
+            "sample_conditioned",
+            "sample_blind",
+        }:
+            raise ValueError(
+                "u_encoder_mode_override must be one of "
+                "{None, 'sample_conditioned', 'sample_blind'}."
+            )
+
+        model = super().load(dir_path, *args, **kwargs)
+        loaded_hierarchy_mode = model.hierarchy_mode
+        loaded_u_encoder_mode = model.u_encoder_mode
+        resolved_hierarchy_mode = (
+            loaded_hierarchy_mode
+            if hierarchy_mode_override is None
+            else hierarchy_mode_override
+        )
+        resolved_u_encoder_mode = (
+            loaded_u_encoder_mode
+            if u_encoder_mode_override is None
+            else u_encoder_mode_override
+        )
+        changed = (
+            resolved_hierarchy_mode != loaded_hierarchy_mode
+            or resolved_u_encoder_mode != loaded_u_encoder_mode
+        )
+        if changed and not allow_semantic_override:
+            raise ValueError(
+                "A differing MrTotalVI mode override changes checkpoint semantics. "
+                "Pass allow_semantic_override=True to make the change explicit."
+            )
+        if resolved_hierarchy_mode == "centered_v2" and not model.module._use_map:
+            raise ValueError("hierarchy_mode='centered_v2' requires use_map=True.")
+        if resolved_hierarchy_mode == "centered_v2" and not model.module.z_u_prior:
+            raise ValueError("hierarchy_mode='centered_v2' requires z_u_prior=True.")
+        if changed:
+            warnings.warn(
+                "Applying an explicit MrTotalVI semantic override while loading: "
+                f"hierarchy_mode {loaded_hierarchy_mode!r} -> "
+                f"{resolved_hierarchy_mode!r}; u_encoder_mode "
+                f"{loaded_u_encoder_mode!r} -> {resolved_u_encoder_mode!r}.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        model.loaded_hierarchy_mode = loaded_hierarchy_mode
+        model.loaded_u_encoder_mode = loaded_u_encoder_mode
+        model.resolved_hierarchy_mode = resolved_hierarchy_mode
+        model.resolved_u_encoder_mode = resolved_u_encoder_mode
+        model.hierarchy_mode = resolved_hierarchy_mode
+        model.u_encoder_mode = resolved_u_encoder_mode
+        model.module.hierarchy_mode = resolved_hierarchy_mode
+        model.module.u_encoder_mode = resolved_u_encoder_mode
+        model.module.qu.u_encoder_mode = resolved_u_encoder_mode
+        model.init_params_["non_kwargs"]["hierarchy_mode"] = resolved_hierarchy_mode
+        model.init_params_["non_kwargs"]["u_encoder_mode"] = resolved_u_encoder_mode
+        return model
 
     # ------------------------------------------------------------------
     # Training
@@ -437,6 +576,13 @@ class MrTotalVI(TOTALVI):
             See :func:`~scvi.external.mrtotalvi._stats.differential_abundance`
             for full semantics.  Default ``1`` preserves deterministic behavior.
         """
+        if sample_cov_keys:
+            warnings.warn(
+                "Grouped differential_abundance() output is descriptive and "
+                "non-inferential; it is not a calibrated hypothesis test.",
+                UserWarning,
+                stacklevel=2,
+            )
         return _differential_abundance(
             self,
             adata=adata,
@@ -467,6 +613,176 @@ class MrTotalVI(TOTALVI):
             quantile_threshold=quantile_threshold,
             admissibility_threshold=admissibility_threshold,
             batch_size=batch_size,
+        )
+
+    def get_counterfactual_latent(
+        self,
+        adata: AnnData | None = None,
+        indices: npt.ArrayLike | None = None,
+        *,
+        target_samples=None,
+        inference_mode="latent_mean",
+        n_draws=1,
+        quantiles=(0.025, 0.5, 0.975),
+        reference_indices=None,
+        support_quantile=0.05,
+        admissibility_threshold=0.0,
+        batch_size=256,
+        target_chunk_size=None,
+        random_state=0,
+        zarr_path=None,
+        zarr_chunks=None,
+    ) -> xr.Dataset:
+        """Return centered latent transformations for registered samples.
+
+        The returned dataset contains raw posterior draws for ``u``, ``z_base``,
+        ``eps_raw``, ``eps_centered``, and ``z``, plus separate support and
+        admissibility indicators. ``posterior_mc`` also adds posterior means and
+        quantiles without dropping the ``draw`` dimension.
+
+        Notes
+        -----
+        This method requires ``hierarchy_mode="centered_v2"``. Centering always
+        uses the full registered sample universe, even when ``target_samples``
+        requests a subset. Targets cannot extrapolate to unregistered samples,
+        and outputs are model transformations rather than causal interventions.
+        Requests estimated above 512 MiB require ``zarr_path`` or subsetting.
+        """
+        return _get_counterfactual_latent(
+            self,
+            adata=adata,
+            indices=indices,
+            target_samples=target_samples,
+            inference_mode=inference_mode,
+            n_draws=n_draws,
+            quantiles=quantiles,
+            reference_indices=reference_indices,
+            support_quantile=support_quantile,
+            admissibility_threshold=admissibility_threshold,
+            batch_size=batch_size,
+            target_chunk_size=target_chunk_size,
+            random_state=random_state,
+            zarr_path=zarr_path,
+            zarr_chunks=zarr_chunks,
+        )
+
+    def get_counterfactual_expression(
+        self,
+        adata: AnnData | None = None,
+        indices: npt.ArrayLike | None = None,
+        *,
+        target_samples=None,
+        gene_list=None,
+        protein_list=None,
+        inference_mode="latent_mean",
+        n_draws=1,
+        quantiles=(0.025, 0.5, 0.975),
+        batch_policy="observed",
+        specified_batch=None,
+        panel_policy="observed",
+        specified_panel=None,
+        library_policy="observed",
+        specified_library_size=None,
+        marginal_reference_indices=None,
+        batch_size=256,
+        target_chunk_size=None,
+        feature_chunk_size=None,
+        random_state=0,
+        zarr_path=None,
+        zarr_chunks=None,
+    ) -> xr.Dataset:
+        """Return deterministic RNA and protein expectations by registered sample.
+
+        ``batch_policy``, ``panel_policy``, and ``library_policy`` make the
+        decoder context explicit. ``observed`` holds the factual context fixed;
+        ``specified`` requires registered labels or positive library sizes; and
+        ``sample_balanced_marginal`` weights biological samples equally while
+        retaining empirical joint technical contexts within each sample.
+
+        Protein component means use decoder parameters analytically and never
+        use the decoder's stochastic background-rate sample. Unavailable
+        proteins are marked by ``protein_available=False`` and all associated
+        protein estimands are ``NaN``.
+
+        Notes
+        -----
+        This method requires ``hierarchy_mode="centered_v2"`` and is limited to
+        registered target samples. It returns non-causal model transformations.
+        Requests estimated above 512 MiB require ``zarr_path`` or subsetting.
+        """
+        return _get_counterfactual_expression(
+            self,
+            adata=adata,
+            indices=indices,
+            target_samples=target_samples,
+            gene_list=gene_list,
+            protein_list=protein_list,
+            inference_mode=inference_mode,
+            n_draws=n_draws,
+            quantiles=quantiles,
+            batch_policy=batch_policy,
+            specified_batch=specified_batch,
+            panel_policy=panel_policy,
+            specified_panel=specified_panel,
+            library_policy=library_policy,
+            specified_library_size=specified_library_size,
+            marginal_reference_indices=marginal_reference_indices,
+            batch_size=batch_size,
+            target_chunk_size=target_chunk_size,
+            feature_chunk_size=feature_chunk_size,
+            random_state=random_state,
+            zarr_path=zarr_path,
+            zarr_chunks=zarr_chunks,
+        )
+
+    def local_sample_enrichment(
+        self,
+        adata: AnnData | None = None,
+        indices: npt.ArrayLike | None = None,
+        *,
+        target_samples=None,
+        reference_adata=None,
+        reference_indices=None,
+        inference_mode="latent_mean",
+        n_draws=1,
+        quantiles=(0.025, 0.5, 0.975),
+        group_key=None,
+        contrast=None,
+        donor_key=None,
+        max_reference_cells_per_sample=None,
+        batch_size=256,
+        reference_chunk_size=None,
+        random_state=0,
+    ) -> xr.Dataset:
+        """Return descriptive local densities over registered samples.
+
+        Each target density is an equal-component mixture of reference
+        posteriors over ``u``. A query cell is removed only from its factual
+        sample mixture. ``group_key`` aggregates sample densities with
+        equal-sample ``logmeanexp``; ``contrast`` is numerator minus denominator;
+        and ``donor_key`` requires exact numerator/denominator pairing.
+
+        These outputs are descriptive and non-inferential. A factual singleton
+        has zero retained references, ``finite_support=False``, and ``NaN``
+        density.
+        """
+        return _local_sample_enrichment(
+            self,
+            adata=adata,
+            indices=indices,
+            target_samples=target_samples,
+            reference_adata=reference_adata,
+            reference_indices=reference_indices,
+            inference_mode=inference_mode,
+            n_draws=n_draws,
+            quantiles=quantiles,
+            group_key=group_key,
+            contrast=contrast,
+            donor_key=donor_key,
+            max_reference_cells_per_sample=max_reference_cells_per_sample,
+            batch_size=batch_size,
+            reference_chunk_size=reference_chunk_size,
+            random_state=random_state,
         )
 
     def differential_expression(
@@ -536,6 +852,12 @@ class MrTotalVI(TOTALVI):
         **filter_samples_kwargs
             Forwarded to :meth:`get_outlier_cell_sample_pairs`.
         """
+        if self.hierarchy_mode == "centered_v2":
+            raise RuntimeError(
+                "differential_expression() is not validated for centered_v2 "
+                "models; use descriptive local_sample_enrichment() or a "
+                "separately validated inferential workflow."
+            )
         ds = _differential_expression(
             self,
             adata=adata,
@@ -594,8 +916,9 @@ class MrTotalVI(TOTALVI):
             Minibatch size.
         give_z
             If ``True`` (default), returns the sample-aware ``z = z_base + eps``
-            using the cell's actual donor index.  If ``False``, returns the
-            sample-unaware base ``u``.
+            using the cell's actual donor index. If ``False``, returns ``u``.
+            Under the legacy default encoder, ``u`` is sample-conditioned; it
+            is sample-blind only when explicitly configured as such.
 
         Returns
         -------
@@ -634,8 +957,20 @@ class MrTotalVI(TOTALVI):
                         sample_index = inf_inputs["sample_index"]
                         u_mean = out["qz"].loc
                         with torch.inference_mode():
-                            z_base, eps, _ = self.module.qz(u_mean, sample_index)
-                        rep = z_base + eps
+                            if self.hierarchy_mode == "centered_v2":
+                                _, _, _, z_all = (
+                                    self.module._all_sample_residuals(u_mean)
+                                )
+                                rep = self.module._gather_sample(
+                                    z_all,
+                                    sample_index,
+                                )
+                            else:
+                                z_base, eps, _ = self.module.qz(
+                                    u_mean,
+                                    sample_index,
+                                )
+                                rep = z_base + eps
                     else:
                         rep = out[MODULE_KEYS.Z_KEY]
 
@@ -712,15 +1047,27 @@ class MrTotalVI(TOTALVI):
                     n_cells = u.shape[0]
                     dev = u.device
 
-                    # Counterfactual loop: fix u, vary donor
-                    cf_zs = []
-                    for d in range(n_sample):
-                        cf_sample = torch.full((n_cells, 1), d, dtype=torch.long, device=dev)
-                        z_base, eps, _ = self.module.qz(u, cf_sample)
-                        cf_zs.append((z_base + eps).detach().cpu())
+                    if self.hierarchy_mode == "centered_v2":
+                        _, _, _, z_all = self.module._all_sample_residuals(u)
+                        batch_reps = z_all.detach().cpu().numpy()
+                    else:
+                        # Preserve the legacy counterfactual path exactly.
+                        cf_zs = []
+                        for d in range(n_sample):
+                            cf_sample = torch.full(
+                                (n_cells, 1),
+                                d,
+                                dtype=torch.long,
+                                device=dev,
+                            )
+                            z_base, eps, _ = self.module.qz(u, cf_sample)
+                            cf_zs.append((z_base + eps).detach().cpu())
 
-                    # (n_sample, n_cells, n_latent) → (n_cells, n_sample, n_latent)
-                    batch_reps = torch.stack(cf_zs, dim=0).permute(1, 0, 2).numpy()
+                        batch_reps = (
+                            torch.stack(cf_zs, dim=0)
+                            .permute(1, 0, 2)
+                            .numpy()
+                        )
                     all_reps.append(batch_reps)
         finally:
             self.module.train(was_training)

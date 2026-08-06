@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,26 +12,32 @@ from torch.distributions import Normal, kl_divergence
 from scvi import REGISTRY_KEYS
 from scvi.module._constants import MODULE_KEYS
 from scvi.module._totalvae import TOTALVAE
-from scvi.module.base import LossOutput, auto_move_data
+from scvi.module.base import EmbeddingModuleMixin, LossOutput, auto_move_data
+from scvi.nn import DecoderTOTALVI
 
 from ._components import (
+    BatchEmbeddingDecoderAdapter,
     EncoderUZ,
     EncoderXU_TotalVI,
-    build_u_prior as _build_u_prior,
     init_u_prior,
+)
+from ._components import (
+    build_u_prior as _build_u_prior,
+)
+from ._components import (
     kl_u as _kl_u,
 )
 
 
-class MrTotalVAE(TOTALVAE):
-    """TotalVI VAE with an MrVI-style u→z hierarchical latent space.
+class MrTotalVAE(EmbeddingModuleMixin, TOTALVAE):
+    r"""TotalVI VAE with an MrVI-style u→z hierarchical latent space.
 
     Grafts MrVI's hierarchical design onto TotalVI as faithfully as the
-    multimodal input allows.  A sample-conditioned u-encoder
+    multimodal input allows. A mode-selectable u-encoder
     (:class:`~.EncoderXU_TotalVI`) replaces TotalVI's stock encoder for the
     base representation ``u``; a donor-specific residual ``eps`` is computed
-    by attending over a per-sample embedding table via :class:`~.EncoderUZ`,
-    giving:
+    by attending over a per-sample embedding table via :class:`~.EncoderUZ`.
+    The legacy default gives:
 
     .. math::
         u \\sim q_u(x_{\\text{rna}},\\, x_{\\text{prot}},\\, d)
@@ -40,8 +48,11 @@ class MrTotalVAE(TOTALVAE):
         \\varepsilon \\sim \\text{AttentionBlock}(u,\\; e_d)
 
     Because ``n_latent_u`` is left at its default (isomorphic), ``z_base = u``
-    and the decoder input dimension is identical to stock TotalVI — no decoder
-    changes are needed.
+    and the decoder input dimension is identical to stock TotalVI, so the hierarchy
+    itself needs no decoder changes. Setting ``batch_representation="embedding"`` is
+    separate and does change the decoder: it is rebuilt without the batch category,
+    widened by the embedding dimension, and wrapped in
+    :class:`~._components.BatchEmbeddingDecoderAdapter`. See that parameter.
 
     Two-level KL loss:
 
@@ -65,6 +76,24 @@ class MrTotalVAE(TOTALVAE):
     learn_z_u_prior_scale
         If ``True``, ``pz_scale`` is a learnable :class:`~torch.nn.Parameter`;
         otherwise it is a fixed :func:`~torch.Tensor.register_buffer`.
+    hierarchy_mode
+        ``"legacy"`` preserves historical execution. ``"centered_v2"``
+        centers raw residuals over the full registered sample universe.
+    u_encoder_mode
+        ``"sample_conditioned"`` preserves historical execution;
+        ``"sample_blind"`` bypasses biological sample-conditioning parameters.
+    batch_representation
+        ``"one-hot"`` (default) preserves historical execution: batch is one-hot encoded
+        into the u-encoder input and into every decoder :class:`~scvi.nn.FCLayers` block.
+        ``"embedding"`` replaces both with a single learned embedding table, so the input
+        width grows by ``batch_embedding_kwargs["embedding_dim"]`` instead of by
+        ``n_batch``. Useful when the number of batches is large. Per-batch *parameter
+        tables* — gene/protein dispersion, ``log_per_batch_efficiency``, the protein
+        background prior and the library-size priors — stay one-hot indexed either way,
+        matching :class:`~scvi.module.VAE`.
+    batch_embedding_kwargs
+        Keyword arguments passed to :class:`~scvi.nn.Embedding` when
+        ``batch_representation="embedding"``, e.g. ``{"embedding_dim": 5}``.
     **kwargs
         All remaining keyword arguments forwarded verbatim to
         :class:`~scvi.module._totalvae.TOTALVAE`.
@@ -94,9 +123,13 @@ class MrTotalVAE(TOTALVAE):
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,
+        hierarchy_mode: str = "legacy",
+        u_encoder_mode: str = "sample_conditioned",
         scale_observations: bool = False,
         kl_u_weight: float = 1.0,
         kl_z_weight: float = 1.0,
+        batch_representation: str = "one-hot",
+        batch_embedding_kwargs: dict | None = None,
         **kwargs,
     ) -> None:
         if kwargs.get("latent_distribution", "normal") != "normal":
@@ -128,6 +161,8 @@ class MrTotalVAE(TOTALVAE):
         self.qz_kwargs = qz_kwargs or {}
         self.qu_kwargs = qu_kwargs or {}
         self._use_map = use_map
+        self.hierarchy_mode = hierarchy_mode
+        self.u_encoder_mode = u_encoder_mode
         self._scale_observations = scale_observations
         # Per-term KL weights: static scalars applied as kl_u_weight*kl_u + kl_z_weight*kl_z
         # before the global kl_weight annealing. Defaults (1.0, 1.0) reproduce prior behavior.
@@ -138,8 +173,81 @@ class MrTotalVAE(TOTALVAE):
         self.n_cats_per_cov = list(n_cats_per_cov or [])
         self.encode_covariates = bool(encode_covariates)
 
+        self.batch_representation = batch_representation
+        self._batch_dim: int | None = None
+        if batch_representation == "embedding":
+            self.init_embedding(
+                REGISTRY_KEYS.BATCH_KEY, self.n_batch, **(batch_embedding_kwargs or {})
+            )
+            self._batch_dim = self.get_embedding(REGISTRY_KEYS.BATCH_KEY).embedding_dim
+            self._rebuild_decoder_for_batch_embedding(self._batch_dim, kwargs)
+        elif batch_representation != "one-hot":
+            raise ValueError("`batch_representation` must be one of 'one-hot', 'embedding'.")
+
         if n_sample > 0:
-            self._setup_hierarchy(n_sample, n_latent_sample, z_u_prior_scale, learn_z_u_prior_scale)
+            self._setup_hierarchy(
+                n_sample,
+                n_latent_sample,
+                z_u_prior_scale,
+                learn_z_u_prior_scale,
+            )
+
+    # ------------------------------------------------------------------
+    # Batch representation
+    # ------------------------------------------------------------------
+
+    def _rebuild_decoder_for_batch_embedding(self, batch_dim: int, kwargs: dict) -> None:
+        """Replace the inherited decoder with one that takes a batch embedding.
+
+        :class:`~scvi.module.TOTALVAE` builds its decoder with the batch as a one-hot
+        category. Under ``batch_representation="embedding"`` the batch category is dropped
+        and the decoder input is widened by ``batch_dim`` instead, then wrapped in
+        :class:`~._components.BatchEmbeddingDecoderAdapter` so the call site in
+        :meth:`~scvi.module.TOTALVAE.generative` is unchanged.
+
+        Only the decoder's *conditioning* moves to the embedding. The per-batch parameter
+        tables — gene/protein dispersion, ``log_per_batch_efficiency``, the protein
+        background prior and the library-size priors — remain indexed by one-hot batch,
+        matching :class:`~scvi.module.VAE`, since those are lookup tables rather than
+        network inputs.
+
+        Defaults are read from :meth:`~scvi.module.TOTALVAE.__init__`'s own signature
+        rather than restated here, so this stays correct if the parent's defaults change.
+        """
+        signature = inspect.signature(TOTALVAE.__init__)
+
+        def _arg(name: str):
+            if name in kwargs:
+                return kwargs[name]
+            return signature.parameters[name].default
+
+        n_cats_per_cov = _arg("n_cats_per_cov")
+        use_batch_norm = _arg("use_batch_norm")
+        use_layer_norm = _arg("use_layer_norm")
+
+        decoder = DecoderTOTALVI(
+            _arg("n_latent") + _arg("n_continuous_cov") + batch_dim,
+            self.n_input_genes,
+            self.n_input_proteins,
+            n_layers=_arg("n_layers_decoder"),
+            n_cat_list=list([] if n_cats_per_cov is None else n_cats_per_cov),
+            n_hidden=_arg("n_hidden"),
+            dropout_rate=_arg("dropout_rate_decoder"),
+            use_batch_norm=use_batch_norm in ("decoder", "both"),
+            use_layer_norm=use_layer_norm in ("decoder", "both"),
+            scale_activation="softplus" if _arg("use_size_factor_key") else "softmax",
+            **(_arg("extra_decoder_kwargs") or {}),
+        )
+        self.decoder = BatchEmbeddingDecoderAdapter(
+            decoder,
+            lambda batch_index: self.compute_embedding(REGISTRY_KEYS.BATCH_KEY, batch_index),
+        )
+
+    def _batch_representation_for(self, batch_index: torch.Tensor | None) -> torch.Tensor | None:
+        """Embedding for ``batch_index``, or ``None`` when batch is one-hot encoded."""
+        if getattr(self, "_batch_dim", None) is None or batch_index is None:
+            return None
+        return self.compute_embedding(REGISTRY_KEYS.BATCH_KEY, batch_index)
 
     # ------------------------------------------------------------------
     # Hierarchy setup
@@ -152,6 +260,8 @@ class MrTotalVAE(TOTALVAE):
         z_u_prior_scale: float | None = None,
         learn_z_u_prior_scale: bool | None = None,
         use_map: bool | None = None,
+        hierarchy_mode: str | None = None,
+        u_encoder_mode: str | None = None,
         scale_observations: bool | None = None,
         n_obs_per_sample: torch.Tensor | None = None,
         n_labels: int | None = None,
@@ -193,31 +303,52 @@ class MrTotalVAE(TOTALVAE):
             learn_z_u_prior_scale = self._learn_z_u_prior_scale
         if use_map is None:
             use_map = self._use_map
+        if hierarchy_mode is None:
+            hierarchy_mode = self.hierarchy_mode
+        if u_encoder_mode is None:
+            u_encoder_mode = self.u_encoder_mode
         if scale_observations is None:
             scale_observations = self._scale_observations
 
+        if hierarchy_mode not in {"legacy", "centered_v2"}:
+            raise ValueError("hierarchy_mode must be one of {'legacy', 'centered_v2'}.")
+        if u_encoder_mode not in {"sample_conditioned", "sample_blind"}:
+            raise ValueError(
+                "u_encoder_mode must be one of {'sample_conditioned', 'sample_blind'}."
+            )
+        if hierarchy_mode == "centered_v2" and not use_map:
+            raise ValueError("hierarchy_mode='centered_v2' requires use_map=True.")
+        if hierarchy_mode == "centered_v2" and not self.z_u_prior:
+            raise ValueError("hierarchy_mode='centered_v2' requires z_u_prior=True.")
+
         self._n_sample = n_sample
         self._use_map = use_map
+        self.hierarchy_mode = hierarchy_mode
+        self.u_encoder_mode = u_encoder_mode
         self._scale_observations = scale_observations
         if n_labels is not None:
             self.n_labels = int(n_labels)
 
         n_latent_u = (
-            self.n_latent if self._n_latent_u_requested is None else int(self._n_latent_u_requested)
+            self.n_latent
+            if self._n_latent_u_requested is None
+            else int(self._n_latent_u_requested)
         )
 
-        # Sample-conditioned u-encoder: mirrors MrVI's EncoderXU, multimodal input
-        # u is the sample-uninformed cell-state representation: never condition on batch.
-        # Batch conditioning belongs in the parent TotalVAE z-encoder and decoder only.
+        # Mode-selectable u-encoder: the legacy default is sample-conditioned.
+        # Explicitly registered technical covariates remain available when
+        # encode_covariates=True, including in sample-blind mode.
         self.qu = EncoderXU_TotalVI(
             n_input_genes=self.n_input_genes,
             n_input_proteins=self.n_input_proteins,
             n_latent=n_latent_u,
             n_sample=n_sample,
+            u_encoder_mode=u_encoder_mode,
             n_batch=self.n_batch,
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
             encode_covariates=self.encode_covariates,
+            batch_dim=getattr(self, "_batch_dim", None),
             **self.qu_kwargs,
         )
 
@@ -252,7 +383,7 @@ class MrTotalVAE(TOTALVAE):
                 torch.full((self.n_latent,), float(z_u_prior_scale)),
             )
 
-        # Per-sample cell counts for observation reweighting (persistent so load_state_dict restores it)
+        # Persistent per-sample cell counts restore observation reweighting.
         if scale_observations and n_obs_per_sample is not None:
             self.register_buffer("n_obs_per_sample", n_obs_per_sample.float(), persistent=True)
         else:
@@ -272,8 +403,18 @@ class MrTotalVAE(TOTALVAE):
         x_p = pseudo[:, : self.n_input_genes]
         y_p = pseudo[:, self.n_input_genes :]
         sample_idx = torch.zeros(K, 1, device=pseudo.device, dtype=torch.long)
-        batch_idx = torch.zeros(K, 1, device=pseudo.device, dtype=torch.long) if self.encode_covariates else None
-        return self.qu(x_p, y_p, sample_idx, batch_index=batch_idx)
+        batch_idx = (
+            torch.zeros(K, 1, device=pseudo.device, dtype=torch.long)
+            if self.encode_covariates
+            else None
+        )
+        return self.qu(
+            x_p,
+            y_p,
+            sample_idx,
+            batch_index=batch_idx,
+            batch_rep=self._batch_representation_for(batch_idx),
+        )
 
     # ------------------------------------------------------------------
     # DataLoader → inference plumbing
@@ -293,6 +434,94 @@ class MrTotalVAE(TOTALVAE):
         base["sample_index"] = tensors[REGISTRY_KEYS.SAMPLE_KEY]
         return base
 
+    def _all_sample_residuals(
+        self,
+        u: torch.Tensor,
+        target_chunk_size: int | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Evaluate and center raw residuals over every registered sample."""
+        n_sample = int(self._n_sample)
+        if target_chunk_size is None:
+            target_chunk_size = n_sample
+        if (
+            isinstance(target_chunk_size, bool)
+            or not isinstance(target_chunk_size, int)
+            or target_chunk_size < 1
+        ):
+            raise ValueError("target_chunk_size must be a positive integer or None.")
+
+        sample_dim = 1 if u.ndim == 2 else 2
+        raw_chunks: list[torch.Tensor] = []
+        z_base: torch.Tensor | None = None
+        for start in range(0, n_sample, target_chunk_size):
+            stop = min(start + target_chunk_size, n_sample)
+            targets = torch.arange(start, stop, device=u.device, dtype=torch.long)
+            n_targets = targets.numel()
+            if u.ndim == 2:
+                n_cells, n_latent_u = u.shape
+                expanded_u = (
+                    u.unsqueeze(1)
+                    .expand(n_cells, n_targets, n_latent_u)
+                    .reshape(n_cells * n_targets, n_latent_u)
+                )
+                expanded_targets = (
+                    targets.unsqueeze(0)
+                    .expand(n_cells, n_targets)
+                    .reshape(n_cells * n_targets, 1)
+                )
+                chunk_z_base, chunk_raw, _ = self.qz(expanded_u, expanded_targets)
+                chunk_z_base = chunk_z_base.reshape(n_cells, n_targets, self.n_latent)
+                chunk_raw = chunk_raw.reshape(n_cells, n_targets, self.n_latent)
+            elif u.ndim == 3:
+                n_draws, n_cells, n_latent_u = u.shape
+                expanded_u = (
+                    u.unsqueeze(2)
+                    .expand(n_draws, n_cells, n_targets, n_latent_u)
+                    .reshape(n_draws, n_cells * n_targets, n_latent_u)
+                )
+                expanded_targets = (
+                    targets.unsqueeze(0)
+                    .expand(n_cells, n_targets)
+                    .reshape(n_cells * n_targets, 1)
+                )
+                chunk_z_base, chunk_raw, _ = self.qz(expanded_u, expanded_targets)
+                chunk_z_base = chunk_z_base.reshape(
+                    n_draws, n_cells, n_targets, self.n_latent
+                )
+                chunk_raw = chunk_raw.reshape(
+                    n_draws, n_cells, n_targets, self.n_latent
+                )
+            else:
+                raise ValueError("u must have shape (cell, latent) or (draw, cell, latent).")
+
+            if z_base is None:
+                z_base = chunk_z_base.select(sample_dim, 0)
+            raw_chunks.append(chunk_raw)
+
+        if z_base is None:  # pragma: no cover - construction rejects an empty registry
+            raise RuntimeError("The registered sample universe is empty.")
+        eps_raw = torch.cat(raw_chunks, dim=sample_dim)
+        eps_centered = eps_raw - eps_raw.mean(dim=sample_dim, keepdim=True)
+        z_all = z_base.unsqueeze(sample_dim) + eps_centered
+        return z_base, eps_raw, eps_centered, z_all
+
+    @staticmethod
+    def _gather_sample(
+        values: torch.Tensor,
+        sample_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Gather one registered sample per cell from an all-sample tensor."""
+        sample_index = sample_index.to(torch.int64).flatten()
+        if values.ndim == 3:
+            gather_index = sample_index[:, None, None].expand(
+                -1, 1, values.shape[-1]
+            )
+            return values.gather(1, gather_index).squeeze(1)
+        gather_index = sample_index[None, :, None, None].expand(
+            values.shape[0], -1, 1, values.shape[-1]
+        )
+        return values.gather(2, gather_index).squeeze(2)
+
     # ------------------------------------------------------------------
     # Inference: u → (z_base, eps) → z
     # ------------------------------------------------------------------
@@ -310,18 +539,19 @@ class MrTotalVAE(TOTALVAE):
         cat_covs: torch.Tensor | None = None,
         sample_index: torch.Tensor | None = None,
         cf_sample: torch.Tensor | None = None,
+        target_chunk_size: int | None = None,
     ) -> dict[str, torch.Tensor | dict]:
         """Compute inference quantities with the hierarchical u→z decomposition.
 
         Calls TotalVI's ``_regular_inference`` to obtain library size, protein
         background priors, and dispersion parameters (all of which are parallel
-        to ``z`` and require no ``z`` dependency), then runs the sample-conditioned
+        to ``z`` and require no ``z`` dependency), then runs the configured
         u-encoder to replace TotalVI's ``qz`` and ``z``:
 
         .. code-block::
 
             qu = EncoderXU_TotalVI(x, y, real_sample)  # sample-conditioned Normal
-            u  = qu.rsample()                           # (batch, n_latent) or (mc, batch, n_latent)
+            u  = qu.rsample()                           # batch or MC by batch
             z_base, eps = qz(u, cf_sample)              # attention over per-sample embed
             z  = z_base + eps                           # → decoder input
 
@@ -355,16 +585,17 @@ class MrTotalVAE(TOTALVAE):
             # Hierarchy not yet built (n_sample=0 placeholder). Return TotalVI outputs.
             return out
 
-        # u-encoder: sample-conditioned; pass batch/covariate info only when
-        # encode_covariates=True.  Default is False: u stays batch-uninformed,
-        # matching MRVI's design and the pre-trained checkpoint behavior.
+        # Pass technical covariates only when encode_covariates=True. Biological
+        # sample conditioning is controlled separately by u_encoder_mode.
+        qu_batch_index = batch_index if self.encode_covariates else None
         qu = self.qu(
             x,
             y,
             sample_index,
-            batch_index=batch_index if self.encode_covariates else None,
+            batch_index=qu_batch_index,
             cont_covs=cont_covs if self.encode_covariates else None,
             cat_covs=cat_covs if self.encode_covariates else None,
+            batch_rep=self._batch_representation_for(qu_batch_index),
         )  # Normal: params (batch, n_latent_u)
         if n_samples > 1:
             u = qu.rsample((n_samples,))  # (n_samples, batch, n_latent)
@@ -377,8 +608,20 @@ class MrTotalVAE(TOTALVAE):
 
         # eps residual: cf_sample enables counterfactual donor substitution
         sample_index_cf = sample_index if cf_sample is None else cf_sample
-        z_base, eps, eps_dist = self.qz(u, sample_index_cf)
-        z = z_base + eps
+        if self.hierarchy_mode == "legacy":
+            z_base, eps, eps_dist = self.qz(u, sample_index_cf)
+            z = z_base + eps
+        else:
+            z_base, eps_raw_all, eps_centered_all, z_all = self._all_sample_residuals(
+                u,
+                target_chunk_size=target_chunk_size,
+            )
+            eps = self._gather_sample(eps_centered_all, sample_index_cf)
+            z = self._gather_sample(z_all, sample_index_cf)
+            eps_dist = None
+            out["eps_raw_all"] = eps_raw_all
+            out["eps_centered_all"] = eps_centered_all
+            out["z_all"] = z_all
 
         out[MODULE_KEYS.Z_KEY] = z
         out["u"] = u
@@ -532,7 +775,7 @@ class MrTotalVAE(TOTALVAE):
         pro_recons_weight: float = 1.0,
         kl_weight: float = 1.0,
     ) -> LossOutput:
-        """Extend TotalVI's loss with the second-level KL for the sample residual.
+        r"""Extend TotalVI's loss with the second-level KL for the sample residual.
 
         TotalVI's existing ``kl_div_z`` term is repurposed as ``kl_u =
         KL(q_u \\| p_u)`` where ``p_u`` is the configured prior (default: a
@@ -570,18 +813,25 @@ class MrTotalVAE(TOTALVAE):
         )
 
         if self.z_u_prior:
-            eps = inference_outputs["eps"]
-            eps_dist = inference_outputs.get("eps_dist")
             peps = Normal(0.0, torch.exp(self.pz_scale.clamp(min=-4.0)))
-            if eps_dist is not None:
-                # use_map=False: analytic KL(q(eps) || p(eps)) — correct ELBO includes entropy
-                kl_z = kl_divergence(eps_dist, peps).sum(dim=-1)
+            if self.hierarchy_mode == "centered_v2":
+                eps_raw_all = inference_outputs["eps_raw_all"]
+                sample_dim = 1 if eps_raw_all.ndim == 3 else 2
+                kl_z = -peps.log_prob(eps_raw_all).sum(dim=-1).mean(dim=sample_dim)
+                if kl_z.ndim > 1:
+                    kl_z = kl_z.mean(dim=0)
             else:
-                # use_map=True: deterministic eps — cross-entropy -log p(eps) is the correct term
-                kl_z = -peps.log_prob(eps).sum(dim=-1)
-            # kl_z shape: (batch,) or (n_samples, batch) → reduce mc dim
-            if kl_z.ndim > 1:
-                kl_z = kl_z.mean(dim=0)
+                eps = inference_outputs["eps"]
+                eps_dist = inference_outputs.get("eps_dist")
+                if eps_dist is not None:
+                    # use_map=False: analytic KL(q(eps) || p(eps)) includes entropy
+                    kl_z = kl_divergence(eps_dist, peps).sum(dim=-1)
+                else:
+                    # use_map=True: deterministic eps uses cross-entropy -log p(eps)
+                    kl_z = -peps.log_prob(eps).sum(dim=-1)
+                # kl_z shape: (batch,) or (n_samples, batch) → reduce mc dim
+                if kl_z.ndim > 1:
+                    kl_z = kl_z.mean(dim=0)
         else:
             kl_z = torch.zeros_like(kl_u)
 
@@ -597,12 +847,18 @@ class MrTotalVAE(TOTALVAE):
             prefactors = self.n_obs_per_sample[sample_index]  # (batch,)
             per_cell = (
                 loss_out.reconstruction_loss["reconst_loss_gene"]
-                + kl_weight * pro_recons_weight * loss_out.reconstruction_loss["reconst_loss_protein"]
+                + kl_weight
+                * pro_recons_weight
+                * loss_out.reconstruction_loss["reconst_loss_protein"]
                 + kl_weight * kl_local["kl_div_z"]
                 + kl_local["kl_div_l_gene"]
                 + kl_weight * kl_local["kl_div_back_pro"]
             )
-            loss = (per_cell / prefactors).mean()
+            if self.hierarchy_mode == "centered_v2":
+                weights = self.n_obs_per_sample.sum() / (self._n_sample * prefactors)
+                loss = (per_cell * weights).mean()
+            else:
+                loss = (per_cell / prefactors).mean()
         else:
             if self._scale_observations:
                 import warnings
@@ -629,6 +885,113 @@ class MrTotalVAE(TOTALVAE):
             kl_local=kl_local,
             extra_metrics=loss_out.extra_metrics,
         )
+
+    @torch.inference_mode()
+    def _deterministic_decoder_parameters(
+        self,
+        z: torch.Tensor,
+        library_size: torch.Tensor,
+        batch_index: torch.Tensor,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Decode RNA and protein means without using stochastic ``rate_back``."""
+        if cont_covs is None:
+            decoder_input = z
+        else:
+            decoder_input = torch.cat([z, cont_covs], dim=-1)
+        categorical_input = (
+            tuple(torch.split(cat_covs, 1, dim=1))
+            if cat_covs is not None
+            else ()
+        )
+        decoder = self.decoder
+
+        # Under `batch_representation="embedding"` the wrapped decoder was built without
+        # the batch category, so the embedding is folded into `decoder_input` here and
+        # `batch_index` is dropped from the categorical arguments.
+        if isinstance(decoder, BatchEmbeddingDecoderAdapter):
+            decoder_input = decoder.batch_input(decoder_input, batch_index)
+            conditioning = categorical_input
+        else:
+            conditioning = (batch_index, *categorical_input)
+
+        px = decoder.px_decoder(decoder_input, *conditioning)
+        px_cat_z = torch.cat([px, decoder_input], dim=-1)
+        rna_scale = decoder.px_scale_activation(
+            decoder.px_scale_decoder(
+                px_cat_z,
+                *conditioning,
+            )
+        )
+
+        py_back = decoder.py_back_decoder(
+            decoder_input,
+            *conditioning,
+        )
+        py_back_cat_z = torch.cat([py_back, decoder_input], dim=-1)
+        back_alpha = decoder.py_back_mean_log_alpha(
+            py_back_cat_z,
+            *conditioning,
+        )
+        back_beta = (
+            decoder.activation_function_bg(
+                decoder.py_back_mean_log_beta(
+                    py_back_cat_z,
+                    *conditioning,
+                )
+            )
+            + 1e-8
+        )
+
+        py_fore = decoder.py_fore_decoder(
+            decoder_input,
+            *conditioning,
+        )
+        py_fore_cat_z = torch.cat([py_fore, decoder_input], dim=-1)
+        fore_scale = (
+            decoder.py_fore_scale_decoder(
+                py_fore_cat_z,
+                *conditioning,
+            )
+            + 1
+            + 1e-8
+        )
+
+        mixing_hidden = decoder.sigmoid_decoder(
+            decoder_input,
+            *conditioning,
+        )
+        mixing_cat_z = torch.cat([mixing_hidden, decoder_input], dim=-1)
+        mixing = decoder.py_background_decoder(
+            mixing_cat_z,
+            *conditioning,
+        )
+        efficiency = torch.exp(
+            F.linear(
+                F.one_hot(
+                    batch_index.squeeze(-1).to(torch.int64),
+                    self.n_batch,
+                ).float(),
+                self.log_per_batch_efficiency,
+            )
+        )
+        background = efficiency * torch.exp(back_alpha + 0.5 * back_beta.square())
+        foreground = background * fore_scale
+        foreground_probability = 1.0 - torch.sigmoid(mixing)
+        background_contribution = (1.0 - foreground_probability) * background
+        foreground_contribution = foreground_probability * foreground
+        return {
+            "rna_scale": rna_scale,
+            "rna_rate": library_size * rna_scale,
+            "protein_background_component_mean": background,
+            "protein_foreground_component_mean": foreground,
+            "protein_foreground_probability": foreground_probability,
+            "protein_background_contribution": background_contribution,
+            "protein_foreground_contribution": foreground_contribution,
+            "protein_total_mean": background_contribution + foreground_contribution,
+            "protein_batch_efficiency": efficiency,
+        }
 
     @torch.inference_mode()
     def _infer_lfc_aux(

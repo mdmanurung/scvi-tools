@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from typing import Literal
 
 import torch
@@ -214,7 +214,7 @@ def init_u_prior(
     u_prior_label_weight: float = 10.0,
     u_prior_type: str = "mog",
     u_vamp_pseudo_dim: int | None = None,
-    prior_centroids: "torch.Tensor | None" = None,
+    prior_centroids: torch.Tensor | None = None,
     freeze_prior_after_init: bool = False,
 ) -> None:
     """Register the MrVI-style prior over ``u`` on ``module``.
@@ -244,12 +244,18 @@ def init_u_prior(
         ``u_prior_means`` and ``u_prior_scales``. ``u_prior_logits`` (mixture
         weights) remains trainable in all cases.
 
-        This is only meaningful for cross-seed DA stability when the prior is
-        also data-driven (``prior_centroids`` set via ``init_prior_from_data``
-        and ``u_prior_type="vamp"``). Freezing a randomly-initialised prior
-        locks in a different landscape per seed and provides no benefit.
+        Freezing preserves the initialized prior landscape. Any effect on
+        cross-seed differential-abundance stability remains unvalidated and
+        requires an immutable benchmark.
     """
-    for name in ("u_prior_logits", "u_prior_means", "u_prior_scales", "u_prior_scale", "u_vamp_pseudo"):
+    prior_names = (
+        "u_prior_logits",
+        "u_prior_means",
+        "u_prior_scales",
+        "u_prior_scale",
+        "u_vamp_pseudo",
+    )
+    for name in prior_names:
         if hasattr(module, name):
             delattr(module, name)
 
@@ -266,7 +272,7 @@ def init_u_prior(
         module.resolved_u_prior_mixture_k = int(resolved_k)
         module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
         if prior_centroids is not None and prior_centroids.shape[0] == resolved_k:
-            # Data-driven init: centroids already in pre-activation space (softplus-inverse applied)
+            # Centroids are already in softplus-inverse pre-activation space.
             module.u_vamp_pseudo = nn.Parameter(prior_centroids.float().clone())
         else:
             # Small-scale init; Softplus applied in _vamp_component_dist keeps TotalVI input ≥ 0.
@@ -360,10 +366,19 @@ def _covariate_n_input(
     n_continuous_cov: int,
     n_cats_per_cov: list[int],
     encode_covariates: bool,
+    batch_dim: int | None = None,
 ) -> int:
+    """Width contributed by covariates to an encoder's first linear layer.
+
+    ``batch_dim`` selects how batch is represented. ``None`` (default) means the
+    one-hot representation, which contributes ``n_batch`` columns. An integer means
+    a learned embedding of that dimensionality is used instead, contributing
+    ``batch_dim`` columns regardless of how many batches exist.
+    """
     if not encode_covariates:
         return 0
-    return int(n_batch) + int(n_continuous_cov) + int(sum(n_cats_per_cov))
+    batch_width = int(n_batch) if batch_dim is None else int(batch_dim)
+    return batch_width + int(n_continuous_cov) + int(sum(n_cats_per_cov))
 
 
 def _append_covariates(
@@ -376,15 +391,29 @@ def _append_covariates(
     n_continuous_cov: int,
     n_cats_per_cov: list[int],
     encode_covariates: bool,
+    batch_rep: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Concatenate registered covariates onto an encoder input.
+
+    ``batch_rep`` is an optional pre-computed batch representation of shape
+    ``(batch, batch_dim)``, produced by the owning module's embedding table. When
+    given it replaces the one-hot encoding of ``batch_index``; the module owns the
+    embedding so that a single table is shared across every encoder rather than
+    duplicated per encoder.
+    """
     if not encode_covariates:
         return x
 
     covariates: list[torch.Tensor] = []
     if n_batch > 0:
-        if batch_index is None:
+        if batch_rep is not None:
+            covariates.append(batch_rep.to(x.dtype))
+        elif batch_index is None:
             raise ValueError("batch_index is required when encode_covariates=True.")
-        covariates.append(F.one_hot(batch_index.squeeze(-1).to(torch.int64), n_batch).float())
+        else:
+            covariates.append(
+                F.one_hot(batch_index.squeeze(-1).to(torch.int64), n_batch).float()
+            )
 
     if len(n_cats_per_cov) > 0:
         if cat_covs is None:
@@ -400,6 +429,77 @@ def _append_covariates(
     if covariates:
         return torch.cat([x, *covariates], dim=-1)
     return x
+
+
+class BatchEmbeddingDecoderAdapter(nn.Module):
+    """Feed a learned batch embedding to a decoder built without a batch category.
+
+    :class:`~scvi.nn.DecoderTOTALVI` conditions on batch by one-hot encoding it inside
+    every :class:`~scvi.nn.FCLayers` block, so switching to an embedding means the
+    decoder must instead be built with the batch category removed and its input widened
+    by ``batch_dim``. This adapter owns that translation: it keeps the original
+    ``(decoder_input, size_factor, batch_index, *cat_covs)`` call signature, so the single
+    decoder call site in :meth:`~scvi.module.TOTALVAE.generative` needs no change, and
+    concatenates the embedding onto ``decoder_input`` before delegating.
+
+    Attribute access falls through to the wrapped decoder, so callers that reach for
+    sub-networks (``px_decoder``, ``py_back_decoder``, ...) still find them — but those
+    callers must pre-apply :meth:`batch_input` and drop ``batch_index`` from the
+    categorical arguments, since the wrapped decoder no longer expects it.
+
+    Parameters
+    ----------
+    decoder
+        The decoder to wrap, built with the batch category removed from ``n_cat_list``
+        and its input width increased by ``batch_dim``.
+    embedder
+        Callable mapping a ``(batch, 1)`` integer ``batch_index`` to a
+        ``(batch, batch_dim)`` representation, normally the owning module's
+        :meth:`~scvi.module.base.EmbeddingModuleMixin.compute_embedding`.
+    """
+
+    def __init__(
+        self,
+        decoder: nn.Module,
+        embedder: Callable[[torch.Tensor], torch.Tensor],
+    ):
+        super().__init__()
+        self.decoder = decoder
+        self._embedder = embedder
+
+    def batch_input(
+        self,
+        decoder_input: torch.Tensor,
+        batch_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Concatenate the batch embedding onto a decoder input."""
+        rep = self._embedder(batch_index).to(decoder_input.dtype)
+        # `n_samples > 1` gives a leading Monte-Carlo dimension on the latent but not on
+        # the batch index, so broadcast the representation across it.
+        while rep.dim() < decoder_input.dim():
+            rep = rep.unsqueeze(0).expand(decoder_input.size(0), *rep.shape)
+        return torch.cat([decoder_input, rep], dim=-1)
+
+    def forward(
+        self,
+        decoder_input: torch.Tensor,
+        size_factor: torch.Tensor,
+        batch_index: torch.Tensor,
+        *cat_list: torch.Tensor,
+    ):
+        return self.decoder(
+            self.batch_input(decoder_input, batch_index),
+            size_factor,
+            *cat_list,
+        )
+
+    def __getattr__(self, name: str):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            if name == "decoder":
+                raise
+            return getattr(super().__getattr__("decoder"), name)
 
 
 class ConditionalNormalization(nn.Module):
@@ -459,7 +559,7 @@ class ConditionalNormalization(nn.Module):
 
 
 class EncoderXU_TotalVI(nn.Module):
-    """Sample-conditioned u-encoder for TotalVI (RNA + protein).
+    """Mode-selectable u-encoder for TotalVI (RNA + protein).
 
     Mirrors MrVI's ``EncoderXU`` but accepts concatenated gene and protein
     count matrices as input.  Each hidden layer is conditioned on donor
@@ -488,6 +588,10 @@ class EncoderXU_TotalVI(nn.Module):
         Dimensionality of the output latent space.
     n_sample
         Number of donors/samples.
+    u_encoder_mode
+        ``"sample_conditioned"`` applies sample-specific normalization affine
+        terms and the explicit sample embedding. ``"sample_blind"`` retains the
+        normalization layers but bypasses all sample-specific parameters.
     n_hidden
         Number of hidden units in each linear layer.
     n_layers
@@ -502,20 +606,28 @@ class EncoderXU_TotalVI(nn.Module):
         n_input_proteins: int,
         n_latent: int,
         n_sample: int,
+        u_encoder_mode: Literal["sample_conditioned", "sample_blind"] = "sample_conditioned",
         n_batch: int = 0,
         n_continuous_cov: int = 0,
         n_cats_per_cov: Iterable[int] | None = None,
         encode_covariates: bool = False,
+        batch_dim: int | None = None,
         n_hidden: int = 128,
         n_layers: int = 1,
         activation: Callable[[torch.Tensor], torch.Tensor] = _gelu,
     ):
         super().__init__()
+        if u_encoder_mode not in {"sample_conditioned", "sample_blind"}:
+            raise ValueError(
+                "u_encoder_mode must be one of {'sample_conditioned', 'sample_blind'}."
+            )
         self.activation = activation
+        self.u_encoder_mode = u_encoder_mode
         self.n_batch = int(n_batch)
         self.n_continuous_cov = int(n_continuous_cov)
         self.n_cats_per_cov = list(n_cats_per_cov or [])
         self.encode_covariates = bool(encode_covariates)
+        self.batch_dim = None if batch_dim is None else int(batch_dim)
         n_input = (
             n_input_genes
             + n_input_proteins
@@ -524,6 +636,7 @@ class EncoderXU_TotalVI(nn.Module):
                 self.n_continuous_cov,
                 self.n_cats_per_cov,
                 self.encode_covariates,
+                batch_dim=self.batch_dim,
             )
         )
 
@@ -546,8 +659,9 @@ class EncoderXU_TotalVI(nn.Module):
         batch_index: torch.Tensor | None = None,
         cont_covs: torch.Tensor | None = None,
         cat_covs: torch.Tensor | None = None,
+        batch_rep: torch.Tensor | None = None,
     ) -> Normal:
-        """Compute the sample-conditioned u distribution.
+        """Compute the configured sample-conditioned or sample-blind ``u`` distribution.
 
         Parameters
         ----------
@@ -557,6 +671,10 @@ class EncoderXU_TotalVI(nn.Module):
             Raw protein count matrix, shape ``(batch, n_input_proteins)``.
         sample_covariate
             Integer donor index, shape ``(batch,)`` or ``(batch, 1)``.
+        batch_rep
+            Pre-computed batch embedding of shape ``(batch, batch_dim)``, supplied by the
+            owning module when ``batch_representation="embedding"``. Replaces the one-hot
+            encoding of ``batch_index``.
 
         Returns
         -------
@@ -574,13 +692,22 @@ class EncoderXU_TotalVI(nn.Module):
             n_continuous_cov=self.n_continuous_cov,
             n_cats_per_cov=self.n_cats_per_cov,
             encode_covariates=self.encode_covariates,
+            batch_rep=batch_rep,
         )
         x = self.fc1(x)
-        x = self.cond_norm1(x, sample_covariate)
+        if self.u_encoder_mode == "sample_blind":
+            x = self.cond_norm1.norm_layer(x)
+        else:
+            x = self.cond_norm1(x, sample_covariate)
         x = self.activation(x)
         x = self.fc2(x)
-        x = self.cond_norm2(x, sample_covariate)
+        if self.u_encoder_mode == "sample_blind":
+            x = self.cond_norm2.norm_layer(x)
+        else:
+            x = self.cond_norm2(x, sample_covariate)
         x = self.activation(x)
+        if self.u_encoder_mode == "sample_blind":
+            return self.output_nn(x)
         sample_effect = self.sample_embed(sample_covariate.squeeze(-1).to(torch.int64))
         return self.output_nn(x + sample_effect)
 
@@ -806,7 +933,8 @@ class AttentionBlock(nn.Module):
         self.kv_proj = nn.Linear(in_features=kv_dim, out_features=outerprod_dim, bias=False)
 
         # Q/K/V projections matching Flax MultiHeadDotProductAttention.
-        # depth_per_head = n_channels (= qkv_features // n_heads where qkv_features = n_channels * n_heads)
+        # depth_per_head = n_channels, where
+        # qkv_features = n_channels * n_heads.
         self.depth_per_head = n_channels
         qkv_dim = n_heads * self.depth_per_head
         self.q_proj = nn.Linear(in_features=1, out_features=qkv_dim, bias=True)

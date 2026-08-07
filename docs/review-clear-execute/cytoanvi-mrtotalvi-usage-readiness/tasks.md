@@ -67,8 +67,8 @@
 - [x] Run `git diff --check` and targeted lint/compile checks available in the recorded environment.
 - [x] Review the full task diff for scope, test defects, compatibility migrations, and accidental unrelated changes; independent final manual audit reported no concrete pre-commit blocker.
 - [x] Stage only the 80 explicit task-owned paths; cached diff validation confirmed no `.living`, `.mycelium`, `.scratch`, source-plan/review, gitlink, wheel, cache, or unrelated artifact was staged.
-- [ ] Create a scoped local source commit and record its full SHA; do not push.
-- [ ] Reconstruct a clean source tree from that exact commit in a fresh `/tmp` path and verify version `0.2.0`.
+- [x] Create a scoped local source commit and record its full SHA; do not push: `9b3ad2aefd29df74ed368ff1386014711c29905a` (tree `400951618d02ebee47acf848be7600470226c357`).
+- [x] Reconstruct a clean source tree from that exact commit in `/tmp/cytoanvi-usage-readiness-source-lPmjqc/source`; verify clean status, exact commit/tree, version `0.2.0`, independent no-hardlink provenance, and source bytes against committed blobs.
 - [ ] **BLOCKED — `blocked_build_backend_authority`:** refuse any pre-existing `0.2.0` output, then build exactly one wheel into an empty candidate directory. The recorded source environment has `build` but no local `hatchling`; no claim, candidate directory, backend command, or `0.2.0` wheel was created.
 - [ ] **BLOCKED — no candidate exists:** generate sealed manifest/inventory evidence with commit/tree, build environment, dependency authority, metadata, SHA/size, RECORD, complete file inventory, and namespace ownership expectations.
 - [x] Verify the old `0.1.0` wheel is unchanged at its original path and still has its recorded SHA.
@@ -101,4 +101,4 @@
 - [x] Confirm no scheduler/GPU/network/credential/CI/push/tag/release action occurred.
 - [x] Confirm all unrelated dirty files remain present and unstaged.
 - [x] Update this checklist only with verified completions or explicit blocker annotations.
-- [ ] Report changed files, local commits, exact test results, artifact identity/acceptance state, protocol freeze states, matrix state, blockers, residual risk, and one next approval/action.
+- [x] Prepare the terminal handoff with changed scope, local commits, exact test results, artifact identity/acceptance state, protocol freeze states, matrix state, blockers, residual risk, and one next approval/action.

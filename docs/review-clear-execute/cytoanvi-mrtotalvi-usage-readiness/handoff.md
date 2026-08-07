@@ -152,3 +152,18 @@ resolution was authorized, and the build harness therefore was not invoked: no g
 candidate directory, backend process, or `0.2.0` wheel exists. Installed acceptance remains
 `blocked_dependency_authority` because there is also no exact local hash-locked dependency authority
 and complete wheelhouse. The manifest and receipt remain non-passing; no stale pass was reused.
+
+## Source freeze evidence
+
+- Scoped source commit: `9b3ad2aefd29df74ed368ff1386014711c29905a`; tree:
+  `400951618d02ebee47acf848be7600470226c357`.
+- The commit contains exactly 80 audited task-owned paths (10,500 insertions, 991 deletions). Cached
+  diff validation excluded every `.living`, `.mycelium`, `.scratch`, source-plan/review, external
+  tutorial gitlink, wheel, cache, and unrelated path.
+- Clean reconstruction: `/tmp/cytoanvi-usage-readiness-source-lPmjqc/source`, created with a local
+  `git clone --no-hardlinks --no-checkout` and detached at the exact source commit. Its status is
+  clean, `pyproject.toml` declares `0.2.0`, its Git directory is independent with no alternates or
+  hard-linked objects, and every tracked `cytoanvi/` and `scvi/` source byte matches the committed
+  blob inventory.
+- This reconstruction is source-freeze evidence only. The one-attempt build harness was not called,
+  so no build claim or candidate artifact exists.

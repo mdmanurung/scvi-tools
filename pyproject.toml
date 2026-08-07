@@ -4,7 +4,7 @@ requires = ["hatchling"]
 
 [project]
 name = "cytoanvi"
-version = "0.1.0"
+version = "0.2.0"
 description = "Annotation-aware variational inference for antibody-based single-cell cytometry (a scvi-tools fork)."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -102,7 +102,7 @@ diagvi = ["torch_geometric", "geomloss"]
 # for CytoANVI treeArches / scHPL hierarchy learning
 cytoanvi-hierarchy = ["scHPL"]
 # for CytoANVI query-to-reference mapping QC (mapQC)
-cytoanvi-mapping-qc = ["mapqc"]
+cytoanvi-mapping-qc = ["mapqc==0.1.1"]
 # for experimental CytoANVI benchmark AnnBatch loading
 cytoanvi-annbatch = ["annbatch[zarrs]>=0.2.0"]
 # for optional CytoANVI benchmark classical cytometry baselines

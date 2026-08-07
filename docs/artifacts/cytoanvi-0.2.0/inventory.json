@@ -1,0 +1,13 @@
+{
+  "schema_version": "cytoanvi-artifact-inventory-v1",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "wheel_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "record": {
+    "path": "pending",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "lines": []
+  },
+  "wheel_files": [],
+  "source_files": [],
+  "acceptance_inputs": []
+}

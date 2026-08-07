@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+"""Build and seal the one authorized cytoanvi 0.2.0 wheel from a clean commit."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import configparser
+import csv
+import hashlib
+import importlib.metadata
+import importlib.util
+import json
+import os
+import platform
+import stat
+import subprocess
+import sys
+import tempfile
+import tomllib
+import zipfile
+from datetime import UTC, datetime
+from email.parser import Parser
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlparse
+
+if TYPE_CHECKING:
+    from typing import Any
+
+VERSION = "0.2.0"
+WHEEL_GLOB = f"cytoanvi-{VERSION}-*.whl"
+ATTEMPT_GLOB = ".cytoanvi-0.2.0-candidate-*"
+CLAIM_FILENAME = ".cytoanvi-0.2.0-build-ordinal-1.claim.json"
+CANONICAL_MANIFEST_PATH = "docs/artifacts/cytoanvi-0.2.0/manifest.json"
+CANONICAL_INVENTORY_PATH = "docs/artifacts/cytoanvi-0.2.0/inventory.json"
+CANONICAL_RECEIPT_PATH = "docs/artifacts/cytoanvi-0.2.0/installed-acceptance.json"
+CANONICAL_CLAIM_PATH = f"docs/artifacts/cytoanvi-0.2.0/{CLAIM_FILENAME}"
+ACCEPTANCE_INPUT_PATHS = (
+    "scripts/accept_usage_readiness_wheel",
+    "scripts/usage_readiness_installed_smoke.py",
+    "vignettes/cytoanvi_treearches_synthetic.py",
+)
+EXPECTED_CONSOLE_SCRIPTS = {
+    "cytoanvi-install-skills": "scvi._skills.install:main",
+}
+
+
+def now() -> str:
+    """Return a UTC timestamp suitable for JSON Schema date-time."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def sha256_bytes(value: bytes) -> str:
+    """Return the SHA-256 digest of a byte string."""
+    return hashlib.sha256(value).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest of a file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run(command: list[str], cwd: Path) -> str:
+    """Run a subprocess to terminal success and return stripped stdout."""
+    return subprocess.run(
+        command, cwd=cwd, check=True, text=True, capture_output=True
+    ).stdout.strip()
+
+
+def repository_for_manifest(manifest_path: Path) -> Path:
+    """Require the canonical tracked manifest location and return its repository root."""
+    for parent in manifest_path.parents:
+        if (parent / CANONICAL_MANIFEST_PATH).resolve() == manifest_path:
+            return parent
+    raise RuntimeError(f"Manifest is not at canonical path {CANONICAL_MANIFEST_PATH}")
+
+
+def verify_build_backend(source: Path) -> None:
+    """Refuse an irreversible claim unless the frozen local backend is importable."""
+    build_system = tomllib.loads((source / "pyproject.toml").read_text())["build-system"]
+    if build_system != {"build-backend": "hatchling.build", "requires": ["hatchling"]}:
+        raise RuntimeError(f"Unexpected build-system contract: {build_system}")
+    for module in ("build.__main__", "hatchling.build"):
+        try:
+            available = importlib.util.find_spec(module)
+        except ModuleNotFoundError:
+            available = None
+        if available is None:
+            raise RuntimeError(
+                f"Required local build backend module {module!r} is unavailable; "
+                "no build attempt was claimed"
+            )
+
+
+def _git_metadata_path(repository: Path, argument: str) -> Path:
+    """Resolve a path reported by git relative to its repository."""
+    raw = Path(run(["git", "rev-parse", argument], repository))
+    return (raw if raw.is_absolute() else repository / raw).resolve()
+
+
+def _local_origin_path(source: Path) -> Path:
+    """Resolve a clone's local origin while rejecting network-style origins."""
+    origin = run(["git", "config", "--get", "remote.origin.url"], source)
+    if origin.startswith("file://"):
+        parsed = urlparse(origin)
+        if parsed.netloc not in {"", "localhost"}:
+            raise RuntimeError("Reconstructed source origin is not a local repository")
+        return Path(unquote(parsed.path)).resolve()
+    if "://" in origin or (":" in origin and not Path(origin).is_absolute()):
+        raise RuntimeError("Reconstructed source origin is not a local repository")
+    path = Path(origin)
+    return (path if path.is_absolute() else source / path).resolve()
+
+
+def verify_reconstructed_source_provenance(source: Path, repository: Path) -> None:
+    """Require an independent no-hardlink local clone of the primary checkout."""
+    if source == repository or repository in source.parents or source in repository.parents:
+        raise RuntimeError(
+            "Build source must be a distinct reconstruction outside the primary checkout"
+        )
+    if source.is_symlink() or not source.is_dir():
+        raise RuntimeError("Build source must be a regular reconstructed repository directory")
+    source_top = _git_metadata_path(source, "--show-toplevel")
+    if source_top != source:
+        raise RuntimeError("Build source must name the reconstructed repository root exactly")
+    source_git = source / ".git"
+    source_common = _git_metadata_path(source, "--git-common-dir")
+    primary_common = _git_metadata_path(repository, "--git-common-dir")
+    if (
+        source_git.is_symlink()
+        or not source_git.is_dir()
+        or source_common != source_git.resolve()
+        or source_common == primary_common
+    ):
+        raise RuntimeError(
+            "Build source must have an independent Git directory, not a linked worktree"
+        )
+    if _local_origin_path(source) != repository:
+        raise RuntimeError("Build source is not a local reconstruction of the primary checkout")
+    alternates = source_git / "objects" / "info" / "alternates"
+    if alternates.exists() or alternates.is_symlink():
+        raise RuntimeError("Build source shares Git objects through an alternates file")
+    shared_objects = [
+        path
+        for path in (source_git / "objects").rglob("*")
+        if path.is_file() and path.stat().st_nlink != 1
+    ]
+    if shared_objects:
+        raise RuntimeError(
+            "Build source contains hard-linked Git objects; reconstruct with --no-hardlinks"
+        )
+
+
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    """Atomically replace a JSON state file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=False) + "\n")
+    temporary.replace(path)
+
+
+def receipt_digest(receipt: dict[str, Any]) -> str:
+    """Hash a receipt after nulling its self-digest field."""
+    payload = dict(receipt)
+    payload["receipt_sha256"] = None
+    return sha256_bytes(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
+
+
+def resolve_recorded_path(manifest_path: Path, recorded_path: str) -> Path:
+    """Resolve a manifest-recorded repository path without assuming the checkout root."""
+    raw = Path(recorded_path)
+    if raw.is_absolute():
+        if raw.is_file():
+            return raw
+        raise RuntimeError(f"Recorded file does not exist: {raw}")
+    for parent in manifest_path.parents:
+        candidate = parent / raw
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(f"Cannot resolve recorded repository file: {recorded_path}")
+
+
+def environment_digest() -> str:
+    """Hash the build interpreter, platform, and installed package inventory."""
+    packages = sorted(
+        f"{dist.metadata.get('Name', 'UNKNOWN')}=={dist.version}"
+        for dist in importlib.metadata.distributions()
+    )
+    payload = {
+        "executable": sys.executable,
+        "python": sys.version,
+        "platform": platform.platform(),
+        "packages": packages,
+    }
+    return sha256_bytes(json.dumps(payload, sort_keys=True).encode())
+
+
+def source_inventory(source: Path) -> list[dict[str, Any]]:
+    """Hash every tracked source file owned by the two wheel namespaces."""
+    raw = run(["git", "ls-files", "src/cytoanvi", "src/scvi"], source)
+    entries = []
+    for relative in sorted(filter(None, raw.splitlines())):
+        path = source / relative
+        if path.is_file():
+            wheel_path = str(Path(relative).relative_to("src"))
+            entries.append(
+                {
+                    "path": wheel_path,
+                    "sha256": sha256_file(path),
+                    "size_bytes": path.stat().st_size,
+                }
+            )
+    return entries
+
+
+def committed_source_inventory(source: Path, commit: str) -> list[dict[str, Any]]:
+    """Hash owned package bytes directly from committed Git blobs."""
+    raw = run(
+        ["git", "ls-tree", "-r", "--name-only", commit, "--", "src/cytoanvi", "src/scvi"],
+        source,
+    )
+    entries = []
+    for relative in sorted(filter(None, raw.splitlines())):
+        completed = subprocess.run(
+            ["git", "show", f"{commit}:{relative}"],
+            cwd=source,
+            check=True,
+            capture_output=True,
+        )
+        wheel_path = str(Path(relative).relative_to("src"))
+        entries.append(
+            {
+                "path": wheel_path,
+                "sha256": sha256_bytes(completed.stdout),
+                "size_bytes": len(completed.stdout),
+            }
+        )
+    return entries
+
+
+def tracked_file_inventory(source: Path, relative_paths: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Seal regular tracked engineering inputs used after the wheel build."""
+    tracked = set(
+        filter(None, run(["git", "ls-files", "--", *relative_paths], source).splitlines())
+    )
+    if tracked != set(relative_paths):
+        raise RuntimeError(
+            "Clean source commit lacks required tracked acceptance inputs: "
+            f"missing={sorted(set(relative_paths) - tracked)}"
+        )
+    entries = []
+    for relative in relative_paths:
+        path = source / relative
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"Acceptance input is not a regular non-symlink file: {relative}")
+        entries.append(
+            {"path": relative, "sha256": sha256_file(path), "size_bytes": path.stat().st_size}
+        )
+    return entries
+
+
+def wheel_inventory(wheel: Path) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, str]]:
+    """Hash all wheel members and verify its complete RECORD and core metadata."""
+    with zipfile.ZipFile(wheel) as archive:
+        dist_info_prefix = f"cytoanvi-{VERSION}.dist-info/"
+        for info in archive.infolist():
+            name = info.filename
+            path = PurePosixPath(name)
+            if (
+                not name
+                or name.startswith("/")
+                or "\\" in name
+                or ".." in path.parts
+                or stat.S_ISLNK(info.external_attr >> 16)
+            ):
+                raise RuntimeError(f"Wheel contains an unsafe archive member: {name!r}")
+            if not name.startswith(("cytoanvi/", "scvi/", dist_info_prefix)):
+                raise RuntimeError(f"Wheel contains a non-owned top-level payload: {name}")
+        names = sorted(name for name in archive.namelist() if not name.endswith("/"))
+        if len(names) != len(set(names)):
+            raise RuntimeError("Wheel contains duplicate archive paths")
+        data_by_name = {name: archive.read(name) for name in names}
+        entries = []
+        for name in names:
+            data = data_by_name[name]
+            entries.append({"path": name, "sha256": sha256_bytes(data), "size_bytes": len(data)})
+        record_paths = [name for name in names if name.endswith(".dist-info/RECORD")]
+        metadata_paths = [name for name in names if name.endswith(".dist-info/METADATA")]
+        if len(record_paths) != 1 or len(metadata_paths) != 1:
+            raise RuntimeError("Wheel must contain exactly one METADATA and one RECORD")
+        record_path = record_paths[0]
+        record_bytes = data_by_name[record_path]
+        record_lines = record_bytes.decode("utf-8").splitlines()
+        record_rows = list(csv.reader(record_lines))
+        if any(len(row) != 3 for row in record_rows):
+            raise RuntimeError("Wheel RECORD must contain exactly three columns per row")
+        listed_paths = [row[0] for row in record_rows]
+        if len(listed_paths) != len(set(listed_paths)):
+            raise RuntimeError("Wheel RECORD contains duplicate paths")
+        if set(listed_paths) != set(names):
+            missing = sorted(set(names) - set(listed_paths))
+            extra = sorted(set(listed_paths) - set(names))
+            raise RuntimeError(f"Wheel RECORD path set mismatch: missing={missing}, extra={extra}")
+        for path, encoded_hash, encoded_size in record_rows:
+            if path == record_path:
+                if encoded_hash or encoded_size:
+                    raise RuntimeError("Wheel RECORD self-entry must omit hash and size")
+                continue
+            data = data_by_name[path]
+            digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
+            if encoded_hash != f"sha256={digest}":
+                raise RuntimeError(f"Wheel RECORD SHA-256 mismatch for {path}")
+            if encoded_size != str(len(data)):
+                raise RuntimeError(f"Wheel RECORD size mismatch for {path}")
+        metadata = Parser().parsestr(archive.read(metadata_paths[0]).decode())
+    return (
+        entries,
+        {"path": record_paths[0], "sha256": sha256_bytes(record_bytes), "lines": record_lines},
+        {"name": metadata["Name"], "version": metadata["Version"]},
+    )
+
+
+def source_wheel_mismatches(
+    source_files: list[dict[str, Any]], wheel_files: list[dict[str, Any]]
+) -> tuple[list[str], list[str], list[str]]:
+    """Compare every owned package file by path, SHA-256, and size."""
+    source_by_path = {item["path"]: (item["sha256"], item["size_bytes"]) for item in source_files}
+    wheel_by_path = {
+        item["path"]: (item["sha256"], item["size_bytes"])
+        for item in wheel_files
+        if item["path"].startswith(("cytoanvi/", "scvi/"))
+    }
+    missing = sorted(set(source_by_path) - set(wheel_by_path))
+    extra = sorted(set(wheel_by_path) - set(source_by_path))
+    changed = sorted(
+        path
+        for path in set(source_by_path) & set(wheel_by_path)
+        if source_by_path[path] != wheel_by_path[path]
+    )
+    return missing, extra, changed
+
+
+def wheel_console_scripts(wheel: Path) -> dict[str, str]:
+    """Validate the candidate's exact console-script names and targets."""
+    with zipfile.ZipFile(wheel) as archive:
+        entry_point_paths = [
+            name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
+        ]
+        if len(entry_point_paths) != 1:
+            raise RuntimeError("Candidate wheel must contain exactly one entry_points.txt")
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.optionxform = str
+        parser.read_string(archive.read(entry_point_paths[0]).decode("utf-8"))
+    scripts = (
+        dict(parser.items("console_scripts")) if parser.has_section("console_scripts") else {}
+    )
+    if scripts != EXPECTED_CONSOLE_SCRIPTS:
+        raise RuntimeError(
+            "Candidate console scripts differ from the frozen source contract: "
+            f"expected={EXPECTED_CONSOLE_SCRIPTS}, observed={scripts}"
+        )
+    return scripts
+
+
+def fail_manifest(
+    manifest_path: Path, manifest: dict[str, Any], command: str, started: str
+) -> None:
+    """Atomically record a terminal failed build attempt."""
+    manifest["build"].update(
+        {
+            "status": "failed",
+            "command": command,
+            "python": sys.executable,
+            "environment_digest": environment_digest(),
+            "started_at": started,
+            "completed_at": now(),
+        }
+    )
+    atomic_json(manifest_path, manifest)
+
+
+def claim_build_attempt(
+    *,
+    output_dir: Path,
+    claim_path: Path,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    command: str,
+    started: str,
+    source_commit: str,
+) -> tuple[Path, str]:
+    """Permanently claim the only 0.2.0 build attempt before invoking the backend."""
+    prior_dirs = sorted(output_dir.glob(ATTEMPT_GLOB))
+    if claim_path.exists() or prior_dirs:
+        raise RuntimeError(
+            f"A prior or interrupted 0.2.0 build attempt exists: claim={claim_path.exists()}, "
+            f"candidate_dirs={prior_dirs}"
+        )
+    attempt_id = f"{started.replace(':', '').replace('-', '')}-pid{os.getpid()}"
+    sentinel_payload = {
+        "schema_version": "cytoanvi-build-attempt-v1",
+        "version": VERSION,
+        "attempt_id": attempt_id,
+        "source_commit": source_commit,
+        "started_at": started,
+        "pid": os.getpid(),
+        "command": command,
+        "manifest": str(manifest_path),
+    }
+    claim_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(claim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(json.dumps(sentinel_payload, indent=2) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    candidate_dir = Path(tempfile.mkdtemp(prefix=ATTEMPT_GLOB[:-1], dir=output_dir))
+    manifest["build"].update(
+        {
+            "status": "building",
+            "attempt_id": attempt_id,
+            "candidate_dir": str(candidate_dir),
+            "pid": os.getpid(),
+            "command": command,
+            "python": sys.executable,
+            "environment_digest": environment_digest(),
+            "started_at": started,
+            "completed_at": None,
+        }
+    )
+    atomic_json(manifest_path, manifest)
+    return candidate_dir, attempt_id
+
+
+def main() -> int:
+    """Claim, build, verify, and seal the sole authorized 0.2.0 candidate."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", required=True, type=Path)
+    parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--inventory", required=True, type=Path)
+    args = parser.parse_args()
+
+    if args.source.is_symlink():
+        raise SystemExit("Build source path must not be a symlink")
+    source = args.source.resolve()
+    output_dir = args.output_dir.resolve()
+    manifest_path = args.manifest.resolve()
+    inventory_path = args.inventory.resolve()
+    manifest = json.loads(manifest_path.read_text())
+    repository = repository_for_manifest(manifest_path)
+    if manifest["candidate"] != {
+        "distribution": "cytoanvi",
+        "version": VERSION,
+        "build_ordinal": 1,
+    }:
+        raise SystemExit("Manifest is not the frozen 0.2.0 build-ordinal-1 contract")
+    if manifest["build"]["status"] != "not_built" or manifest["wheel"]["sha256"] is not None:
+        raise SystemExit("Manifest records a prior build attempt; 0.2.0 may not be rebuilt")
+    recorded_claim_path = Path(manifest["build"]["claim_path"])
+    if recorded_claim_path.as_posix() != CANONICAL_CLAIM_PATH:
+        raise SystemExit(
+            "Manifest does not use the canonical repository-relative build claim path"
+        )
+    claim_path = (repository / recorded_claim_path).resolve()
+    expected_claim = manifest_path.with_name(CLAIM_FILENAME)
+    if claim_path != expected_claim:
+        raise SystemExit(f"Manifest build claim path must resolve exactly to {expected_claim}")
+    if manifest["inventory"]["details_path"] != CANONICAL_INVENTORY_PATH:
+        raise SystemExit("Manifest does not use the canonical inventory path")
+    if manifest["installed_acceptance"]["receipt"] != CANONICAL_RECEIPT_PATH:
+        raise SystemExit("Manifest does not use the canonical acceptance receipt path")
+    canonical_inventory = (repository / CANONICAL_INVENTORY_PATH).resolve()
+    canonical_receipt = (repository / CANONICAL_RECEIPT_PATH).resolve()
+    if inventory_path != canonical_inventory:
+        raise SystemExit(f"Inventory output must be exactly {canonical_inventory}")
+    receipt_path = canonical_receipt
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        raise SystemExit("Canonical acceptance receipt is missing or non-regular")
+    receipt = json.loads(receipt_path.read_text())
+    if receipt["status"] != manifest["installed_acceptance"]["status"]:
+        raise SystemExit("Pre-build acceptance receipt status differs from the artifact manifest")
+
+    verify_reconstructed_source_provenance(source, repository)
+    commit = run(["git", "rev-parse", "HEAD"], source)
+    tree = run(["git", "rev-parse", "HEAD^{tree}"], source)
+    dirty = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
+    if commit != args.expected_commit:
+        raise SystemExit(
+            f"Clean-tree commit mismatch: expected {args.expected_commit}, got {commit}"
+        )
+    if dirty:
+        raise SystemExit(f"Build source is dirty:\n{dirty}")
+    project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
+    if project["name"] != "cytoanvi" or project["version"] != VERSION:
+        raise SystemExit(
+            f"Expected cytoanvi {VERSION}, got {project['name']} {project['version']}"
+        )
+    verify_build_backend(source)
+    committed_files = committed_source_inventory(source, commit)
+    if source_inventory(source) != committed_files:
+        raise SystemExit("Owned worktree source bytes differ from the expected committed blobs")
+    acceptance_inputs = tracked_file_inventory(source, ACCEPTANCE_INPUT_PATHS)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(output_dir.glob(WHEEL_GLOB))
+    if existing:
+        raise SystemExit(f"Refusing pre-existing 0.2.0 output: {existing}")
+
+    started = now()
+    command_parts = [
+        sys.executable,
+        "-m",
+        "build",
+        "--wheel",
+        "--no-isolation",
+        "--outdir",
+        "<empty-candidate-dir>",
+        str(source),
+    ]
+    command = " ".join(command_parts)
+    candidate_dir, _attempt_id = claim_build_attempt(
+        output_dir=output_dir,
+        claim_path=claim_path,
+        manifest_path=manifest_path,
+        manifest=manifest,
+        command=command,
+        started=started,
+        source_commit=commit,
+    )
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "--wheel",
+                "--no-isolation",
+                "--outdir",
+                str(candidate_dir),
+                str(source),
+            ],
+            cwd=source,
+            check=True,
+        )
+        post_commit = run(["git", "rev-parse", "HEAD"], source)
+        post_tree = run(["git", "rev-parse", "HEAD^{tree}"], source)
+        post_dirty = run(["git", "status", "--porcelain", "--untracked-files=all"], source)
+        if post_commit != commit or post_tree != tree or post_dirty:
+            raise RuntimeError(
+                "Build backend or concurrent activity changed the source identity: "
+                f"commit={post_commit}, tree={post_tree}, dirty={post_dirty!r}"
+            )
+        if source_inventory(source) != committed_files:
+            raise RuntimeError("Post-build worktree bytes differ from committed source blobs")
+        candidates = sorted(candidate_dir.glob(WHEEL_GLOB))
+        if len(candidates) != 1:
+            raise RuntimeError(f"Expected exactly one candidate wheel, found {candidates}")
+        candidate = candidates[0]
+        wheel_files, record, metadata = wheel_inventory(candidate)
+        wheel_console_scripts(candidate)
+        if metadata != {"name": "cytoanvi", "version": VERSION}:
+            raise RuntimeError(f"Wheel metadata mismatch: {metadata}")
+        source_files = committed_files
+        missing, extra, changed = source_wheel_mismatches(source_files, wheel_files)
+        source_vs_wheel = "match" if not (missing or extra or changed) else "mismatch"
+        if source_vs_wheel != "match":
+            raise RuntimeError(
+                "Source/wheel inventory mismatch: "
+                f"missing={missing}, extra={extra}, changed={changed}"
+            )
+
+        wheel_sha = sha256_file(candidate)
+        final_wheel = output_dir / candidate.name
+        if final_wheel.exists():
+            raise RuntimeError(f"Refusing to overwrite {final_wheel}")
+        candidate.replace(final_wheel)
+        candidate_dir.rmdir()
+
+        inventory = {
+            "schema_version": "cytoanvi-artifact-inventory-v1",
+            "source_commit": commit,
+            "wheel_sha256": wheel_sha,
+            "record": record,
+            "wheel_files": wheel_files,
+            "source_files": source_files,
+            "acceptance_inputs": acceptance_inputs,
+        }
+        atomic_json(inventory_path, inventory)
+        inventory_sha = sha256_file(inventory_path)
+        manifest["source"].update({"commit": commit, "tree": tree, "clean": True})
+        manifest["build"].update(
+            {
+                "status": "passed",
+                "command": command,
+                "python": sys.executable,
+                "environment_digest": environment_digest(),
+                "started_at": started,
+                "completed_at": now(),
+            }
+        )
+        manifest["wheel"].update(
+            {
+                "path": str(final_wheel),
+                "filename": final_wheel.name,
+                "sha256": wheel_sha,
+                "size_bytes": final_wheel.stat().st_size,
+                "metadata_name": metadata["name"],
+                "metadata_version": metadata["version"],
+            }
+        )
+        manifest["inventory"].update(
+            {
+                "details_path": CANONICAL_INVENTORY_PATH,
+                "details_sha256": inventory_sha,
+                "record_sha256": record["sha256"],
+                "record_entries": len(record["lines"]),
+                "wheel_files": [item["path"] for item in wheel_files],
+                "source_files": [item["path"] for item in source_files],
+                "acceptance_inputs": acceptance_inputs,
+                "source_vs_wheel": source_vs_wheel,
+            }
+        )
+        receipt["artifact"].update(
+            {"version": VERSION, "wheel_sha256": wheel_sha, "source_commit": commit}
+        )
+        receipt["receipt_sha256"] = None
+        receipt["receipt_sha256"] = receipt_digest(receipt)
+        atomic_json(receipt_path, receipt)
+        manifest["installed_acceptance"].update(
+            {
+                "receipt": CANONICAL_RECEIPT_PATH,
+                "receipt_sha256": sha256_file(receipt_path),
+            }
+        )
+        atomic_json(manifest_path, manifest)
+    except Exception:
+        fail_manifest(manifest_path, manifest, command, started)
+        print(f"Failed candidate preserved at {candidate_dir}", file=sys.stderr)
+        raise
+
+    print(final_wheel)
+    print(f"sha256={wheel_sha}")
+    print(f"source_commit={commit}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

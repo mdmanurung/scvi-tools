@@ -7,13 +7,16 @@ CITE-seq protein). It follows the same design pattern as {class}`~scvi.model.SCA
 partially observed label objective (M1+M2 hierarchy), while keeping CytoVI's batch correction,
 missing-marker masking, and scArches [^ref3] query mapping.
 
+The {doc}`/usage_readiness` matrix is authoritative. Source/API coverage, installed-artifact
+acceptance, scientific evidence, and human promotion are separate states.
+
 The advantages of CytoANVI are:
 
 - Transfers cell-type labels to unlabeled cells with a trained classifier, not only k-NN in latent space.
 - Integrates labeled reference and unlabeled query in one model (semi-supervised training).
 - Inherits CytoVI panel-aware query prep, imputation, differential abundance/expression, and latent integration.
-- Supports uncertainty scores for novel or ambiguous cells via test-time augmentation.
-- Supports continual reference updates with optional EWC replay (experimental).
+- Quarantines the former TTA novelty estimator after a below-chance multi-seed result.
+- Supports experimental EWC-plus-replay reference updates with required query controls.
 
 The limitations of CytoANVI include:
 
@@ -23,8 +26,8 @@ The limitations of CytoANVI include:
 - Does **not** use CytoVI's label-conditioned mixture-of-Gaussians prior (semi-supervised M1+M2 replaces it).
 
 ```{topic} Related tutorials:
-- {doc}`/tutorials/notebooks/cytometry/CytoANVI_tutorial` (label transfer, panel mapping, uncertainty)
-- {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial` (scHPL hierarchy template)
+- `vignettes/cytoanvi_example_reference_query.py` (tracked label-transfer and panel-mapping fixture)
+- `vignettes/cytoanvi_treearches_synthetic.py` (tracked treeArches engineering fixture)
 - {doc}`/user_guide/models/cytovi` (shared cytometry preprocessing and tasks)
 - {doc}`/user_guide/models/scanvi` (semi-supervised VI background)
 ```
@@ -68,8 +71,8 @@ Approximate runtime expectations:
 | Label transfer | k-NN in latent (`impute_categories_from_reference`) | `predict()` classifier |
 | Semi-supervised training | optional label-informed **prior** only | classifier + partial labels |
 | Query / scArches | `load_query_data` | `prepare_query_anndata` + `load_query_data` (panel-aware nan mask) |
-| Uncertainty | — | `get_uncertainty()` |
-| Continual update | — | `load_query_data_with_replay()` (EWC + replay) |
+| Novelty/OOD | — | No stable supported API; legacy TTA entry points fail closed |
+| Continual update | — | Experimental EWC + replay; replay and `control_adata` are required |
 
 You can warm-start from a trained CytoVI model with {meth}`~cytoanvi.CytoANVI.from_cytovi_model`.
 
@@ -112,32 +115,35 @@ current API.
 
 | Surface | Status | Notes |
 |---------|--------|-------|
-| `cytoanvi.CytoANVI` | Stable | Normal user entrypoint for setup, training, prediction, query mapping, uncertainty, save/load, and CytoVI warm-start. |
-| `cytoanvi.get_uncertainty_threshold` | Stable | Helper for choosing novelty thresholds from reference uncertainty scores. |
+| `cytoanvi.CytoANVI` | Conditional core | Setup, training, prediction, latent, save/load, and query mapping require dataset-specific independent validation. |
+| `get_uncertainty` / indirect TTA replay selection | No-go | Stable entry points raise. Explicit experimental TTA code is historical method-development surface only. |
 | `cytoanvi.CytoANVAE` | Stable advanced | Exported for advanced module-level inspection and extension; most users should instantiate `CytoANVI`. |
 | `cytoanvi.hierarchy` | Optional-extra | Importable without scHPL; scHPL workflows require `pip install cytoanvi[cytoanvi-hierarchy]`. |
-| `cytoanvi.mapping_qc` | Optional-extra | Importable without mapQC; mapQC workflows require `pip install cytoanvi[cytoanvi-mapping-qc]`. |
-| `load_query_data_with_replay` | Experimental | EWC state persists across `save`/`load`, but replay batches are session-scoped and must be re-supplied for exact replay resume. |
+| `cytoanvi.mapping_qc` | Experimental optional-extra | Requires exactly mapQC 0.1.1; no automatic acceptance threshold is promoted. |
+| `load_query_data_with_replay` | Experimental | `replay_adata` and `control_adata` are required; reloaded continual state cannot train until replay is reconstructed. |
 | AnnBatch, FlowSOM, RAPIDS, benchmark tasks | Benchmark-only | These backends are CLI/evaluation infrastructure and are not part of the model API. |
 
 Supported stable workflows on synthetic and unit-test coverage are flat label transfer,
 CytoVI warm-start, panel-aware reference/query mapping, HCE prediction after an explicit hierarchy,
-mapping-QC delegation, paired RNA/CyTOF preprocessing, and core save/load inference. Continual
-replay/EWC is available for experimentation, but the replay-resume limitation above remains.
+mapping-QC delegation, paired RNA/CyTOF preprocessing, and core save/load inference. These are
+engineering states, not scientific promotion. Continual replay/EWC is experimental/no-go for
+consequential updates; stable TTA novelty is no-go.
 
-## Benchmark evidence
+## Historical exploratory benchmark diagnostics
 
-Full-cohort results (max_epochs=1000, 3 seeds). Numbers are mean ± std across seeds.
+These unsealed results predate the frozen P2 protocol. They are useful for diagnosing methods, but
+they do not supply independent labels, a second cohort, frozen margins, installed-artifact
+acceptance, review authority, or promotion. The usage-readiness matrix remains authoritative.
 
 | Task | Dataset | Metric | CytoANVI | Baseline | Verdict |
 |------|---------|--------|----------|----------|---------|
-| B1 label transfer | Roider BNHL | macro-F1 | **0.9317 ± 0.0022** | CytoVI-kNN 0.8928 ± 0.0034 | ✅ Δ +0.0388 (passes ≥+0.03 gate) |
-| B1 label transfer | Nuñez PBMC | macro-F1 | 0.9751 ± 0.0003 | CytoVI-kNN 0.9581 ± 0.0007 | Δ +0.017 (near-ceiling) |
-| B2 batch integration | Nuñez PBMC | scib batch Δ | no regression | CytoVI latent | ✅ within ±0.05 |
-| B3 (p1) cross-panel | Roider BNHL | panel-1 holdout macro-F1 | **0.828 ± 0.015** | — | ✅ defensible supervised headline |
-| B3 (p2) cross-panel | Roider BNHL | inter-method concordance | 0.671 ± 0.008 | CytoVI-kNN | ❌ below ≥0.80 gate — **concordance, not accuracy** |
-| B5 novelty detection | Roider BNHL | mean AUROC | 0.484 ± 0.019 | CytoVI kNN-OOD 0.775 ± 0.002 | ❌ **NEGATIVE** — TTA uncertainty below chance |
-| B8 HCE vs flat CE | Nuñez PBMC / Hao CITE-seq | lineage-coherence Δ | fewer cross-lineage errors (see below) | flat CE | ⚠️ helps *lineage coherence* under partial annotation, not fine accuracy |
+| B1 label transfer | Roider BNHL | macro-F1 | **0.9317 ± 0.0022** | CytoVI-kNN 0.8928 ± 0.0034 | Retrospective delta; P2 margin unfrozen |
+| B1 label transfer | Nuñez PBMC | macro-F1 | 0.9751 ± 0.0003 | CytoVI-kNN 0.9581 ± 0.0007 | Retrospective near-ceiling diagnostic |
+| B2 batch integration | Nuñez PBMC | scib batch delta | no observed regression | CytoVI latent | Retrospective diagnostic; no frozen margin |
+| B3 (p1) cross-panel | Roider BNHL | panel-1 holdout macro-F1 | **0.828 ± 0.015** | — | Exploratory only; independent labels absent |
+| B3 (p2) cross-panel | Roider BNHL | inter-method concordance | 0.671 ± 0.008 | CytoVI-kNN | Concordance, not target accuracy or a promotion gate |
+| B5 novelty detection | Roider BNHL | mean AUROC | historical mean below 0.5 | CytoVI kNN-OOD comparator | Historical negative; stable TTA is no-go |
+| B8 HCE vs flat CE | Nuñez PBMC / Hao CITE-seq | lineage-coherence delta | fewer cross-lineage errors (see below) | flat CE | Exploratory coherence diagnostic, not fine accuracy |
 
 ### Limitations of the current evidence
 
@@ -159,9 +165,8 @@ Full-cohort results (max_epochs=1000, 3 seeds). Numbers are mean ± std across s
   already give ~99% lineage accuracy. Report B8 with a lineage-level / hierarchical metric, not
   leaf macro-F1, and frame it around partial annotation.
 
-B2 on the full Roider cohort, B9 mapping-QC (blocked by an upstream `mapqc` bug), and the
-continual-update tasks (B4/B6, which currently use pseudo-batch splits) are not yet reportable
-as publication evidence.
+B2 on the full Roider cohort, B9 mapping-QC (universal Nuñez rejection despite strong transfer),
+and continual-update tasks B4/B6 (pseudo-batch plumbing) are not positive publication evidence.
 
 ## Quick start (label transfer)
 
@@ -233,7 +238,10 @@ Benchmark task B7: `python -m benchmarks.cytoanvi.run --dataset paired-rna-cytof
   balances the semi-supervised classification loss against the ELBO. Higher values emphasize label
   transfer accuracy; lower values can improve batch mixing in the latent (benchmark B2 tradeoff).
 - `y_prior="empirical"` sets the label prior from observed label frequencies (Laplace-smoothed); use
-  for imbalanced panels. Default is uniform.
+  it only after evaluation. In 0.2.0 it is resolved from the realized training indices, never held-
+  out validation labels. Default is uniform.
+- Every non-null `adversarial_classifier` is rejected before trainer construction; no adversarial
+  objective exists in this packet.
 - Only `latent_distribution="normal"` is supported.
 - For overlapping panels, ensure `encode_backbone_only=True` (default when a nan mask is present).
 
@@ -355,7 +363,10 @@ For `mode="update"`, provide latents via one of: pre-built `combined_latent`, `c
 `query_model`, or `reference_adata` + `query_adata` + `query_model` (concatenates with
 `adata.concatenate` — add batch metadata before concat if you need provenance columns).
 
-Tutorial: {doc}`/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial`.
+Tracked executable engineering fixture: `vignettes/cytoanvi_treearches_synthetic.py`. The richer
+Markdown tutorial lives in an external uninitialized gitlink and its required repair is recorded in
+the usage-readiness packet's `external-submodule-tutorial-handoff.md`; it is not part of the 0.2.0
+artifact lineage.
 
 ### Warm-start from CytoVI
 
@@ -418,13 +429,12 @@ query.obs["pred"] = query_model.predict()
 `prepare_query_anndata` pads missing markers and writes a **nan mask** so padded zeros are not
 treated as real intensities. The reference must have been trained with a genuine backbone/panel split.
 
-### Uncertainty / novelty detection
+### Novelty / OOD status
 
-```python
-unc = model.get_uncertainty()  # per-cell Bregman information (higher = more uncertain)
-```
-
-Useful for flagging held-out cell types or low-confidence predictions (see benchmark task B5).
+Stable TTA novelty entry points fail closed. The available three-seed result was below chance
+(mean AUROC 0.484), whereas latent kNN was informative. No replacement is promoted. An explicitly
+named experimental TTA method retains deterministic per-cell masks for historical reproduction,
+but its output must not be used as a supported novelty or replay-selection decision.
 
 ### Query mapping QC (optional mapQC)
 
@@ -432,7 +442,7 @@ After query surgery, score mapping quality on CytoANVI latents with
 [mapQC](https://github.com/theislab/mapqc) (scores **> 2** = far from reference). Install:
 
 ```bash
-pip install cytoanvi[cytoanvi-mapping-qc]
+pip install "cytoanvi[cytoanvi-mapping-qc]"  # resolves exactly mapQC 0.1.1
 ```
 
 Import helpers from the optional module (not the top-level `cytoanvi` package):
@@ -464,8 +474,9 @@ joint embedding in ``obsm["X_CytoANVI"]`` — not on raw protein intensities.
 **Fail-fast:** missing optional extra → `ImportError`; too few reference samples → `ValueError`.
 mapQC is never run automatically during training or `load_query_data`.
 
-Complements :meth:`get_uncertainty` (novelty) with sample-neighborhood mapping QC for case/control
-atlases. Not applicable to unlabeled panel-only queries without matched controls (e.g. Roider panel-2).
+mapQC remains advisory: it rejected every Nuñez query in one benchmark despite strong label
+transfer, so no automatic gate or threshold is promoted. It is not applicable to unlabeled
+panel-only queries without matched controls (e.g. Roider panel-2).
 
 ### Continual update (experimental)
 
@@ -474,8 +485,8 @@ For updating a reference with new query cohorts while limiting catastrophic forg
 ```python
 from cytoanvi import CytoANVI
 
-# ~20% of reference cells, selected by uncertainty (paper default)
-replay = CytoANVI.select_replay_by_uncertainty(model, reference_adata, fraction=0.2)
+# Replay membership must be frozen independently of TTA/outcome scores.
+replay = reference_adata[predeclared_replay_indices].copy()
 # healthy controls from the query (~5–10%)
 controls = query_adata[query_adata.obs["status"] == "healthy"].copy()
 
@@ -493,9 +504,9 @@ updated.train(max_epochs=200, plan_kwargs={"ewc_importance": 100.0})  # λ — r
 retuned (see benchmark task B6).
 
 After `save`/`load`, continual models retain the EWC anchor, Fisher importances, and combine rule,
-but they do **not** retain replay batches. Exact replay-resume is not currently supported from a
-loaded model alone; to continue training with replay, rebuild query surgery with
-`load_query_data_with_replay(..., replay_adata=...)`.
+but they do **not** retain replay batches. Calling `train()` in that state raises before trainer
+construction. Rebuild query surgery with both
+`load_query_data_with_replay(..., replay_adata=..., control_adata=...)` before training.
 
 See ADR `docs/adr/0002-cytoanvi-continual-follows-paper-not-code.md` for design notes.
 

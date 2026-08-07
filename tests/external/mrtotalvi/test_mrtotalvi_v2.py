@@ -267,7 +267,9 @@ def test_pre_v2_oracle_strict_manifest_tolerance_is_diagnostic(
             for row in rows
             if row["failing_count"]["strict"] > 0
         ) == policy["derivation"]["observed_floor_requiring_max_abs_delta"]
-    assert max(row["max_abs_delta"] for row in rows) == policy["derivation"][
+    # The policy records the observed worst-case host delta used to derive the
+    # portable ceiling. A host with smaller rounding deltas is also compliant.
+    assert max(row["max_abs_delta"] for row in rows) <= policy["derivation"][
         "observed_overall_max_abs_delta"
     ]
 
@@ -1603,173 +1605,46 @@ def test_counterfactual_expression_posterior_common_noise_and_subsetting():
         )
 
 
-def test_counterfactual_atomic_zarr_roundtrip_and_refusal(tmp_path, monkeypatch):
-    """Both public datasets round-trip lazily through atomic region stores."""
-    model, adata = _make_v2_model()
-    latent_memory = model.get_counterfactual_latent(
-        adata=adata,
-        indices=[0, 2],
-        target_samples=["sample_2", "sample_0"],
-        inference_mode="posterior_mc",
-        n_draws=2,
-        random_state=5,
+def test_public_counterfactual_streaming_export_is_quarantined(tmp_path, monkeypatch):
+    """Public Zarr arguments refuse before inference or filesystem mutation."""
+    model, _ = _make_v2_model()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("quarantine must run before counterfactual inference")
+
+    monkeypatch.setattr("scvi.external.mrtotalvi._model._get_counterfactual_latent", forbidden)
+    monkeypatch.setattr(
+        "scvi.external.mrtotalvi._model._get_counterfactual_expression",
+        forbidden,
     )
     latent_path = tmp_path / "latent.zarr"
-    latent_zarr = model.get_counterfactual_latent(
-        adata=adata,
-        indices=[0, 2],
-        target_samples=["sample_2", "sample_0"],
-        inference_mode="posterior_mc",
-        n_draws=2,
-        random_state=5,
-        zarr_path=latent_path,
-        zarr_chunks={"draw": 1, "cell_name": 1, "target_sample": 1},
-    )
-    assert latent_path.is_dir()
-    assert hasattr(latent_zarr["z"].data, "chunks")
-    for variable in latent_memory.data_vars:
-        np.testing.assert_equal(
-            latent_zarr[variable].to_numpy(),
-            latent_memory[variable].to_numpy(),
-        )
-    assert not list(tmp_path.glob(".latent.zarr.tmp-*"))
-    with pytest.raises(FileExistsError, match="Refusing"):
-        model.get_counterfactual_latent(
-            indices=[0],
-            zarr_path=latent_path,
-        )
-
-    expression_memory = model.get_counterfactual_expression(
-        adata=adata,
-        indices=[0, 2],
-        target_samples=["sample_1"],
-        gene_list=[str(adata.var_names[0])],
-        protein_list=[
-            str(
-                model.adata_manager.get_state_registry(
-                    REGISTRY_KEYS.PROTEIN_EXP_KEY
-                ).column_names[0]
-            )
-        ],
-    )
     expression_path = tmp_path / "expression.zarr"
-    expression_zarr = model.get_counterfactual_expression(
-        adata=adata,
-        indices=[0, 2],
-        target_samples=["sample_1"],
-        gene_list=[str(adata.var_names[0])],
-        protein_list=[
-            str(
-                model.adata_manager.get_state_registry(
-                    REGISTRY_KEYS.PROTEIN_EXP_KEY
-                ).column_names[0]
-            )
-        ],
-        zarr_path=expression_path,
-        zarr_chunks={
-            "draw": 1,
-            "cell_name": 1,
-            "target_sample": 1,
-            "gene": 1,
-            "protein": 1,
-        },
+    with pytest.raises(NotImplementedError, match="quarantined"):
+        model.get_counterfactual_latent(indices=[0], zarr_path=latent_path)
+    with pytest.raises(NotImplementedError, match="quarantined"):
+        model.get_counterfactual_expression(indices=[0], zarr_path=expression_path)
+    with pytest.raises(NotImplementedError, match="quarantined"):
+        model.get_counterfactual_latent(indices=[0], zarr_chunks={"cell_name": 1})
+    assert not latent_path.exists()
+    assert not expression_path.exists()
+
+
+def test_private_counterfactual_zarr_export_is_quarantined(tmp_path):
+    """Private helpers refuse export before dependency or filesystem activity."""
+    from scvi.external.mrtotalvi._counterfactual import (
+        get_counterfactual_expression as private_counterfactual_expression,
     )
-    assert hasattr(expression_zarr["rna_rate"].data, "chunks")
-    for variable in expression_memory.data_vars:
-        np.testing.assert_equal(
-            expression_zarr[variable].to_numpy(),
-            expression_memory[variable].to_numpy(),
-        )
-    assert "chunks" in expression_zarr.attrs
-    assert not list(tmp_path.glob(".expression.zarr.tmp-*"))
-
-    import builtins
-
-    real_import = builtins.__import__
-
-    def block_parallel_storage_imports(name, *args, **kwargs):
-        if name in {"dask", "zarr"}:
-            raise ImportError(name)
-        return real_import(name, *args, **kwargs)
-
-    missing_dependency_path = tmp_path / "missing-dependency.zarr"
-    with monkeypatch.context() as context:
-        context.setattr(
-            builtins,
-            "__import__",
-            block_parallel_storage_imports,
-        )
-        with pytest.raises(ImportError, match="parallel"):
-            model.get_counterfactual_latent(
-                indices=[0],
-                zarr_path=missing_dependency_path,
-            )
-    assert not missing_dependency_path.exists()
-
-    import scvi.external.mrtotalvi._counterfactual as counterfactual_module
-
-    streamed_memory = model.get_counterfactual_expression(
-        indices=np.arange(adata.n_obs),
-        target_samples=["sample_1"],
-        gene_list=[str(adata.var_names[0])],
-        protein_list=[
-            str(
-                model.adata_manager.get_state_registry(
-                    REGISTRY_KEYS.PROTEIN_EXP_KEY
-                ).column_names[0]
-            )
-        ],
+    from scvi.external.mrtotalvi._counterfactual import (
+        get_counterfactual_latent as private_counterfactual_latent,
     )
-    streamed_path = tmp_path / "streamed-expression.zarr"
-    original_limit = counterfactual_module.MAX_IN_MEMORY_BYTES
-    counterfactual_module.MAX_IN_MEMORY_BYTES = 100
-    try:
-        streamed = model.get_counterfactual_expression(
-            indices=np.arange(adata.n_obs),
-            target_samples=["sample_1"],
-            gene_list=[str(adata.var_names[0])],
-            protein_list=[
-                str(
-                    model.adata_manager.get_state_registry(
-                        REGISTRY_KEYS.PROTEIN_EXP_KEY
-                    ).column_names[0]
-                )
-            ],
-            zarr_path=streamed_path,
-            zarr_chunks={"cell_name": 2},
-        )
-    finally:
-        counterfactual_module.MAX_IN_MEMORY_BYTES = original_limit
-    assert streamed.attrs["storage_mode"] == "atomic_zarr_cell_regions"
-    for variable in streamed_memory.data_vars:
-        if np.issubdtype(streamed_memory[variable].dtype, np.floating):
-            np.testing.assert_allclose(
-                streamed[variable].to_numpy(),
-                streamed_memory[variable].to_numpy(),
-                rtol=1e-6,
-                atol=1e-6,
-            )
-        else:
-            np.testing.assert_equal(
-                streamed[variable].to_numpy(),
-                streamed_memory[variable].to_numpy(),
-            )
 
-    import zarr
-
-    failure_path = tmp_path / "failed.zarr"
-
-    def fail_consolidation(*args, **kwargs):
-        raise RuntimeError("injected consolidation failure")
-
-    monkeypatch.setattr(zarr, "consolidate_metadata", fail_consolidation)
-    with pytest.raises(RuntimeError, match="injected"):
-        model.get_counterfactual_latent(
-            indices=[0],
-            zarr_path=failure_path,
-        )
-    assert not failure_path.exists()
-    assert not list(tmp_path.glob(".failed.zarr.tmp-*"))
+    model, _ = _make_v2_model()
+    paths = [tmp_path / "latent.zarr", tmp_path / "expression.zarr"]
+    calls = [private_counterfactual_latent, private_counterfactual_expression]
+    for private_call, path in zip(calls, paths, strict=True):
+        with pytest.raises(NotImplementedError, match="quarantined"):
+            private_call(model, indices=[0], zarr_path=path)
+        assert not path.exists()
 
 
 def test_local_sample_enrichment_self_exclusion_singletons_and_group_logmeanexp():
@@ -1996,10 +1871,10 @@ def test_centered_local_representation_routes_through_full_universe():
     )
 
 
-def test_centered_de_fails_closed_and_grouped_da_only_warns(monkeypatch):
-    """Unvalidated v2 DE is refused; grouped DA keeps its exact delegated output."""
+def test_centered_de_fails_closed_and_da_always_warns(monkeypatch):
+    """Public v2 DE is refused and every DA result is explicitly descriptive."""
     centered, adata = _make_v2_model()
-    with pytest.raises(RuntimeError, match="not validated for centered_v2"):
+    with pytest.raises(RuntimeError, match="disabled"):
         centered.differential_expression(adata=adata)
 
     legacy_adata = _make_adata()
@@ -2010,21 +1885,21 @@ def test_centered_de_fails_closed_and_grouped_da_only_warns(monkeypatch):
         n_latent_u=2,
     )
     legacy.is_trained_ = True
-    sentinel = object()
+    class Sentinel:
+        def __init__(self):
+            self.attrs = {}
+
+    sentinel = Sentinel()
     monkeypatch.setattr(
         "scvi.external.mrtotalvi._model._differential_abundance",
         lambda *args, **kwargs: sentinel,
     )
-    with pytest.warns(UserWarning, match="descriptive and non-inferential"):
+    with pytest.warns(UserWarning, match="descriptive, non-inferential"):
         assert (
             legacy.differential_abundance(
                 sample_cov_keys=["sample"],
             )
             is sentinel
         )
-    import warnings
-
-    with warnings.catch_warnings(record=True) as warning_record:
-        warnings.simplefilter("always")
+    with pytest.warns(UserWarning, match="descriptive, non-inferential"):
         assert legacy.differential_abundance() is sentinel
-    assert not warning_record

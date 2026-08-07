@@ -223,7 +223,7 @@ def test_mrtotalvi_singleton_mc_loss_matches_single_sample_loss(adata_basic):
         sample_key="sample",
         n_latent=N_LATENT,
         n_latent_u=5,
-        u_prior_mixture=False,
+        u_prior="standard",
     )
     module = model.module.eval()
 
@@ -354,8 +354,8 @@ def test_mrtotalvi_default_u_dimension_is_isomorphic(adata_basic):
     assert model.module.qz.fc is None
 
 
-def test_mrtotalvi_label_conditioned_mog_prior(adata_basic):
-    """labels_key switches the MoG prior to one component per label and biases logits."""
+def test_mrtotalvi_explicit_label_conditioned_mog_prior(adata_basic):
+    """Explicit supervision uses one MoG component per label and biases logits."""
     import torch
     from torch.distributions import MixtureSameFamily
 
@@ -368,8 +368,15 @@ def test_mrtotalvi_label_conditioned_mog_prior(adata_basic):
         batch_key="batch",
         labels_key="cell_type",
     )
-    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4,
-                      u_prior="mog")
+    model = MrTotalVI(
+        adata,
+        sample_key="sample",
+        n_latent=N_LATENT,
+        n_latent_u=4,
+        u_prior="mog",
+        u_prior_supervision="labels",
+        u_prior_label_weight=10.0,
+    )
 
     assert model.label_order.tolist() == ["B", "T"] or model.label_order.tolist() == ["T", "B"]
     assert model.module.u_prior_logits.shape == (model.summary_stats.n_labels,)
@@ -402,6 +409,8 @@ def test_mrtotalvi_label_conditioned_mog_flows_through_mc_loss(adata_basic):
         n_latent=N_LATENT,
         n_latent_u=4,
         z_u_prior=False,
+        u_prior_supervision="labels",
+        u_prior_label_weight=10.0,
     )
     module = model.module.train()
 
@@ -437,8 +446,7 @@ def test_mrtotalvi_gaussian_u_prior_and_z_u_prior_off(adata_basic):
         adata_basic,
         sample_key="sample",
         n_latent=N_LATENT,
-        u_prior="mog",
-        u_prior_mixture=False,
+        u_prior="standard",
         z_u_prior=False,
     )
     assert not hasattr(model.module, "u_prior_logits")
@@ -500,7 +508,8 @@ def test_mrtotalvi_save_load_preserves_latent_hierarchy(adata_basic, tmp_path):
         n_latent=N_LATENT,
         n_latent_u=4,
         u_prior="mog",
-        u_prior_mixture=True,
+        u_prior_supervision="labels",
+        u_prior_label_weight=10.0,
     )
 
     save_path = tmp_path / "mrtotalvi"
@@ -560,7 +569,7 @@ def test_mrtotalvi_differential_expression_returns_latent_statistics(adata_basic
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"], mc_samples=2, batch_size=32
     )
 
@@ -592,7 +601,7 @@ def test_mrtotalvi_de_mc_samples_1_fast_path(adata_basic):
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT, n_latent_u=4)
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"], mc_samples=1, batch_size=32
     )
     assert np.all(np.isfinite(de["beta"].values))
@@ -615,7 +624,7 @@ def test_mrtotalvi_de_donor_key_warning(adata_basic):
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
     with pytest.warns(UserWarning, match="donor_key"):
-        de = model.differential_expression(
+        de = model._legacy_differential_expression_for_reproducibility(
             sample_cov_keys=["condition"],
             donor_key="sample",
             mc_samples=2,
@@ -659,7 +668,7 @@ def test_mrtotalvi_de_raises_on_nonunique_cov(adata_basic):
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
     with pytest.raises(ValueError, match="not constant within"):
-        model.differential_expression(
+        model._legacy_differential_expression_for_reproducibility(
             sample_cov_keys=["timepoint"],
             mc_samples=2,
             batch_size=32,
@@ -696,7 +705,7 @@ def test_mrtotalvi_store_lfc_shapes_finite(adata_basic):
     n_proteins = adata.obsm["protein_expression"].shape[1]
     n_features = n_genes + n_proteins
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=2,
         batch_size=32,
@@ -721,7 +730,7 @@ def test_mrtotalvi_store_lfc_feature_coords(adata_basic):
     n_genes = adata.n_vars
     n_proteins = adata.obsm["protein_expression"].shape[1]
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=2,
         batch_size=32,
@@ -737,7 +746,7 @@ def test_mrtotalvi_store_lfc_pde_in_range(adata_basic):
     """pde values are in [0, 1] when delta is set."""
     model, adata = _de_lfc_model(adata_basic)
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=2,
         batch_size=32,
@@ -758,7 +767,7 @@ def test_mrtotalvi_store_lfc_baseline(adata_basic):
     n_cells = adata.n_obs
     n_features = adata.n_vars + adata.obsm["protein_expression"].shape[1]
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=2,
         batch_size=32,
@@ -777,7 +786,7 @@ def test_mrtotalvi_store_lfc_backward_compat(adata_basic):
     """store_lfc=False produces the same output as before (backward compat)."""
     model, adata = _de_lfc_model(adata_basic)
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=2,
         batch_size=32,
@@ -862,7 +871,7 @@ def test_mrtotalvi_lfc_is_nontrivial(adata_basic):
     """
     model, adata = _de_lfc_model(adata_basic)
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=4,
         batch_size=32,
@@ -1369,6 +1378,7 @@ def test_init_prior_from_data_vamprior():
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
                       u_prior="vamp", u_prior_mixture_k=K,
                       init_prior_from_data=True)
+    model._initialize_vamp_from_training_indices(np.arange(adata.n_obs - 20))
     pseudo = model.module.u_vamp_pseudo
     dim = model.module.n_input_genes + model.module.n_input_proteins
     assert pseudo.shape == (K, dim)
@@ -1382,7 +1392,7 @@ def test_init_prior_from_data_vamprior():
 
 
 def test_freeze_prior_after_init_mog():
-    """freeze_prior_after_init=True freezes MoG location/scale but keeps logits trainable."""
+    """Freezing a random/non-Vamp prior is rejected rather than silently changing it."""
 
     adata = _make_adata()
     MrTotalVI.setup_anndata(
@@ -1391,12 +1401,14 @@ def test_freeze_prior_after_init_mog():
         sample_key="sample",
         batch_key="batch",
     )
-    model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
-                      u_prior="mog", freeze_prior_after_init=True)
-    m = model.module
-    assert not m.u_prior_means.requires_grad, "u_prior_means should be frozen"
-    assert not m.u_prior_scales.requires_grad, "u_prior_scales should be frozen"
-    assert m.u_prior_logits.requires_grad, "u_prior_logits must remain trainable"
+    with pytest.raises(ValueError, match="data-initialized u_prior='vamp'"):
+        MrTotalVI(
+            adata,
+            sample_key="sample",
+            n_latent=N_LATENT,
+            u_prior="mog",
+            freeze_prior_after_init=True,
+        )
 
 
 def test_freeze_prior_after_init_vamp():
@@ -1412,7 +1424,9 @@ def test_freeze_prior_after_init_vamp():
     K = 4
     model = MrTotalVI(adata, sample_key="sample", n_latent=N_LATENT,
                       u_prior="vamp", u_prior_mixture_k=K,
+                      init_prior_from_data=True,
                       freeze_prior_after_init=True)
+    model._initialize_vamp_from_training_indices(np.arange(adata.n_obs - 20))
     m = model.module
     assert not m.u_vamp_pseudo.requires_grad, "u_vamp_pseudo should be frozen"
     assert m.u_prior_logits.requires_grad, "u_prior_logits must remain trainable"
@@ -1583,11 +1597,12 @@ def test_mrtotalvi_lfc_sign_known_positive_control():
         adata.obs["sample"].isin(["donor_0", "donor_1"]), "a", "b"
     )
 
-    # Inflate gene 0 for condition 'b' cells by 20× baseline mean
+    # Inflate gene 0 for condition 'b' cells by an integer 20× baseline shift;
+    # setup_anndata correctly refuses fractional pseudo-counts.
     X = adata.X.toarray() if sp.issparse(adata.X) else np.array(adata.X, dtype=np.float32)
     mean_g0 = float(X[:, 0].mean())
     mask_b = adata.obs["condition"] == "b"
-    X[mask_b.values, 0] += 20.0 * max(mean_g0, 1.0)
+    X[mask_b.values, 0] += 20 * max(int(np.ceil(mean_g0)), 1)
     adata.X = X.astype(np.float32)
 
     MrTotalVI.setup_anndata(
@@ -1600,7 +1615,7 @@ def test_mrtotalvi_lfc_sign_known_positive_control():
                       u_prior="mog")
     model.train(max_epochs=30, accelerator="cpu")
 
-    de = model.differential_expression(
+    de = model._legacy_differential_expression_for_reproducibility(
         sample_cov_keys=["condition"],
         mc_samples=10,
         batch_size=64,
@@ -1655,7 +1670,7 @@ def test_differential_abundance_trained_model_smoke(adata_basic):
 
 
 def test_mrtotalvi_n_labels_zero_mog_prior_smoke(adata_basic):
-    """MrTotalVI with u_prior_mixture=True and NO labels_key must not crash.
+    """MrTotalVI with the unsupervised MoG prior and no labels must not crash.
 
     This exercises the zero-label MoG-prior / classifier-guard branch (C-002).
     Without a labels_key the n_labels summary stat is 0; the MoG prior must
@@ -1674,7 +1689,7 @@ def test_mrtotalvi_n_labels_zero_mog_prior_smoke(adata_basic):
         adata,
         sample_key="sample",
         n_latent=N_LATENT,
-        u_prior_mixture=True,   # MoG path must not crash with zero labels
+        u_prior="mog",
     )
     model.train(max_epochs=MAX_EPOCHS_QUICK, accelerator="cpu")
 
@@ -1682,7 +1697,7 @@ def test_mrtotalvi_n_labels_zero_mog_prior_smoke(adata_basic):
     elbo_key = get_elbo_key(history)
     vals = history[elbo_key].to_numpy().astype(float).flatten()
     assert np.all(np.isfinite(vals)), (
-        f"Training {elbo_key} is not finite with n_labels=0 + u_prior_mixture=True: {vals}"
+        f"Training {elbo_key} is not finite with n_labels=0 + u_prior='mog': {vals}"
     )
 
     # Latent representation must be finite (no NaN from empty label table)
@@ -2056,27 +2071,8 @@ def test_compute_h_from_x_eps_warns_and_falls_back_without_u_anchor(adata_basic)
     assert torch.isfinite(out).all()
 
 
-def test_use_vmap_is_currently_ignored_by_differential_expression(adata_basic):
-    """Pins `use_vmap` as a genuine no-op so a future partial implementation is caught.
-
-    The parameter is accepted and documented as "currently ignored (reserved for future opt-in
-    vmap acceleration)" -- it appears nowhere in `_stats.py` beyond its signature and docstring.
-    A caller passing `use_vmap=True` therefore gets no behaviour change and no warning. This
-    asserts byte-identical LFCs across both settings; if vmap is ever partially wired up and
-    changes results, this fails rather than silently shifting numbers.
-
-    `mc_samples=1` is required: it takes the deterministic `qu.loc` fast path, so any difference
-    is attributable to `use_vmap` rather than to fresh `rsample` draws.
-    """
-    model, _ = _de_lfc_model(adata_basic)
-    kwargs = {
-        "sample_cov_keys": ["condition"],
-        "mc_samples": 1,
-        "batch_size": 32,
-        "store_lfc": True,
-    }
-
-    de_true = model.differential_expression(use_vmap=True, **kwargs)
-    de_false = model.differential_expression(use_vmap=False, **kwargs)
-
-    np.testing.assert_array_equal(de_true["lfc"].values, de_false["lfc"].values)
+def test_use_vmap_true_is_rejected_by_differential_expression(adata_basic):
+    """A requested vmap path fails before statistics instead of being ignored."""
+    model, _ = _untrained_model(adata_basic)
+    with pytest.raises(NotImplementedError, match="use_vmap=True"):
+        model.differential_expression(use_vmap=True)

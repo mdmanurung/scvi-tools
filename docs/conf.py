@@ -14,16 +14,25 @@ if TYPE_CHECKING:
     from typing import Any
 
 HERE = Path(__file__).parent
-sys.path[:0] = [str(HERE.parent / "src"), str(HERE.parent), str(HERE / "extensions")]
+SOURCE_ROOT = (HERE.parent / "src").resolve()
+sys.path[:0] = [str(HERE / "extensions")]
+
+if os.environ.get("CYTOANVI_INSTALLED_DOC_VALIDATION") == "1" and any(
+    Path(entry or ".").resolve() == SOURCE_ROOT for entry in sys.path
+):
+    raise RuntimeError(
+        "Installed-doc validation refuses a source-tree 'src' entry on sys.path. "
+        "Unset PYTHONPATH and install the exact cytoanvi wheel."
+    )
 
 # -- Project information -----------------------------------------------------
 
-info = metadata("scvi-tools")
+info = metadata("cytoanvi")
 project_name = info["Name"]
 author = info["Author"]
 copyright = f"{datetime.now():%Y}, {author}."
 version = info["Version"]
-repository_url = f"https://github.com/scverse/{project_name}"
+repository_url = "https://github.com/mdmanurung/scvi-tools"
 
 # The full version, including alpha/beta/rc tags
 release = info["Version"]

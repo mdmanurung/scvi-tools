@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mdmanurung.github.io/cytoanvi/schemas/artifact-manifest-v1.json",
+  "title": "cytoanvi usage-readiness artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate",
+    "source",
+    "build",
+    "dependency_authority",
+    "wheel",
+    "inventory",
+    "namespace_expectations",
+    "installed_acceptance"
+  ],
+  "properties": {
+    "schema_version": {"const": "cytoanvi-artifact-manifest-v1"},
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["distribution", "version", "build_ordinal"],
+      "properties": {
+        "distribution": {"const": "cytoanvi"},
+        "version": {"const": "0.2.0"},
+        "build_ordinal": {"const": 1}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree", "clean", "baseline_commit"],
+      "properties": {
+        "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+        "tree": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+        "clean": {"type": ["boolean", "null"]},
+        "baseline_commit": {"const": "297769d3c62b9228244a05469dc8349a55e4174c"}
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "attempt_id", "claim_path", "candidate_dir", "pid", "command", "python", "environment_digest", "started_at", "completed_at"],
+      "properties": {
+        "status": {"enum": ["not_built", "building", "passed", "failed"]},
+        "attempt_id": {"type": ["string", "null"]},
+        "claim_path": {"const": "docs/artifacts/cytoanvi-0.2.0/.cytoanvi-0.2.0-build-ordinal-1.claim.json"},
+        "candidate_dir": {"type": ["string", "null"]},
+        "pid": {"type": ["integer", "null"], "minimum": 1},
+        "command": {"type": ["string", "null"]},
+        "python": {"type": ["string", "null"]},
+        "environment_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "started_at": {"type": ["string", "null"], "format": "date-time"},
+        "completed_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "dependency_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "kind", "path", "sha256"],
+      "properties": {
+        "status": {"enum": ["missing", "available", "verified"]},
+        "kind": {"enum": ["none", "hashed_lock_and_wheelhouse"]},
+        "path": {"type": ["string", "null"]},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "wheel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "filename", "sha256", "size_bytes", "metadata_name", "metadata_version"],
+      "properties": {
+        "path": {"type": ["string", "null"]},
+        "filename": {"type": ["string", "null"], "pattern": "^cytoanvi-0\\.2\\.0-[A-Za-z0-9_.-]+\\.whl$"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": ["integer", "null"], "minimum": 1},
+        "metadata_name": {"type": ["string", "null"]},
+        "metadata_version": {"type": ["string", "null"]}
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["details_path", "details_sha256", "record_sha256", "record_entries", "wheel_files", "source_files", "acceptance_inputs", "source_vs_wheel"],
+      "properties": {
+        "details_path": {"const": "docs/artifacts/cytoanvi-0.2.0/inventory.json"},
+        "details_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "record_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "record_entries": {"type": ["integer", "null"], "minimum": 1},
+        "wheel_files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "source_files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "acceptance_inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "size_bytes"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "size_bytes": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "source_vs_wheel": {"enum": ["pending", "match", "mismatch"]}
+      }
+    },
+    "namespace_expectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_distributions", "forbidden_distributions", "owned_namespaces"],
+      "properties": {
+        "required_distributions": {"const": ["cytoanvi"]},
+        "forbidden_distributions": {"const": ["scvi-tools"]},
+        "owned_namespaces": {"const": ["cytoanvi", "scvi"]}
+      }
+    },
+    "installed_acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "acceptance_attempt_id", "receipt", "receipt_sha256", "blocker"],
+      "properties": {
+        "status": {"enum": ["pending", "in_progress", "passed", "failed", "blocked_dependency_authority"]},
+        "acceptance_attempt_id": {"type": ["string", "null"]},
+        "receipt": {"const": "docs/artifacts/cytoanvi-0.2.0/installed-acceptance.json"},
+        "receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "blocker": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

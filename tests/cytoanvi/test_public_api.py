@@ -14,7 +14,6 @@ from anndata import AnnData
 PUBLIC_EXPORTS = [
     "CytoANVI",
     "CytoANVAE",
-    "get_uncertainty_threshold",
     "hierarchy",
     "mapping_qc",
 ]
@@ -39,14 +38,12 @@ def test_top_level_imports_are_public_entrypoints():
     from cytoanvi import (
         CytoANVAE,
         CytoANVI,
-        get_uncertainty_threshold,
         hierarchy,
         mapping_qc,
     )
 
     assert CytoANVI.__name__ == "CytoANVI"
     assert CytoANVAE.__name__ == "CytoANVAE"
-    assert callable(get_uncertainty_threshold)
     assert hierarchy.__name__ == "cytoanvi.hierarchy"
     assert mapping_qc.__name__ == "cytoanvi.mapping_qc"
 
@@ -54,6 +51,14 @@ def test_top_level_imports_are_public_entrypoints():
 def test_legacy_scvi_external_cytoanvi_import_is_intentionally_absent():
     with pytest.raises((ImportError, AttributeError)):
         exec("from scvi.external import CytoANVI", {})
+
+
+def test_tta_threshold_helper_is_not_a_stable_top_level_export():
+    import cytoanvi
+
+    assert not hasattr(cytoanvi, "get_uncertainty_threshold")
+    with pytest.raises(ImportError):
+        exec("from cytoanvi import get_uncertainty_threshold", {})
 
 
 @pytest.mark.parametrize(
@@ -72,14 +77,14 @@ def test_legacy_scvi_external_cytoanvi_import_is_intentionally_absent():
             "(self, adata: 'AnnData', n_hidden: 'int' = 128, "
             "n_latent: 'int | None' = None, n_layers: 'int' = 1, "
             "dropout_rate: 'float' = 0.1, protein_likelihood: "
-            '"Literal[\'normal\', \'beta\']" = \'normal\', latent_distribution: '
-            '"Literal[\'normal\', \'ln\']" = \'normal\', encode_backbone_only: '
+            "\"Literal['normal', 'beta']\" = 'normal', latent_distribution: "
+            "\"Literal['normal', 'ln']\" = 'normal', encode_backbone_only: "
             "'bool | None' = None, encoder_marker_list: 'list | None' = None, "
             "linear_classifier: 'bool' = False, y_prior: "
-            '"Literal[\'uniform\', \'empirical\'] | torch.Tensor | None" = \'uniform\', '
+            "\"Literal['uniform', 'empirical'] | torch.Tensor | None\" = 'uniform', "
             "class_weighting: "
-            '"Literal[\'none\', \'inverse_frequency\', \'sqrt_inverse_frequency\'] | '
-            'torch.Tensor | None" = \'none\', class_weight_clip: \'float\' = 10.0, '
+            "\"Literal['none', 'inverse_frequency', 'sqrt_inverse_frequency'] | "
+            "torch.Tensor | None\" = 'none', class_weight_clip: 'float' = 10.0, "
             "hierarchy_edges: 'dict[str, list[str]] | None' = None, "
             "reachability_matrix: 'np.ndarray | torch.Tensor | None' = None, **model_kwargs)",
         ),
@@ -111,7 +116,7 @@ def test_legacy_scvi_external_cytoanvi_import_is_intentionally_absent():
         (
             "load_query_data_with_replay",
             "(adata: 'AnnData', reference_model: 'CytoANVI', replay_adata: 'AnnData', "
-            "control_adata: 'AnnData | None' = None, combine_type: 'str' = 'product', "
+            "control_adata: 'AnnData', combine_type: 'str' = 'product', "
             "freeze_classifier: 'bool' = True, seed: 'int' = 0, **load_query_kwargs)",
         ),
         (
@@ -119,6 +124,12 @@ def test_legacy_scvi_external_cytoanvi_import_is_intentionally_absent():
             "(self, adata: 'AnnData | None' = None, indices=None, "
             "batch_size: 'int | None' = None, tta_rep: 'int' = 50, "
             "mode: 'str' = 'latent') -> 'np.ndarray'",
+        ),
+        (
+            "experimental_get_uncertainty",
+            "(self, adata: 'AnnData | None' = None, indices=None, "
+            "batch_size: 'int | None' = None, tta_rep: 'int' = 50, "
+            "mode: 'str' = 'latent', seed: 'int | None' = None) -> 'np.ndarray'",
         ),
         (
             "score_query_mapping",

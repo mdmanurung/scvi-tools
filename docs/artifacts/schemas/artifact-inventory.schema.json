@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mdmanurung.github.io/cytoanvi/schemas/artifact-inventory-v1.json",
+  "title": "Complete cytoanvi wheel and source inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_commit", "wheel_sha256", "record", "wheel_files", "source_files", "acceptance_inputs"],
+  "properties": {
+    "schema_version": {"const": "cytoanvi-artifact-inventory-v1"},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "wheel_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "lines"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "lines": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "wheel_files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "source_files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "acceptance_inputs": {"type": "array", "items": {"$ref": "#/$defs/file"}}
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

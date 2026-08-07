@@ -4,6 +4,10 @@
 
 Accepted.
 
+Amended by ADR-0010 for `cytoanvi 0.2.0`: the hierarchy remains historical authority, but implicit
+label supervision, public inferential DE, permissive `use_vmap=True`, and ambiguous prior migration
+are superseded by explicit fail-closed contracts.
+
 ## Context
 
 TotalVI models multimodal gene + protein expression data with a flat `N(0,1)` prior on a shared
@@ -50,8 +54,9 @@ loss formulation.
 **Two-level KL loss with MrVI parity.**
 - `kl_u` is computed explicitly against either a learned mixture-of-Gaussians prior over `u` or an
   analytic Gaussian prior.
-- If `labels_key` is registered and `n_labels > 1`, the MoG prior uses one component per label and
-  biases the matching component logits by `u_prior_label_weight`.
+- Historical checkpoints may encode label-conditioned MoG behavior. New 0.2.0 calls keep labels as
+  metadata unless `u_prior_supervision="labels"` is explicit with a finite positive weight; the
+  default is `"none"` with weight `0.0`, and contradictory migrations fail closed.
 - `kl_z = -log p(eps)` is added when `z_u_prior=True`; `z_u_prior=False` drops the residual prior
   penalty while retaining `kl_u`.
 - The custom `kl_u + kl_z` replaces TotalVI's parent `kl_div_z` value inside
@@ -85,17 +90,17 @@ which follows the same pattern.
   require embedding surgery or a projection module (future work).
 - **No `latent_distribution="ln"`** — architecturally invalid; asserted rather than silently ignored.
 - **No minified-mode inference** — the hierarchy requires the full encoder path.
-- **Decoded RNA/protein LFC** — `differential_expression` now supports `store_lfc=True`, which
-  returns decoded gene- and protein-space `lfc`, `lfc_std`, optional `pde` (when `delta` is
-  provided), and optional `baseline_expression`. Design decisions resolved:
+- **Historical decoded RNA/protein LFC internals** — the original implementation supported
+  `store_lfc=True` for reproduction. ADR-0010 removes this from the public MrTotalVI contract:
+  `differential_expression()` now fails closed in both legacy and centered-v2 modes and directs
+  biological inference to donor-pseudobulk. The retained private historical decisions were:
   - **D-021 (deterministic protein background)**: the LFC contrast path uses
     `rate_back = exp(back_alpha)` (deterministic) instead of sampling from the background prior, so
     x_0 / x_1 calls differ only via `extra_eps` and background noise does not inflate LFC variance.
   - **D-022 (feature layout)**: `compute_h_from_x_eps` returns `concat(px_scale, py_scale)`;
     feature coordinates are split into `"gene"` / `"protein"` labels at the model level.
-  - **D-023 (vmap policy)**: default `use_vmap=False` (explicit per-donor loop) because MrTotalVI's
-    inherited TotalVI decoder uses BatchNorm, which breaks `torch.vmap`. Reserved as opt-in future
-    work.
+  - **D-023 (vmap policy, superseded)**: `use_vmap=False` retains the explicit per-donor loop;
+    `use_vmap=True` now raises before inference/statistics rather than acting as a reserved opt-in.
 
 ### MultiVI path (implemented)
 `EncoderUZ`, `ConditionalNormalization`, and `NormalDistOutputNN` are factored into

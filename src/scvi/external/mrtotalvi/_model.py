@@ -10,13 +10,21 @@ import torch
 import xarray as xr
 from tqdm import tqdm
 
-from scvi import REGISTRY_KEYS
+from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager, fields
 from scvi.model._totalvi import TOTALVI
 from scvi.model.base import EmbeddingMixin
 from scvi.module._constants import MODULE_KEYS
 from scvi.utils import setup_anndata_dsp
 
+from ._contracts import (
+    ordered_indices_sha256,
+    resolve_u_prior,
+    resolve_u_prior_supervision,
+    take_matrix_rows,
+    validate_anndata_counts,
+    validate_sample_metadata,
+)
 from ._counterfactual import (
     get_counterfactual_expression as _get_counterfactual_expression,
 )
@@ -79,6 +87,20 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         ``0.0`` → ``p(eps) = N(0, 1)``.
     learn_z_u_prior_scale
         Whether ``pz_scale`` is a learnable parameter.
+    u_prior
+        Resolved prior enum: exactly ``"standard"``, ``"mog"``, or ``"vamp"``.
+        New calls default to ``"mog"``.
+    u_prior_mixture
+        Deprecated checkpoint-migration input. Only the exact combinations in
+        the 0.2 migration table are accepted; new calls should leave it ``None``.
+    u_prior_supervision
+        Resolved supervision mode. Omitted/``None`` with zero weight resolves
+        to ``"none"``. ``"labels"`` is explicit opt-in and requires registered
+        labels plus a finite positive weight.
+    u_prior_label_weight
+        Label-conditioned mixture-logit weight. Defaults to ``0.0``.
+    u_prior_init_seed
+        Deterministic seed for training-only Vamp data initialization.
     hierarchy_mode
         ``"legacy"`` preserves historical numerics. ``"centered_v2"`` opts
         into full-registered-universe residual centering and requires
@@ -95,11 +117,9 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         ``kl_weight`` annealing.  Default ``1.0`` preserves prior behaviour.
     init_prior_from_data
         If ``True`` and ``u_prior="vamp"``, run k-means on a random subsample
-        (≤10 000 cells) of the raw encoder input (genes + proteins) and use the
-        centroids — mapped through the softplus-inverse — to initialise VampPrior
-        pseudo-inputs near the data manifold (see :cite:t:`Tomczak2018`).
-        Ignored for ``u_prior="mog"`` (latent-space centroids require a forward
-        pass, not available at init time).
+        (≤10 000 cells) of the raw encoder input from the frozen training split
+        only. The seed and ordered training-index digest are persisted before
+        optimization. Non-Vamp use raises.
     freeze_prior_after_init
         If ``True`` and ``u_prior="vamp"``, freeze the VampPrior pseudo-input
         parameters after data-driven initialisation so they do not drift during
@@ -158,10 +178,12 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         z_u_prior: bool = True,
         z_u_prior_scale: float = 0.0,
         u_prior_scale: float = 0.0,
-        u_prior_mixture: bool = True,
+        u_prior_mixture: bool | None = None,
         u_prior_mixture_k: int = 20,
-        u_prior_label_weight: float = 10.0,
+        u_prior_label_weight: float = 0.0,
         u_prior: str = "mog",
+        u_prior_supervision: Literal["none", "labels"] | None = None,
+        u_prior_init_seed: int = 0,
         learn_z_u_prior_scale: bool = False,
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
@@ -179,6 +201,40 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         batch_embedding_kwargs: dict | None = None,
         **model_kwargs,
     ) -> None:
+        resolved_u_prior, resolved_u_prior_mixture = resolve_u_prior(
+            u_prior,
+            u_prior_mixture,
+        )
+        manager = self._get_most_recent_anndata_manager(adata, required=True)
+        has_registered_labels = manager.registry["setup_args"].get("labels_key") is not None
+        resolved_supervision, resolved_label_weight = resolve_u_prior_supervision(
+            u_prior_supervision,
+            u_prior_label_weight,
+            has_registered_labels=has_registered_labels,
+            legacy_checkpoint_hint=u_prior_mixture is not None,
+            resolved_prior=resolved_u_prior,
+        )
+        resolved_u_prior_mixture_k = int(u_prior_mixture_k)
+        registered_n_labels = int(manager.summary_stats.get("n_labels", 0))
+        if (
+            u_prior_mixture is not None
+            and resolved_u_prior == "vamp"
+            and registered_n_labels > 1
+        ):
+            # Historical labelled Vamp checkpoints used one global mixture
+            # with K equal to the registered label count. Preserve both K and
+            # the unconditioned (one-dimensional) categorical weights.
+            resolved_u_prior_mixture_k = registered_n_labels
+        if not isinstance(u_prior_init_seed, int) or isinstance(u_prior_init_seed, bool):
+            raise TypeError("u_prior_init_seed must be an integer.")
+        if init_prior_from_data and resolved_u_prior != "vamp":
+            raise ValueError("init_prior_from_data=True requires u_prior='vamp'.")
+        if freeze_prior_after_init and (
+            resolved_u_prior != "vamp" or not init_prior_from_data
+        ):
+            raise ValueError(
+                "freeze_prior_after_init=True requires data-initialized u_prior='vamp'."
+            )
         if hierarchy_mode not in {"legacy", "centered_v2"}:
             raise ValueError("hierarchy_mode must be one of {'legacy', 'centered_v2'}.")
         if u_encoder_mode not in {"sample_conditioned", "sample_blind"}:
@@ -210,10 +266,11 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             n_latent_u=n_latent_u,
             z_u_prior=z_u_prior,
             u_prior_scale=u_prior_scale,
-            u_prior_mixture=u_prior_mixture,
-            u_prior_mixture_k=u_prior_mixture_k,
-            u_prior_label_weight=u_prior_label_weight,
-            u_prior=u_prior,
+            u_prior_mixture=resolved_u_prior_mixture,
+            u_prior_mixture_k=resolved_u_prior_mixture_k,
+            u_prior_label_weight=resolved_label_weight,
+            u_prior=resolved_u_prior,
+            u_prior_supervision=resolved_supervision,
             qz_kwargs=qz_kwargs,
             qu_kwargs=qu_kwargs,
             hierarchy_mode=hierarchy_mode,
@@ -244,41 +301,6 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             )
         n_obs_per_sample = torch.tensor(counts.values, dtype=torch.float32)
 
-        prior_centroids = None
-        if init_prior_from_data and u_prior == "vamp":
-            from scipy.sparse import issparse
-            from sklearn.cluster import KMeans
-
-            rng = np.random.default_rng(0)
-            n_cells = adata.n_obs
-            idx = rng.choice(n_cells, min(n_cells, 10_000), replace=False)
-
-            X_genes = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)[idx]
-            if issparse(X_genes):
-                X_genes = X_genes.toarray()
-            X_genes = X_genes.astype(np.float32)
-
-            n_proteins = self.module.n_input_proteins
-            if n_proteins > 0:
-                # get_from_registry returns ndarray, DataFrame, or sparse; densify before indexing
-                # because np.asarray(sparse_matrix) yields a 0-d object array and [idx] raises.
-                raw_prot = self.adata_manager.get_from_registry(REGISTRY_KEYS.PROTEIN_EXP_KEY)
-                if issparse(raw_prot):
-                    raw_prot = raw_prot.toarray()
-                X_prot = np.asarray(raw_prot)[idx]
-                X_combined = np.hstack([X_genes, X_prot.astype(np.float32)])
-            else:
-                X_combined = X_genes
-
-            kmeans = KMeans(n_clusters=u_prior_mixture_k, random_state=0, n_init="auto")
-            kmeans.fit(X_combined)
-            c = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)
-            # Softplus-inverse: F.softplus(prior_centroids) ≈ data centroids.
-            # For c > 20, softplus(c) ≈ c (error < 2e-9), so skip expm1 to avoid
-            # float32 overflow at c > ~88 which would produce inf → NaN in encoder.
-            safe_c = c.clamp(min=1e-6, max=20.0)
-            prior_centroids = torch.where(c > 20.0, c, torch.log(torch.expm1(safe_c)))
-
         self.module._setup_hierarchy(
             n_sample=n_sample,
             n_latent_sample=n_latent_sample,
@@ -290,8 +312,8 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             scale_observations=scale_observations,
             n_obs_per_sample=n_obs_per_sample,
             n_labels=self.summary_stats.get("n_labels", 0),
-            prior_centroids=prior_centroids,
-            freeze_prior_after_init=freeze_prior_after_init,
+            prior_centroids=None,
+            freeze_prior_after_init=False,
         )
 
         # Sample-level metadata for coordinate labelling
@@ -299,6 +321,16 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         self.sample_key = sample_key
         self.hierarchy_mode = hierarchy_mode
         self.u_encoder_mode = u_encoder_mode
+        self.resolved_u_prior = resolved_u_prior
+        self.u_prior_supervision = resolved_supervision
+        self.u_prior_label_weight = resolved_label_weight
+        self.u_prior_init_seed = u_prior_init_seed
+        self._init_prior_from_data = bool(init_prior_from_data)
+        self._freeze_prior_after_init = bool(freeze_prior_after_init)
+        self.vamp_training_indices_sha256_ = None
+        self.vamp_initialization_seed_ = (
+            u_prior_init_seed if init_prior_from_data else None
+        )
         self.sample_order = (
             self.adata_manager.get_state_registry(REGISTRY_KEYS.SAMPLE_KEY).categorical_mapping
         )
@@ -307,18 +339,122 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         )
         self.sample_info = self.adata.obs[[sample_key]].drop_duplicates().reset_index(drop=True)
 
-        self._model_summary_string = (
-            f"MrTotalVI Model\n"
-            f"  n_latent: {n_latent}, n_latent_u: {self.module.n_latent_u}, "
-            f"n_latent_sample: {n_latent_sample}\n"
-            f"  n_sample: {n_sample}, z_u_prior: {z_u_prior}, "
-            f"z_u_prior_scale: {z_u_prior_scale}\n"
-            f"  u_prior_mixture: {u_prior_mixture}, "
-            f"u_prior_mixture_k: {self.module.resolved_u_prior_mixture_k}\n"
-            f"  gene_likelihood: {model_kwargs.get('gene_likelihood', 'nb')}"
-        )
         # Overwrite init_params_ from TOTALVI with MrTotalVI's full local scope
         self.init_params_ = self._get_init_params(locals())
+        self.init_params_["non_kwargs"].update(
+            {
+                "u_prior": resolved_u_prior,
+                "u_prior_mixture": None,
+                "u_prior_supervision": resolved_supervision,
+                "u_prior_label_weight": resolved_label_weight,
+                "u_prior_mixture_k": resolved_u_prior_mixture_k,
+                "u_prior_init_seed": u_prior_init_seed,
+            }
+        )
+        self._refresh_model_summary()
+
+    def _refresh_model_summary(self) -> None:
+        """Render the resolved scientific semantics, including checkpoint metadata."""
+        self._model_summary_string = (
+            "MrTotalVI Model\n"
+            f"  hierarchy_mode: {self.hierarchy_mode}, "
+            f"u_encoder_mode: {self.u_encoder_mode}\n"
+            f"  n_latent: {self.module.n_latent}, "
+            f"n_latent_u: {self.module.n_latent_u}, "
+            f"n_latent_sample: {self.module._n_latent_sample}\n"
+            f"  n_sample: {self.summary_stats.n_sample}, "
+            f"z_u_prior: {self.module.z_u_prior}\n"
+            f"  u_prior: {self.resolved_u_prior}, "
+            f"u_prior_mixture_k: {self.module.resolved_u_prior_mixture_k}\n"
+            f"  u_prior_supervision: {self.u_prior_supervision}, "
+            f"u_prior_label_weight: {self.u_prior_label_weight}\n"
+            f"  vamp_initialization_seed: {self.vamp_initialization_seed_}, "
+            "vamp_training_indices_sha256: "
+            f"{self.vamp_training_indices_sha256_}"
+        )
+
+    def _initialize_vamp_from_training_indices(self, train_indices) -> None:
+        """Initialize Vamp pseudo-inputs from the frozen training split only."""
+        if not self._init_prior_from_data:
+            return
+
+        from sklearn.cluster import KMeans
+
+        ordered_indices = np.asarray(train_indices, dtype=np.int64).reshape(-1)
+        if ordered_indices.size == 0:
+            raise ValueError("Cannot initialize VampPrior from an empty training split.")
+        if len(np.unique(ordered_indices)) != ordered_indices.size:
+            raise ValueError("VampPrior training indices must be unique.")
+        if (ordered_indices < 0).any() or (ordered_indices >= self.adata.n_obs).any():
+            raise ValueError("VampPrior training indices are out of AnnData bounds.")
+
+        digest = ordered_indices_sha256(ordered_indices)
+        if self.vamp_training_indices_sha256_ is not None:
+            if self.vamp_training_indices_sha256_ != digest:
+                raise RuntimeError(
+                    "VampPrior was already initialized from a different training "
+                    "boundary; continuing would silently change checkpoint semantics."
+                )
+            if self._freeze_prior_after_init:
+                self.module.u_vamp_pseudo.requires_grad_(False)
+            return
+
+        rng = np.random.default_rng(self.u_prior_init_seed)
+        selected = rng.choice(
+            ordered_indices,
+            min(ordered_indices.size, 10_000),
+            replace=False,
+        )
+        n_components = self.module.resolved_u_prior_mixture_k
+        if selected.size < n_components:
+            raise ValueError(
+                "The frozen training split has fewer cells than VampPrior components: "
+                f"{selected.size} < {n_components}."
+            )
+
+        genes = take_matrix_rows(
+            self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY),
+            selected,
+        ).astype(np.float32, copy=False)
+        if self.module.n_input_proteins:
+            proteins = take_matrix_rows(
+                self.adata_manager.get_from_registry(REGISTRY_KEYS.PROTEIN_EXP_KEY),
+                selected,
+            ).astype(np.float32, copy=False)
+            combined = np.hstack([genes, proteins])
+        else:
+            combined = genes
+
+        kmeans = KMeans(
+            n_clusters=n_components,
+            random_state=self.u_prior_init_seed,
+            n_init="auto",
+        )
+        kmeans.fit(combined)
+        centroids = torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32)
+        safe = centroids.clamp(min=1e-6, max=20.0)
+        pseudo = torch.where(
+            centroids > 20.0,
+            centroids,
+            torch.log(torch.expm1(safe)),
+        )
+        if not torch.isfinite(pseudo).all():
+            raise RuntimeError(
+                "Training-only VampPrior initialization produced non-finite values."
+            )
+        with torch.no_grad():
+            self.module.u_vamp_pseudo.copy_(
+                pseudo.to(
+                    device=self.module.u_vamp_pseudo.device,
+                    dtype=self.module.u_vamp_pseudo.dtype,
+                )
+            )
+        if self._freeze_prior_after_init:
+            self.module.u_vamp_pseudo.requires_grad_(False)
+
+        self.vamp_training_indices_sha256_ = digest
+        self.vamp_initialization_seed_ = self.u_prior_init_seed
+        self._refresh_model_summary()
 
     @classmethod
     def load(
@@ -397,21 +533,46 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         model.module.hierarchy_mode = resolved_hierarchy_mode
         model.module.u_encoder_mode = resolved_u_encoder_mode
         model.module.qu.u_encoder_mode = resolved_u_encoder_mode
+        if (
+            model._freeze_prior_after_init
+            and model.vamp_training_indices_sha256_ is not None
+        ):
+            model.module.u_vamp_pseudo.requires_grad_(False)
         model.init_params_["non_kwargs"]["hierarchy_mode"] = resolved_hierarchy_mode
         model.init_params_["non_kwargs"]["u_encoder_mode"] = resolved_u_encoder_mode
+        model._refresh_model_summary()
         return model
 
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
 
-    def train(self, *args, accelerator: str = "auto", **kwargs) -> None:
-        """Train MrTotalVI.
+    def train(
+        self,
+        max_epochs: int | None = None,
+        lr: float = 4e-3,
+        accelerator: str = "auto",
+        devices: int | list[int] | str = "auto",
+        train_size: float | None = None,
+        validation_size: float | None = None,
+        shuffle_set_split: bool = True,
+        batch_size: int = 256,
+        early_stopping: bool = True,
+        check_val_every_n_epoch: int | None = None,
+        reduce_lr_on_plateau: bool = True,
+        n_steps_kl_warmup: int | None = None,
+        n_epochs_kl_warmup: int | None = None,
+        adversarial_classifier: bool | None = None,
+        datasplitter_kwargs: dict | None = None,
+        plan_kwargs: dict | None = None,
+        external_indexing: list[np.ndarray] | None = None,
+        **kwargs,
+    ) -> None:
+        """Train MrTotalVI after freezing any data-derived prior boundary.
 
-        Identical to :meth:`~scvi.model.TOTALVI.train` but warns when no CUDA
-        device is detected instead of silently falling back to CPU.
-
-        Pass ``accelerator='cpu'`` explicitly to suppress the warning and run on CPU.
+        Data-initialized Vamp pseudo-inputs are resolved from the exact training
+        indices before the first optimizer step. Pass ``accelerator='cpu'``
+        explicitly to suppress the no-GPU warning.
         """
         if accelerator == "auto":
             if torch.cuda.is_available():
@@ -424,7 +585,47 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
                     UserWarning,
                     stacklevel=2,
                 )
-        super().train(*args, accelerator=accelerator, **kwargs)
+
+        resolved_external_indexing = external_indexing
+        if self._init_prior_from_data:
+            split_kwargs = dict(datasplitter_kwargs or {})
+            splitter = self._data_splitter_cls(
+                self.adata_manager,
+                train_size=train_size,
+                validation_size=validation_size,
+                shuffle_set_split=shuffle_set_split,
+                batch_size=batch_size or settings.batch_size,
+                external_indexing=external_indexing,
+                **split_kwargs,
+            )
+            splitter.setup()
+            resolved_external_indexing = [
+                np.asarray(splitter.train_idx, dtype=np.int64),
+                np.asarray(splitter.val_idx, dtype=np.int64),
+                np.asarray(splitter.test_idx, dtype=np.int64),
+            ]
+            self._initialize_vamp_from_training_indices(splitter.train_idx)
+
+        return super().train(
+            max_epochs=max_epochs,
+            lr=lr,
+            accelerator=accelerator,
+            devices=devices,
+            train_size=train_size,
+            validation_size=validation_size,
+            shuffle_set_split=shuffle_set_split,
+            batch_size=batch_size,
+            early_stopping=early_stopping,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            reduce_lr_on_plateau=reduce_lr_on_plateau,
+            n_steps_kl_warmup=n_steps_kl_warmup,
+            n_epochs_kl_warmup=n_epochs_kl_warmup,
+            adversarial_classifier=adversarial_classifier,
+            datasplitter_kwargs=datasplitter_kwargs,
+            plan_kwargs=plan_kwargs,
+            external_indexing=resolved_external_indexing,
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------
     # Data registration
@@ -453,13 +654,14 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         ----------
         %(param_adata)s
         protein_expression_obsm_key
-            Key in ``adata.obsm`` for protein expression data.
+            Key in ``adata.obsm`` for raw, finite, non-negative, integer-like
+            protein counts. Every value is validated before registration.
         sample_key
             Key in ``adata.obs`` identifying the donor/sample for each cell.
             Each unique value becomes one row in the per-sample embedding table.
         labels_key
-            Optional key in ``adata.obs`` identifying labels used to condition
-            the mixture-of-Gaussians prior over ``u``.
+            Optional label metadata. Registration alone never changes the
+            objective; label supervision requires explicit constructor opt-in.
         protein_names_uns_key
             Key in ``adata.uns`` for protein names.
         %(param_batch_key)s
@@ -474,6 +676,11 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         -------
         %(returns)s
         """
+        validate_anndata_counts(
+            adata,
+            layer=layer,
+            protein_expression_obsm_key=protein_expression_obsm_key,
+        )
         # Add integer index column required by compute_local_statistics
         adata.obs["_indices"] = np.arange(adata.n_obs).astype(int)
 
@@ -551,7 +758,7 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         batch_size: int = 128,
         n_mc_samples: int = 1,
     ) -> xr.Dataset:
-        """Compute MrVI-style differential abundance log probabilities over ``u``.
+        """Compute descriptive MrVI-style abundance scores over ``u``.
 
         Parameters
         ----------
@@ -576,14 +783,23 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             See :func:`~scvi.external.mrtotalvi._stats.differential_abundance`
             for full semantics.  Default ``1`` preserves deterministic behavior.
         """
-        if sample_cov_keys:
-            warnings.warn(
-                "Grouped differential_abundance() output is descriptive and "
-                "non-inferential; it is not a calibrated hypothesis test.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return _differential_abundance(
+        adata = self._validate_anndata(adata)
+        selected_samples, _ = validate_sample_metadata(
+            adata.obs,
+            sample_key=self.sample_key,
+            covariate_keys=list(sample_cov_keys or []),
+            donor_key=donor_key,
+            sample_subset=sample_subset,
+            authoritative_order=self.sample_order,
+        )
+        warnings.warn(
+            "differential_abundance() returns descriptive, non-inferential "
+            "model scores. Use a separately validated replicate-aware method "
+            "for biological abundance inference.",
+            UserWarning,
+            stacklevel=2,
+        )
+        result = _differential_abundance(
             self,
             adata=adata,
             sample_key=self.sample_key,
@@ -594,7 +810,16 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             donor_key=donor_key,
             batch_size=batch_size,
             n_mc_samples=n_mc_samples,
+            validated_sample_order=selected_samples,
         )
+        result.attrs.update(
+            {
+                "interpretation": "descriptive_non_inferential",
+                "biological_inference_supported": False,
+                "sample_order_contract": "declared_subset_order",
+            }
+        )
+        return result
 
     def get_outlier_cell_sample_pairs(
         self,
@@ -646,8 +871,15 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         uses the full registered sample universe, even when ``target_samples``
         requests a subset. Targets cannot extrapolate to unregistered samples,
         and outputs are model transformations rather than causal interventions.
-        Requests estimated above 512 MiB require ``zarr_path`` or subsetting.
+        Public streaming/Zarr export is quarantined. Requests estimated above
+        512 MiB must be reduced through explicit subsetting.
         """
+        if zarr_path is not None or zarr_chunks is not None:
+            raise NotImplementedError(
+                "Public streaming/Zarr export is quarantined for MrTotalVI. "
+                "Use bounded in-memory requests with explicit cell, target, and "
+                "feature subsetting."
+            )
         return _get_counterfactual_latent(
             self,
             adata=adata,
@@ -662,8 +894,8 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             batch_size=batch_size,
             target_chunk_size=target_chunk_size,
             random_state=random_state,
-            zarr_path=zarr_path,
-            zarr_chunks=zarr_chunks,
+            zarr_path=None,
+            zarr_chunks=None,
         )
 
     def get_counterfactual_expression(
@@ -708,8 +940,15 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         -----
         This method requires ``hierarchy_mode="centered_v2"`` and is limited to
         registered target samples. It returns non-causal model transformations.
-        Requests estimated above 512 MiB require ``zarr_path`` or subsetting.
+        Public streaming/Zarr export is quarantined. Requests estimated above
+        512 MiB must be reduced through explicit subsetting.
         """
+        if zarr_path is not None or zarr_chunks is not None:
+            raise NotImplementedError(
+                "Public streaming/Zarr export is quarantined for MrTotalVI. "
+                "Use bounded in-memory requests with explicit cell, target, and "
+                "feature subsetting."
+            )
         return _get_counterfactual_expression(
             self,
             adata=adata,
@@ -731,8 +970,8 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             target_chunk_size=target_chunk_size,
             feature_chunk_size=feature_chunk_size,
             random_state=random_state,
-            zarr_path=zarr_path,
-            zarr_chunks=zarr_chunks,
+            zarr_path=None,
+            zarr_chunks=None,
         )
 
     def local_sample_enrichment(
@@ -804,7 +1043,43 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         use_vmap: bool = False,
         **filter_samples_kwargs,
     ) -> xr.Dataset:
-        """MrVI-style latent-space differential expression.
+        """Refuse public cell-level DE/LFC for every MrTotalVI hierarchy.
+
+        Biological differential expression requires a donor-pseudobulk method
+        such as PyDESeq2, edgeR, or dreamlet. Historical latent-space machinery
+        is retained only in a private reproducibility method and is not a
+        calibrated inferential API.
+        """
+        if use_vmap:
+            raise NotImplementedError(
+                "use_vmap=True is not implemented for MrTotalVI statistics."
+            )
+        raise RuntimeError(
+            "MrTotalVI.differential_expression() is disabled: legacy and "
+            "centered-v2 cell-level p-values/LFC are not validated for biological "
+            "inference. Use donor-pseudobulk PyDESeq2, edgeR, or dreamlet."
+        )
+
+    def _legacy_differential_expression_for_reproducibility(
+        self,
+        adata: AnnData | None = None,
+        sample_cov_keys: list[str] | None = None,
+        sample_subset: list[str] | None = None,
+        indices: npt.ArrayLike | None = None,
+        batch_size: int = 128,
+        normalize_design_matrix: bool = True,
+        mc_samples: int = 50,
+        filter_inadmissible_samples: bool = False,
+        store_lfc: bool = False,
+        donor_key: str | None = None,
+        delta: float | None = 0.3,
+        lambd: float = 0.0,
+        store_baseline: bool = False,
+        eps_lfc: float = 1e-6,
+        use_vmap: bool = False,
+        **filter_samples_kwargs,
+    ) -> xr.Dataset:
+        """Run the historical non-inferential estimator for private reproduction.
 
         Fits a per-cell weighted least-squares linear model on the sample-
         specific residual ``eps_d = z_d - z_base`` (the donor latent shift),
@@ -848,16 +1123,28 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
         eps_lfc
             Small offset added before log2 to avoid log(0).  Default ``1e-6``.
         use_vmap
-            Reserved; currently ignored (loop path is always used).
+            ``True`` is unsupported and fails before validation or inference.
         **filter_samples_kwargs
             Forwarded to :meth:`get_outlier_cell_sample_pairs`.
         """
+        if use_vmap:
+            raise NotImplementedError(
+                "use_vmap=True is not implemented for MrTotalVI statistics."
+            )
         if self.hierarchy_mode == "centered_v2":
             raise RuntimeError(
-                "differential_expression() is not validated for centered_v2 "
-                "models; use descriptive local_sample_enrichment() or a "
-                "separately validated inferential workflow."
+                "The historical differential-expression implementation is not "
+                "available for centered_v2 models."
             )
+        adata = self._validate_anndata(adata)
+        selected_samples, _ = validate_sample_metadata(
+            adata.obs,
+            sample_key=self.sample_key,
+            covariate_keys=list(sample_cov_keys or []),
+            donor_key=donor_key,
+            sample_subset=sample_subset,
+            authoritative_order=self.sample_order,
+        )
         ds = _differential_expression(
             self,
             adata=adata,
@@ -875,6 +1162,7 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
             store_baseline=store_baseline,
             eps_lfc=eps_lfc,
             use_vmap=use_vmap,
+            validated_sample_order=selected_samples,
             **filter_samples_kwargs,
         )
         if store_lfc and "feature" in ds.coords:
@@ -885,6 +1173,12 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
                     + ["protein"] * (ds.sizes["feature"] - n_genes)
                 )
             )
+        ds.attrs.update(
+            {
+                "interpretation": "historical_private_non_inferential",
+                "biological_inference_supported": False,
+            }
+        )
         return ds
 
     # ------------------------------------------------------------------
@@ -922,7 +1216,8 @@ class MrTotalVI(EmbeddingMixin, TOTALVI):
 
         Returns
         -------
-        Array of shape ``(n_obs, n_latent)``.
+        If ``give_z=True``, an array of shape ``(n_obs, n_latent)``.
+        If ``give_z=False``, an array of shape ``(n_obs, n_latent_u)``.
 
         Notes
         -----

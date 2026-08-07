@@ -1,0 +1,58 @@
+{
+  "schema_version": "usage-readiness-baseline-v1",
+  "recorded_at_utc": "2026-08-07T12:56:38Z",
+  "repository": "/exports/para-lipg-hpc/mdmanurung/scvi-tools",
+  "branch": "main",
+  "head": "297769d3c62b9228244a05469dc8349a55e4174c",
+  "reviewed_baseline": "297769d3c62b9228244a05469dc8349a55e4174c",
+  "tracked_unstaged_preexisting": [
+    ".living/INDEX.md",
+    ".living/conventions.md",
+    ".living/decisions.md",
+    ".living/learnings.md",
+    ".living/log/LOG_REGISTRY.md"
+  ],
+  "tracked_staged_preexisting": [],
+  "unrelated_untracked_preserved": true,
+  "frozen_inputs": {
+    "source_plan_sha256": "095bef05d3ff6f2c2a080482de89903190de5ca1d5873304b2d73ae7ef1fae8e",
+    "source_review_sha256": "6709acafbc79152e891db659f543fd429147c110e68e3ab39bdee4be10b3f9db",
+    "stale_wheel_sha256": "340dfbd2d571e44cf5e8b6d1bc8a62798ce9753abc5df099654a026095f19c8d"
+  },
+  "source_test_environment": {
+    "python_executable": "/exports/archive/hg-funcgenom-research/mdmanurung/conda/envs/scvi-test/bin/python",
+    "python_version": "3.13.11",
+    "platform": "Linux-4.18.0-553.137.1.el8_10.x86_64-x86_64-with-glibc2.28",
+    "installed_cytoanvi": "0.1.0",
+    "installed_scvi_tools": "1.5.0rc1",
+    "installed_environment_is_contaminated_for_wheel_acceptance": true
+  },
+  "target_file_sha256": {
+    "pyproject.toml": "56cf8096973ace127eec6ea654f91dee7e8f984341caf0204d47f107dba3be32",
+    "README.md": "c204ce3bd6db6a06d1a2cd6b9cafdf013ba4c14420ec886b2a441738517e47bb",
+    "CHANGELOG.md": "e4efc307e347433b703c5759fb5fd82795f78d2e6a29bf9e6f3ce225676b685b",
+    "docs/conf.py": "5fb5f28294e2cf6c0368a6581f7c6b3e9a5bd38d6e16c29dc8f4c27929d7527f",
+    "docs/installation.md": "a7dce7325cb9ff0029c8c5299d7124174d619efcb8bb0279bd98a87df29eb2b5",
+    "docs/user_guide/models/cytoanvi.md": "52b889c2c485e0bd19584f89a43b510873bb17488bb1f370e889ab693c6fa33d",
+    "docs/user_guide/models/mr_multimodal.md": "6e22c27c8f47b2206b7a4d859f10be9f62f88d50e2885a3e2928b876e45ac0d4",
+    "docs/tutorials/parameter_selection/CytoANVI_parameter_selection.md": "b93ebdf05d0db5bb4c36743951e262c0f73c70331c37e3062c2aff87139f370c",
+    "docs/tutorials/parameter_selection/MrTotalVI_parameter_selection.md": "105224946f9fe08d1e139559b49914ad3a80f3b9ea72a2811550beccdcce9bf6",
+    "docs/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial.md": "8ea180e2d944d0059fc6a126546e9f8e4533d32bcec229b3dffd03f9b36eeadc",
+    "src/cytoanvi/__init__.py": "d5b33e669804f96c8cbfe96edd598143fca6645936906c208879b908ee982820",
+    "src/cytoanvi/_model.py": "66b40ca548169405eec657854c2d626c4d219bdc03d95a0bb518ae42a952fa48",
+    "src/cytoanvi/_uncertainty.py": "bc0f5005ea9413b88c73c0ac0dc420ab79dfca6b39c4b5880aec3baef9cd8da3",
+    "src/cytoanvi/mapping_qc.py": "9f22eb0f1e71cb342ab37ec84f5bf53b9b6ff27e9ddd795c68a6f61183033d94",
+    "src/scvi/external/mrtotalvi/__init__.py": "5dc1b7e0e8cd1fa0a5f97b5890ec940321f586115b7e956de2a043ddafedbc3c",
+    "src/scvi/external/mrtotalvi/_components.py": "794e5c1cbc751a55e6b96fd9d70472b77427621584d2be31ca28854b9614a2a6",
+    "src/scvi/external/mrtotalvi/_datamodule.py": "bf0b5ef2a3bfe4d9950e1b83f23839fe107da515c1b0bbf98d03a24b422c145e",
+    "src/scvi/external/mrtotalvi/_model.py": "0c363dac5a39d15ed73725a038396e581c83f03984563822f61721b0e3891ecc",
+    "src/scvi/external/mrtotalvi/_module.py": "a9115dbc2966cf701d2e9e46c4ab7505e0b2ab3cacd3a565089345f95edf8dc2",
+    "src/scvi/external/mrtotalvi/_stats.py": "af14a5d34fd4e160e21aa396b3474bddddf390d3addfb94fa9db6895adda3a99",
+    "tests/cytoanvi/test_cytoanvi.py": "c9081282d930b7b402f13aa7245f544feeca672667efd46bc3122f2db30658e6",
+    "tests/cytoanvi/test_public_api.py": "ea8db242ceac19539d0e4e3f3692f8aef7ea9bc00bf519503d529faa5ace4894",
+    "tests/cytoanvi/test_uncertainty_unit.py": "b83c0e390c39328090079287335911994f48c60a9eeb34b7ddb801449f112207",
+    "tests/external/mrtotalvi/test_datamodule.py": "930b7fdb81fe7d1dd82feb5e9b0d90d93e70629d1aa4469b0d06bdd12229c3e8",
+    "tests/external/mrtotalvi/test_mrtotalvi.py": "1aa38003a1a2f2bd2fc59bb294c219bf820b19c75cf1dd6dcc677c47d130324a",
+    "tests/external/mrtotalvi/test_mrtotalvi_v2.py": "f976e80ea938c3f65d013f1185f42b13f6d326888eb212db24d0d28286aca693"
+  }
+}

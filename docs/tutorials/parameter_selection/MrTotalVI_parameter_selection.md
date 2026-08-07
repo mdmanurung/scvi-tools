@@ -10,10 +10,14 @@ kernelspec:
 
 # MrTotalVI: choosing parameters
 
-MrTotalVI extends TOTALVI with an MrVI-style two-level latent space: a sample-blind base `u`, and
+MrTotalVI extends TOTALVI with an MrVI-style two-level latent space: a sample-conditioned base `u`
+in the legacy default, and
 `z = z_base(u) + eps` where `eps` carries per-donor residual structure. This tutorial is about
 **how to choose values** for its parameters. For what each argument means, see
 {doc}`/user_guide/models/mr_multimodal`.
+
+The {doc}`/usage_readiness` matrix is authoritative. No prior, DA/DE inference, streaming, or
+new-sample inference capability is promoted by this parameter guide.
 
 Several MrTotalVI defaults rest on weaker evidence than their status as defaults implies — one of
 them on an analysis whose source file no longer exists. Rather than presenting all defaults as
@@ -48,37 +52,41 @@ MrTotalVI.setup_anndata(
     sample_key="sample",
     batch_key="batch",
 )
-model = MrTotalVI(adata, sample_key="sample", n_latent=20, n_latent_u=10)
+model = MrTotalVI(
+    adata,
+    sample_key="sample",
+    n_latent=20,
+    n_latent_u=10,
+    u_prior_supervision="none",
+)
 ```
+
+RNA and protein inputs must be finite, non-negative, integer-like raw counts. Setup validates the
+complete registered matrices, not a sampled prefix.
 
 +++
 
-## `labels_key` is not metadata — read this before using it
+## `labels_key` is metadata unless supervision is explicit
 
-```{admonition} Registering labels_key silently makes the prior label-supervised
-:class: danger
+```{admonition} Labels alone do not change the objective
+:class: important
 
-This is undocumented in both the constructor docstring and the user guide, and it has already
-caused one benchmarking error in this project.
+In 0.2.0, passing `labels_key` to `setup_anndata` records annotations but leaves the model
+unsupervised. The new-call default is `u_prior_supervision="none"` with
+`u_prior_label_weight=0.0`.
 
-Passing `labels_key` to `setup_anndata` does **not** merely record an annotation column. It
-activates the label-conditioned branch of the mixture prior: the number of mixture components is
-overridden to `n_labels`, and `u_prior_label_weight` (default **10.0**) biases every cell's KL term
-toward the prior component matching its ground-truth label.
+To opt in, set `u_prior_supervision="labels"` and a finite positive
+`u_prior_label_weight`. This requires registered labels and must be disclosed in comparisons.
 
-**Consequence:** a model trained with `labels_key` registered is *partially supervised*. Comparing
-it against a model trained without one — or against stock TOTALVI — is a supervised-vs-unsupervised
-comparison, and any integration or bio-conservation metric from that comparison is confounded.
-
-If you want labels recorded but not used by the prior, keep them in `adata.obs` and do not pass
-them to `setup_anndata`.
+Old checkpoints are migrated explicitly; contradictory legacy/new supervision fields fail closed.
 ```
 
 +++
 
 ## `u_prior`: the default is contested
 
-**Tier: Contested.** The default is `"mog"` (mixture of Gaussians); the alternative is `"vamp"`.
+**Tier: Contested.** The resolved choices are exactly `"standard"`, `"mog"`, and `"vamp"`.
+`"mog"` remains the default for compatibility, not because it is scientifically preferred.
 
 The analysis that established `"mog"` as the default compared cluster dispersion on a 57k-cell
 T/NK subset. Two problems:
@@ -89,11 +97,12 @@ T/NK subset. Two problems:
    *reverses*: VampPrior `u` beats MoG `u` on donor mixing (0.225 vs 0.273) and on cross-seed
    stability (Jaccard 0.189 vs 0.145), at equal cell-type purity.
 
-So `"mog"` remains the default for continuity, not because it won a defensible comparison. If your
-downstream step is graph-based clustering, VampPrior is at least as defensible.
+Those historical results are insufficient to recommend any prior: the source analysis is
+unrecoverable, the geometry was non-authoritative, and the comparison was not validated across
+independent cohorts. Prespecify the prior and sensitivity arms before looking at outcomes.
 
 ```{code-cell} ipython3
-# VampPrior, data-initialised and frozen -- the configuration with the best DA-stability evidence.
+# Experimental sensitivity arm; not a preferred recipe.
 model_vamp = MrTotalVI(
     adata,
     sample_key="sample",
@@ -108,9 +117,9 @@ model_vamp = MrTotalVI(
 ```{admonition} freeze_prior_after_init only makes sense with vamp
 :class: warning
 
-Freezing is meaningful only when the prior was *data-anchored first*, which is what
-`init_prior_from_data=True` does for VampPrior. Setting `freeze_prior_after_init=True` with
-`u_prior="mog"` freezes a **randomly initialised** prior and provides no benefit.
+Vamp data initialization is restricted to the frozen training indices. The seed and ordered
+training-index digest are persisted so validation/test cells cannot affect the pseudoinputs.
+Freezing a randomly initialized MoG prior is not a validated recommendation.
 ```
 
 +++
@@ -133,12 +142,13 @@ underlying measurement is real (std 0.192), it was produced from a dirty checkou
 data/environment/config hashes and is **refuted for promotion** under this project's reproduction
 standard. There is currently **no validated fix.**
 
-If both modalities are available, route differential abundance through MrMultiVI.
+Treat package DA as descriptive only. For biological DA, use a prespecified, replicate-aware
+compositional method with donor-level uncertainty outside this API.
 ```
 
 +++
 
-## Differential expression with `store_lfc=True`
+## Differential expression: public refusal
 
 **Tier: Benchmark-backed (negative).**
 
@@ -153,10 +163,19 @@ property of eps-space DE as a method, not a defect introduced here.
 ```{admonition} Not a "use with caution"
 :class: danger
 
-These outputs are anti-concordant with the pseudobulk ground truth. Do not draw biological
-conclusions from them without cross-validating against a pseudobulk method such as PyDESeq2. The
-model's contribution is integration quality and cell-type-level resolution — not temporal DE.
+These historical outputs are anti-concordant with pseudobulk ground truth. MrTotalVI therefore
+fails closed for public `differential_expression()` in both legacy and centered-v2 modes. Aggregate
+raw counts at the donor-by-condition level and use PyDESeq2, edgeR, or dreamlet; there is no public
+escape flag for latent p-values or decoded LFC.
 ```
+
++++
+
+## Operational no-go boundaries
+
+`use_vmap=True` is rejected before inference/statistics. `MrTotalVIBatchDataModule` is not a stable
+public training export, and this release does not support end-to-end streaming training or
+inference for biological samples absent from the registered training set.
 
 +++
 
@@ -213,11 +232,11 @@ metric with a denominator-free counterpart (rank- or recovery-based).
 
 | Parameter | Default | Tier | Guidance |
 |---|---|---|---|
-| `labels_key` | `None` | **Undocumented side effect** | Registering it makes the prior label-supervised. Omit it for unsupervised comparisons |
-| `u_prior` | `"mog"` | Contested | Source analysis unrecoverable and measured the wrong geometry; VampPrior wins on graph metrics |
-| `init_prior_from_data` + `freeze_prior_after_init` | `False`, `False` | Benchmark-backed | Use together, and only with `u_prior="vamp"` |
+| `labels_key` / `u_prior_supervision` | `None` / `"none"` | Explicit contract | Labels remain metadata unless supervision is explicitly enabled with a positive weight |
+| `u_prior` | `"mog"` | Contested | Compatibility default only; no prior is scientifically recommended |
+| `init_prior_from_data` + `freeze_prior_after_init` | `False`, `False` | Experimental | Vamp initialization uses training indices only; treat as a prespecified sensitivity arm |
 | `n_latent` / `n_latent_u` | 20 / `None` | Convention | Fixed for comparability, never swept. `n_latent_u < n_latent` for a real bottleneck |
 | `batch_representation` | `"one-hot"` | Convention | Prefer `"embedding"` with many batches |
-| `differential_abundance` | — | Benchmark-backed (negative) | std 9.46 across seeds. Route through MrMultiVI |
-| `store_lfc=True` | `False` | Benchmark-backed (negative) | Anti-concordant with pseudobulk in all 12 cell types. Cross-validate |
+| `differential_abundance` | — | Benchmark-backed (negative) | Descriptive only; use a replicate-aware external method for inference |
+| `differential_expression` | Refused | Benchmark-backed (negative) | Public API fails closed; use donor-pseudobulk |
 | `kl_*_weight`, `scale_observations`, … | various | No guidance | Treat any change as an experiment |

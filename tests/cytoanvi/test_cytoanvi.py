@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-
 from conftest import (
     BATCH_KEY,
     LABELS_KEY,
@@ -76,9 +75,8 @@ def test_cytoanvi_loss_scale_rejects_invalid_variance(variance, message):
 
 def _decoder_pair(seed: int = 0):
     """A bounded and a stock Decoder sharing identical weights."""
-    from scvi.nn import Decoder
-
     from cytoanvi._module import BoundedVarianceDecoder
+    from scvi.nn import Decoder
 
     torch.manual_seed(seed)
     bounded = BoundedVarianceDecoder(4, 3, n_layers=1, n_hidden=8)
@@ -326,9 +324,7 @@ def test_cytoanvi_from_cytovi_model_preserves_setup_args(adata):
     original_kwargs = deepcopy(cytovi_model.init_params_["kwargs"])
     original_setup_args = deepcopy(cytovi_model.adata_manager.registry[_SETUP_ARGS_KEY])
 
-    CytoANVI.from_cytovi_model(
-        cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY
-    )
+    CytoANVI.from_cytovi_model(cytovi_model, unlabeled_category=UNLABELED, labels_key=LABELS_KEY)
 
     assert cytovi_model.init_params_["non_kwargs"] == original_non_kwargs
     assert cytovi_model.init_params_["kwargs"] == original_kwargs
@@ -613,11 +609,26 @@ def test_cytoanvi_y_prior_empirical(adata):
         sample_key=SAMPLE_KEY,
     )
     model = CytoANVI(adata, n_latent=10, y_prior="empirical")
+    assert model.resolved_y_prior_ is None
+    torch.testing.assert_close(
+        model.module.y_prior.cpu(), torch.full((1, model.n_labels), 1 / model.n_labels)
+    )
+    model.train(max_epochs=1, shuffle_set_split=False, train_size=0.75)
+
     yp = model.module.y_prior.detach().cpu().numpy()
     assert yp.shape == (1, model.n_labels)
     np.testing.assert_allclose(yp.sum(), 1.0, atol=1e-5)
-    # empirical prior is not uniform on imbalanced-ish synthetic labels
-    model.train(max_epochs=1)
+    training_labels = model.labels_[model.train_indices_]
+    expected_counts = model._label_counts(training_labels, model.n_labels) + 1.0
+    np.testing.assert_allclose(yp[0], expected_counts / expected_counts.sum(), atol=1e-7)
+    for boundary_key, actual_indices in (
+        ("train_indices", model.train_indices_),
+        ("validation_indices", model.validation_indices_),
+        ("test_indices", model.test_indices_),
+    ):
+        np.testing.assert_array_equal(
+            model.training_statistics_boundary_[boundary_key], actual_indices
+        )
     assert model.is_trained
 
     with pytest.raises(ValueError):
@@ -665,6 +676,8 @@ def test_cytoanvi_sqrt_inverse_frequency_class_weights(adata):
         class_weighting="sqrt_inverse_frequency",
         class_weight_clip=10.0,
     )
+    assert model.module.class_weights is None
+    model.train(max_epochs=1, shuffle_set_split=False, train_size=0.75)
 
     weights = model.module.class_weights.detach().cpu().numpy()
     assert model.class_weighting_ == "sqrt_inverse_frequency"
@@ -692,11 +705,14 @@ def test_cytoanvi_class_weights_save_load(adata, tmp_path):
     model = CytoANVI(
         adata,
         n_latent=10,
+        y_prior="empirical",
         class_weighting="sqrt_inverse_frequency",
         class_weight_clip=10.0,
     )
+    model.train(max_epochs=1, shuffle_set_split=False, train_size=0.75)
     weights = model.module.class_weights.detach().cpu().clone()
-    model.train(max_epochs=1)
+    resolved_prior = model.resolved_y_prior_.copy()
+    boundary = deepcopy(model.training_statistics_boundary_)
     model_path = os.path.join(tmp_path, "test_cytoanvi_class_weights")
     model.save(model_path, overwrite=True)
 
@@ -704,6 +720,11 @@ def test_cytoanvi_class_weights_save_load(adata, tmp_path):
 
     np.testing.assert_allclose(loaded.class_weights_, weights.numpy())
     torch.testing.assert_close(loaded.module.class_weights.detach().cpu(), weights)
+    np.testing.assert_allclose(loaded.resolved_y_prior_, resolved_prior)
+    torch.testing.assert_close(loaded.module.y_prior.cpu(), torch.as_tensor(resolved_prior))
+    assert loaded.training_statistics_boundary_["source"] == "training_indices_only"
+    for key in ("train_indices", "validation_indices", "test_indices"):
+        np.testing.assert_array_equal(loaded.training_statistics_boundary_[key], boundary[key])
 
 
 def test_cytoanvi_class_weights_preserved_in_query_surgery(adata):
@@ -721,6 +742,7 @@ def test_cytoanvi_class_weights_preserved_in_query_surgery(adata):
         class_weighting="sqrt_inverse_frequency",
         class_weight_clip=10.0,
     )
+    ref.train(max_epochs=1)
     ref_weights = ref.module.class_weights.detach().cpu().clone()
 
     query = make_adata()
@@ -728,6 +750,73 @@ def test_cytoanvi_class_weights_preserved_in_query_surgery(adata):
     q = CytoANVI.load_query_data(query, ref)
 
     torch.testing.assert_close(q.module.class_weights.detach().cpu(), ref_weights)
+
+
+def test_empirical_prior_and_class_weights_ignore_heldout_labels(adata):
+    baseline = adata.copy()
+    perturbed = adata.copy()
+    CytoANVI.setup_anndata(
+        baseline,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(
+        baseline,
+        n_latent=10,
+        y_prior="empirical",
+        class_weighting="sqrt_inverse_frequency",
+    )
+    model.train(max_epochs=1, train_size=0.6, validation_size=0.2, shuffle_set_split=False)
+
+    heldout = np.concatenate(
+        [
+            model.training_statistics_boundary_["validation_indices"],
+            model.training_statistics_boundary_["test_indices"],
+        ]
+    )
+    labels = np.asarray(perturbed.obs[LABELS_KEY].astype(str), dtype=object)
+    original_labels = labels.copy()
+    for index in heldout:
+        if labels[index] != UNLABELED:
+            labels[index] = "label_2" if labels[index] == "label_1" else "label_1"
+    assert np.any(labels[heldout] != original_labels[heldout])
+    np.testing.assert_array_equal(
+        labels[model.training_statistics_boundary_["train_indices"]],
+        original_labels[model.training_statistics_boundary_["train_indices"]],
+    )
+    perturbed.obs[LABELS_KEY] = labels
+
+    CytoANVI.setup_anndata(
+        perturbed,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    perturbed_model = CytoANVI(
+        perturbed,
+        n_latent=10,
+        y_prior="empirical",
+        class_weighting="sqrt_inverse_frequency",
+    )
+    perturbed_model.train(
+        max_epochs=1,
+        train_size=0.6,
+        validation_size=0.2,
+        shuffle_set_split=False,
+    )
+
+    for key in ("train_indices", "validation_indices", "test_indices"):
+        np.testing.assert_array_equal(
+            perturbed_model.training_statistics_boundary_[key],
+            model.training_statistics_boundary_[key],
+        )
+    np.testing.assert_array_equal(perturbed_model.resolved_y_prior_, model.resolved_y_prior_)
+    np.testing.assert_array_equal(perturbed_model.class_weights_, model.class_weights_)
 
 
 def test_cytoanvi_y_prior_tensor_validation(adata):
@@ -850,7 +939,12 @@ def test_cytoanvi_rejects_ln_latent(adata):
         CytoANVI(adata, n_latent=10, latent_distribution="ln")
 
 
-def test_cytoanvi_get_uncertainty(adata):
+@pytest.mark.parametrize("adversarial_classifier", [False, True])
+def test_cytoanvi_rejects_nonnull_adversarial_before_parent_train(
+    adata, monkeypatch, adversarial_classifier
+):
+    from scvi.model.base import SemisupervisedTrainingMixin
+
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -860,13 +954,30 @@ def test_cytoanvi_get_uncertainty(adata):
         sample_key=SAMPLE_KEY,
     )
     model = CytoANVI(adata, n_latent=10)
-    model.train(max_epochs=N_EPOCHS)
-    unc = model.get_uncertainty(tta_rep=3)
-    assert unc.shape == (adata.n_obs,)
-    assert np.all(np.isfinite(unc))
+
+    def unexpected_parent_train(*args, **kwargs):
+        pytest.fail("parent train/trainer path must not be entered")
+
+    monkeypatch.setattr(SemisupervisedTrainingMixin, "train", unexpected_parent_train)
+    with pytest.raises(NotImplementedError, match="adversarial_classifier must be None"):
+        model.train(adversarial_classifier=adversarial_classifier)
 
 
-def test_cytoanvi_get_uncertainty_rejects_invalid_mode(adata):
+def test_cytoanvi_stable_uncertainty_is_quarantined(adata):
+    CytoANVI.setup_anndata(
+        adata,
+        layer=SCALED_LAYER_KEY,
+        batch_key=BATCH_KEY,
+        labels_key=LABELS_KEY,
+        unlabeled_category=UNLABELED,
+        sample_key=SAMPLE_KEY,
+    )
+    model = CytoANVI(adata, n_latent=10)
+    with pytest.raises(NotImplementedError, match="experimental_get_uncertainty"):
+        model.get_uncertainty(tta_rep=3)
+
+
+def test_cytoanvi_experimental_uncertainty_rejects_invalid_mode(adata):
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -879,7 +990,7 @@ def test_cytoanvi_get_uncertainty_rejects_invalid_mode(adata):
     model.train(max_epochs=N_EPOCHS)
 
     with pytest.raises(ValueError, match="mode must be"):
-        model.get_uncertainty(tta_rep=3, mode="probability")
+        model.experimental_get_uncertainty(tta_rep=3, mode="probability", seed=0)
 
 
 def test_cytoanvi_continual_update(adata):
@@ -917,8 +1028,10 @@ def test_cytoanvi_continual_update(adata):
     assert preds.shape[0] == query.n_obs
 
     # control_adata is required (paper EWC term is F_reference o F_query_ctrl)
-    with pytest.raises(ValueError):
-        CytoANVI.load_query_data_with_replay(make_adata(), ref, replay_adata=replay)
+    with pytest.raises(ValueError, match="control_adata is required"):
+        CytoANVI.load_query_data_with_replay(
+            make_adata(), ref, replay_adata=replay, control_adata=None
+        )
 
     # additive combine is also available
     q2 = CytoANVI.load_query_data_with_replay(
@@ -1256,9 +1369,7 @@ def test_cytoanvi_continual_on_multipanel():
     assert q.predict().shape[0] == query.n_obs
 
 
-def test_cytoanvi_uncertainty_flags_ood(adata):
-    # untested path: get_uncertainty novelty discrimination. BI is >= 0 (Jensen on log-sum-exp);
-    # far-out-of-distribution cells should score higher than in-distribution ones.
+def test_cytoanvi_experimental_uncertainty_is_exactly_chunk_invariant(adata):
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -1268,22 +1379,14 @@ def test_cytoanvi_uncertainty_flags_ood(adata):
         sample_key=SAMPLE_KEY,
     )
     model = CytoANVI(adata, n_latent=10)
-    model.train(max_epochs=10)
+    model.train(max_epochs=N_EPOCHS)
 
-    query = adata.copy()
-    n = query.n_obs
-    ood = np.zeros(n, dtype=bool)
-    ood[: n // 2] = True
-    # push the OOD half far outside the training [0, 1] range
-    x = query.layers[SCALED_LAYER_KEY].copy()
-    x[ood] = x[ood] * 8.0 + 5.0
-    query.layers[SCALED_LAYER_KEY] = x
+    full = model.experimental_get_uncertainty(adata, tta_rep=3, batch_size=adata.n_obs, seed=1729)
+    chunked = model.experimental_get_uncertainty(adata, tta_rep=3, batch_size=37, seed=1729)
 
-    unc = model.get_uncertainty(query, tta_rep=30)
-    assert unc.shape == (n,)
-    assert np.all(np.isfinite(unc))
-    assert np.all(unc >= -1e-6)  # Bregman Information is non-negative
-    assert unc[ood].mean() > unc[~ood].mean()  # OOD cells are flagged as more uncertain
+    assert full.shape == (adata.n_obs,)
+    assert np.all(np.isfinite(full))
+    np.testing.assert_array_equal(full, chunked)
 
 
 def test_cytoanvi_all_unlabeled_raises(adata):
@@ -1316,7 +1419,7 @@ def test_cytoanvi_inherited_cytovi_smoke(adata):
     assert len(de) > 0
 
 
-def test_cytoanvi_select_replay_by_uncertainty(adata):
+def test_cytoanvi_select_replay_by_uncertainty_is_quarantined(adata):
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -1325,9 +1428,8 @@ def test_cytoanvi_select_replay_by_uncertainty(adata):
         unlabeled_category=UNLABELED,
     )
     model = CytoANVI(adata, n_latent=10)
-    model.train(max_epochs=N_EPOCHS)
-    replay = CytoANVI.select_replay_by_uncertainty(model, adata, fraction=0.2)
-    assert 0 < replay.n_obs < adata.n_obs
+    with pytest.raises(NotImplementedError, match="experimental_get_uncertainty"):
+        CytoANVI.select_replay_by_uncertainty(model, adata, fraction=0.2)
 
 
 def test_cytoanvi_encoder_mask_saved_path_prep(adata, save_path):
@@ -1365,7 +1467,7 @@ def test_cytoanvi_prepare_query_path_no_longer_rejects(save_path):
     assert NAN_LAYER_KEY in query.layers
 
 
-def test_cytoanvi_continual_resume_replay(adata, save_path):
+def test_cytoanvi_continual_resume_replay(adata, save_path, monkeypatch):
     CytoANVI.setup_anndata(
         adata,
         layer=SCALED_LAYER_KEY,
@@ -1386,8 +1488,15 @@ def test_cytoanvi_continual_resume_replay(adata, save_path):
     q.save(path, overwrite=True, save_anndata=True)
     q2 = CytoANVI.load(path)
     assert q2.module.continual.replay_batches is None
-    with pytest.warns(UserWarning, match="replay buffer"):
-        q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
+    from scvi.model.base import SemisupervisedTrainingMixin
+
+    def unexpected_parent_train(*args, **kwargs):
+        pytest.fail("parent train/trainer path must not be entered without replay")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(SemisupervisedTrainingMixin, "train", unexpected_parent_train)
+        with pytest.raises(RuntimeError, match="EWC-only training is not a public mode"):
+            q2.train(max_epochs=1, plan_kwargs={"ewc_importance": 1.0})
     q3 = CytoANVI.load_query_data_with_replay(
         query, ref, replay_adata=replay, control_adata=query[:64].copy()
     )
@@ -1411,17 +1520,13 @@ def test_cytoanvi_uncertainty_multipanel():
     )
     model = CytoANVI(merged, n_latent=10)
     model.train(max_epochs=N_EPOCHS)
-    unc = model.get_uncertainty(tta_rep=3)
+    unc = model.experimental_get_uncertainty(tta_rep=3, seed=0)
     assert unc.shape == (merged.n_obs,)
     assert np.all(np.isfinite(unc))
 
 
 def test_example_reference_query_runs():
-    example_path = (
-        Path(__file__).parents[2]
-        / "vignettes"
-        / "cytoanvi_example_reference_query.py"
-    )
+    example_path = Path(__file__).parents[2] / "vignettes" / "cytoanvi_example_reference_query.py"
     spec = spec_from_file_location("cytoanvi_example_reference_query", example_path)
     example_reference_query = module_from_spec(spec)
     assert spec.loader is not None

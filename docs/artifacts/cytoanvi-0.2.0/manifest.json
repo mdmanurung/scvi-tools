@@ -1,0 +1,62 @@
+{
+  "schema_version": "cytoanvi-artifact-manifest-v1",
+  "candidate": {
+    "distribution": "cytoanvi",
+    "version": "0.2.0",
+    "build_ordinal": 1
+  },
+  "source": {
+    "commit": null,
+    "tree": null,
+    "clean": null,
+    "baseline_commit": "297769d3c62b9228244a05469dc8349a55e4174c"
+  },
+  "build": {
+    "status": "not_built",
+    "attempt_id": null,
+    "claim_path": "docs/artifacts/cytoanvi-0.2.0/.cytoanvi-0.2.0-build-ordinal-1.claim.json",
+    "candidate_dir": null,
+    "pid": null,
+    "command": null,
+    "python": null,
+    "environment_digest": null,
+    "started_at": null,
+    "completed_at": null
+  },
+  "dependency_authority": {
+    "status": "missing",
+    "kind": "none",
+    "path": null,
+    "sha256": null
+  },
+  "wheel": {
+    "path": null,
+    "filename": null,
+    "sha256": null,
+    "size_bytes": null,
+    "metadata_name": null,
+    "metadata_version": null
+  },
+  "inventory": {
+    "details_path": "docs/artifacts/cytoanvi-0.2.0/inventory.json",
+    "details_sha256": null,
+    "record_sha256": null,
+    "record_entries": null,
+    "wheel_files": [],
+    "source_files": [],
+    "acceptance_inputs": [],
+    "source_vs_wheel": "pending"
+  },
+  "namespace_expectations": {
+    "required_distributions": ["cytoanvi"],
+    "forbidden_distributions": ["scvi-tools"],
+    "owned_namespaces": ["cytoanvi", "scvi"]
+  },
+  "installed_acceptance": {
+    "status": "blocked_dependency_authority",
+    "acceptance_attempt_id": null,
+    "receipt": "docs/artifacts/cytoanvi-0.2.0/installed-acceptance.json",
+    "receipt_sha256": null,
+    "blocker": "No exact local hashed lock plus complete wheelhouse authority was found; the recorded scvi-test environment contains editable cytoanvi and scvi-tools distributions from this checkout."
+  }
+}

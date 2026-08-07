@@ -213,6 +213,7 @@ def init_u_prior(
     u_prior_mixture_k: int = 20,
     u_prior_label_weight: float = 10.0,
     u_prior_type: str = "mog",
+    u_prior_supervision: str | None = None,
     u_vamp_pseudo_dim: int | None = None,
     prior_centroids: torch.Tensor | None = None,
     freeze_prior_after_init: bool = False,
@@ -229,6 +230,11 @@ def init_u_prior(
         a VampPrior where ``K`` pseudoinputs in the encoder input space are
         mapped through the **shared** ``module.qu`` to obtain component
         distributions, or ``"standard"`` for an isotropic Gaussian.
+    u_prior_supervision
+        ``"none"`` ignores registered labels and preserves the configured
+        component count. ``"labels"`` uses one component per registered label
+        and label-conditioned mixture weights. ``None`` retains the historical
+        behavior for the shared MrMultiVI helper.
     u_vamp_pseudo_dim
         Width of each VampPrior pseudoinput vector (required when
         ``u_prior_type="vamp"``).
@@ -264,11 +270,13 @@ def init_u_prior(
     module.u_prior_mixture_k = int(u_prior_mixture_k)
     module.u_prior_label_weight = float(u_prior_label_weight)
     module.u_prior_type = u_prior_type
+    module.u_prior_supervision = u_prior_supervision
+    use_label_components = u_prior_supervision != "none" and module.n_labels > 1
 
     if u_prior_type == "vamp":
         if u_vamp_pseudo_dim is None:
             raise ValueError("u_vamp_pseudo_dim is required when u_prior_type='vamp'")
-        resolved_k = module.n_labels if module.n_labels > 1 else u_prior_mixture_k
+        resolved_k = module.n_labels if use_label_components else u_prior_mixture_k
         module.resolved_u_prior_mixture_k = int(resolved_k)
         module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
         if prior_centroids is not None and prior_centroids.shape[0] == resolved_k:
@@ -280,7 +288,7 @@ def init_u_prior(
         module.u_prior_mixture = True  # enables MC KL path in kl_u
     elif u_prior_mixture:
         module.u_prior_mixture = True
-        resolved_k = module.n_labels if module.n_labels > 1 else u_prior_mixture_k
+        resolved_k = module.n_labels if use_label_components else u_prior_mixture_k
         module.resolved_u_prior_mixture_k = int(resolved_k)
         module.u_prior_logits = nn.Parameter(torch.zeros(resolved_k))
         if prior_centroids is not None and prior_centroids.shape[0] == resolved_k:
@@ -309,29 +317,39 @@ def build_u_prior(
     label_index: torch.Tensor | None = None,
 ) -> Normal | MixtureSameFamily:
     """Construct the prior distribution over ``u`` for the current minibatch."""
-    if getattr(module, "u_prior_type", "mog") == "vamp":
+    logits = getattr(module, "u_prior_logits", None)
+    supervision = getattr(module, "u_prior_supervision", None)
+    prior_type = getattr(module, "u_prior_type", "mog")
+    # ``None`` is the compatibility sentinel used by MrMultiVI, which
+    # historically label-conditioned MoG weights but never Vamp weights.
+    # MrTotalVI resolves all new calls to the explicit "none"/"labels" enum.
+    label_conditioned = supervision == "labels" or (
+        supervision is None and prior_type != "vamp"
+    )
+    if (
+        logits is not None
+        and label_conditioned
+        and label_index is not None
+        and module.n_labels > 1
+        and module.resolved_u_prior_mixture_k == module.n_labels
+    ):
+        labels = label_index.to(torch.int64).flatten()
+        offset = module.u_prior_label_weight * F.one_hot(
+            labels,
+            num_classes=module.n_labels,
+        ).to(dtype=logits.dtype, device=logits.device)
+        logits = logits + offset
+
+    if prior_type == "vamp":
         # VampPrior: route K pseudoinputs through the shared qu encoder.
         # _vamp_component_dist() is implemented per-module to handle the
         # TotalVI vs MultiVI input-space difference.
         comp_dist = module._vamp_component_dist()  # Normal(K, n_latent_u)
-        cats = Categorical(logits=module.u_prior_logits)
+        cats = Categorical(logits=logits)
         components = Independent(comp_dist, 1)
         return MixtureSameFamily(cats, components)
 
     if module.u_prior_mixture:
-        logits = module.u_prior_logits
-        if (
-            label_index is not None
-            and module.n_labels > 1
-            and module.resolved_u_prior_mixture_k == module.n_labels
-        ):
-            labels = label_index.to(torch.int64).flatten()
-            offset = module.u_prior_label_weight * F.one_hot(
-                labels,
-                num_classes=module.n_labels,
-            ).to(dtype=logits.dtype, device=logits.device)
-            logits = logits + offset
-
         cats = Categorical(logits=logits)
         components = Independent(
             Normal(module.u_prior_means, torch.exp(module.u_prior_scales)),

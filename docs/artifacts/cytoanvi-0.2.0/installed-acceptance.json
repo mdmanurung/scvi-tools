@@ -1,0 +1,43 @@
+{
+  "schema_version": "cytoanvi-installed-acceptance-v1",
+  "status": "blocked_dependency_authority",
+  "acceptance_attempt_id": null,
+  "artifact": {
+    "version": "0.2.0",
+    "wheel_sha256": null,
+    "source_commit": null
+  },
+  "dependency_authority": {
+    "path": null,
+    "sha256": null,
+    "verified": false
+  },
+  "execution": {
+    "command": "scripts/accept_usage_readiness_wheel --wheel dist/cytoanvi-0.2.0-py3-none-any.whl --manifest docs/artifacts/cytoanvi-0.2.0/manifest.json --dependency-authority <exact-local-lock-and-wheelhouse>",
+    "started_at": "2026-08-07T12:56:38Z",
+    "completed_at": "2026-08-07T12:56:38Z",
+    "runtime_seconds": 0,
+    "exit_status": null,
+    "cwd": null
+  },
+  "isolation": {
+    "outside_checkout": false,
+    "pythonpath_unset": false,
+    "editable_installs_absent": false,
+    "scvi_tools_absent": false,
+    "fresh_environment": false
+  },
+  "checks": [
+    {
+      "id": "dependency_authority",
+      "status": "blocked",
+      "detail": "No authority directory containing authority.json, a hash-locked requirements file, and a complete local wheelhouse is available. No environment was created and no dependency was installed."
+    },
+    {
+      "id": "installed_artifact",
+      "status": "not_run",
+      "detail": "Acceptance remains false until the exact command completes against the sealed 0.2.0 wheel."
+    }
+  ],
+  "receipt_sha256": null
+}

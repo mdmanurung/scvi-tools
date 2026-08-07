@@ -789,9 +789,10 @@ def _resolve_zarr_chunks(dataset: xr.Dataset, zarr_chunks) -> dict[str, int]:
 def _preflight_zarr_path(zarr_path) -> None:
     if zarr_path is None:
         return
-    destination = Path(zarr_path)
-    if destination.exists():
-        raise FileExistsError(f"Refusing to overwrite existing Zarr store: {destination}")
+    raise NotImplementedError(
+        "MrTotalVI streaming/Zarr export is quarantined. Use bounded in-memory "
+        "requests with explicit cell, target, and feature subsetting."
+    )
 
 
 class _AtomicZarrRegionWriter:
@@ -1023,7 +1024,7 @@ def get_counterfactual_latent(
         raise MemoryError(
             f"Estimated in-memory materialization is {estimated_bytes} bytes, "
             f"exceeding the hard 512 MiB ({MAX_IN_MEMORY_BYTES}-byte) limit. "
-            "Subset the request or provide zarr_path."
+            "Subset the request; public streaming/Zarr export is quarantined."
         )
     if zarr_path is not None and estimated_bytes > MAX_IN_MEMORY_BYTES:
         per_cell_bytes = _estimate_latent_bytes(
@@ -1317,7 +1318,7 @@ def get_counterfactual_expression(
         raise MemoryError(
             f"Estimated in-memory materialization is {estimated_bytes} bytes, "
             f"exceeding the hard 512 MiB ({MAX_IN_MEMORY_BYTES}-byte) limit. "
-            "Subset the request or provide zarr_path."
+            "Subset the request; public streaming/Zarr export is quarantined."
         )
 
     observed_context = _collect_observed_context(

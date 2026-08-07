@@ -1,4 +1,4 @@
-"""Parity tests for `MrTotalVIBatchDataModule` (build-only, not wired into training).
+"""Parity tests for the private MrTotalVI registry adapter.
 
 These tests assert that the streaming registry / tensor-emission code path in
 `scvi.external.mrtotalvi._datamodule` produces *exactly* what the existing
@@ -23,8 +23,12 @@ import scvi
 from scvi.data import AnnDataManager
 from scvi.dataloaders import AnnDataLoader
 from scvi.external import MrTotalVI
-from scvi.external.mrtotalvi import MrTotalVIBatchDataModule
-from scvi.external.mrtotalvi._datamodule import _InMemoryProteinMappedDataset
+from scvi.external.mrtotalvi._datamodule import (
+    _InMemoryProteinMappedDataset,
+)
+from scvi.external.mrtotalvi._datamodule import (
+    _MrTotalVIRegistryAdapter as MrTotalVIBatchDataModule,
+)
 
 N_DONORS = 4
 
@@ -36,7 +40,18 @@ def _make_adata(n_donors: int = N_DONORS, seed: int = 0) -> scvi.AnnData:
     adata.obs["sample"] = np.array([f"donor_{i % n_donors}" for i in range(n_cells)])
     adata.obs["cat1"] = rng.integers(0, 3, size=n_cells)
     adata.obs["cont1"] = rng.normal(size=n_cells)
+    adata.uns["protein_names"] = np.asarray(
+        [f"protein_{i}" for i in range(adata.obsm["protein_expression"].shape[1])],
+        dtype=object,
+    )
     return adata
+
+
+def test_registry_adapter_is_not_publicly_exported():
+    import scvi.external.mrtotalvi as public_api
+
+    assert not hasattr(public_api, "MrTotalVIBatchDataModule")
+    assert "MrTotalVIBatchDataModule" not in public_api.__all__
 
 
 @pytest.fixture(scope="module")
@@ -421,6 +436,7 @@ def test_mismatched_var_names_across_files_raises():
         MrTotalVIBatchDataModule(
             [adata1, adata2],
             protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
             sample_key="sample",
             batch_key="batch",
             parallel=False,
@@ -443,16 +459,19 @@ def test_multi_file_collection_matches_concatenated_in_memory():
     combined = ad.concat(
         [adata1, adata2], join="inner", merge="same", index_unique="-", keys=["a", "b"]
     )
+    combined.uns["protein_names"] = adata1.uns["protein_names"].copy()
 
     ref = _registered_reference_registry(
         combined,
         protein_expression_obsm_key="protein_expression",
+        protein_names_uns_key="protein_names",
         sample_key="sample",
         batch_key="batch",
     )
     dm = MrTotalVIBatchDataModule(
         [adata1, adata2],
         protein_expression_obsm_key="protein_expression",
+        protein_names_uns_key="protein_names",
         sample_key="sample",
         batch_key="batch",
         parallel=False,
@@ -481,17 +500,7 @@ def test_in_memory_backend_used_for_anndata_input(adata_basic):
 
 
 # ---------------------------------------------------------------------------
-# Known gaps: DataFrame-typed protein obsm
-#
-# `MrTotalVI.setup_anndata` legitimately accepts a pandas DataFrame in `.obsm`
-# for protein expression -- `ProteinFieldMixin` branches on `isinstance(..., pd.DataFrame)`
-# and sources `column_names` from the DataFrame's own columns. The streaming backend
-# does not handle that input shape. Both tests below PIN THE CURRENT (BROKEN)
-# BEHAVIOUR rather than asserting the correct one, matching the
-# `test_*_raises_not_implemented` idiom above: the fix belongs in
-# `src/scvi/external/mrtotalvi/_datamodule.py`, which is frozen while the RDX-03
-# launch snapshot is pending, so this documents and monitors the gap instead of
-# turning the suite red for a defect that cannot be fixed here.
+# DataFrame protein access and axis parity
 # ---------------------------------------------------------------------------
 
 
@@ -510,15 +519,7 @@ def adata_protein_df():
     return adata
 
 
-def test_dataframe_protein_obsm_getitem_raises_keyerror(adata_protein_df):
-    """KNOWN BUG: row indexing a DataFrame obsm is column lookup, so `__getitem__` raises.
-
-    `_InMemoryProteinMappedDataset.__getitem__` does `adata.obsm[key][local_idx]`. For an
-    ndarray that selects a row; for a DataFrame it looks up a *column* named `local_idx`,
-    which does not exist -> KeyError. `full_protein_matrix()` is unaffected because it
-    converts the whole frame with `np.asarray` before indexing, which is why bulk registry
-    construction succeeds while per-row iteration fails.
-    """
+def test_dataframe_protein_obsm_uses_positional_rows(adata_protein_df):
     dm = MrTotalVIBatchDataModule(
         adata_protein_df,
         protein_expression_obsm_key="protein_expression",
@@ -526,18 +527,15 @@ def test_dataframe_protein_obsm_getitem_raises_keyerror(adata_protein_df):
         batch_key="batch",
         parallel=False,
     )
-    with pytest.raises(KeyError):
-        next(iter(dm.inference_dataloader(shuffle=False, batch_size=16)))
+    batch = next(iter(dm.inference_dataloader(shuffle=False, batch_size=16)))
+    expected = adata_protein_df.obsm["protein_expression"].iloc[:16].to_numpy()
+    np.testing.assert_array_equal(
+        batch[scvi.REGISTRY_KEYS.PROTEIN_EXP_KEY].numpy(),
+        expected,
+    )
 
 
-def test_dataframe_protein_obsm_registry_column_names_diverge(adata_protein_df):
-    """KNOWN BUG, and the worse of the two: registry construction succeeds but is wrong.
-
-    `protein_names` only reads real names from `protein_names_uns_key`, never from the
-    DataFrame's own columns, so it silently falls back to `np.arange(n_proteins)` while the
-    real `setup_anndata` path registers `['prot_0', ...]`. Nothing signals the divergence --
-    a caller comparing registries would see mismatched `column_names` with no error raised.
-    """
+def test_dataframe_protein_obsm_registry_preserves_columns(adata_protein_df):
     ref = _registered_reference_registry(
         adata_protein_df,
         protein_expression_obsm_key="protein_expression",
@@ -557,8 +555,7 @@ def test_dataframe_protein_obsm_registry_column_names_diverge(adata_protein_df):
     )
     dm_names = dm.registry["field_registries"]["proteins"]["state_registry"]["column_names"]
 
-    assert list(dm_names[:3]) == [0, 1, 2]  # pins the CURRENT (wrong) value
-    assert list(dm_names) != list(ref_names)
+    assert list(dm_names) == list(ref_names)
 
 
 # ---------------------------------------------------------------------------
@@ -605,8 +602,8 @@ def test_lamindb_dispatch_blocked_without_lamindb_installed():
         )
 
 
-def test_lamindb_backend_rejects_protein_names_uns_key_before_calling_mapped(monkeypatch):
-    """With lamindb stubbed, the real body runs: the rejection precedes any `.mapped()` call."""
+def test_lamindb_backend_refuses_before_calling_mapped(monkeypatch):
+    """With lamindb stubbed, the backend is refused before any `.mapped()` call."""
     import types
 
     monkeypatch.setitem(sys.modules, "lamindb", types.ModuleType("lamindb"))
@@ -617,7 +614,7 @@ def test_lamindb_backend_rejects_protein_names_uns_key_before_calling_mapped(mon
             calls.append(kwargs)
             return "should not be reached"
 
-    with pytest.raises(NotImplementedError, match="protein_names_uns_key"):
+    with pytest.raises(NotImplementedError, match="authoritative protein feature axis"):
         MrTotalVIBatchDataModule(
             FakeCollection(),
             protein_expression_obsm_key="protein_expression",
@@ -628,29 +625,26 @@ def test_lamindb_backend_rejects_protein_names_uns_key_before_calling_mapped(mon
     assert calls == [], "mapped() must not be called when the uns-key gap applies"
 
 
-def test_lamindb_backend_converts_obsm_keys_typeerror_to_not_implemented(monkeypatch):
-    """The exact scenario the module docstring calls unverifiable -- now verified.
-
-    A fake `.mapped()` that rejects `obsm_keys` (as a lamindb version without obsm streaming
-    would) must surface as an actionable NotImplementedError, not a raw TypeError.
-    """
+def test_lamindb_backend_refuses_even_without_uns_key(monkeypatch):
+    """No inferred/default protein axis may make the lamindb backend acceptable."""
     import types
 
     monkeypatch.setitem(sys.modules, "lamindb", types.ModuleType("lamindb"))
+    calls = []
 
     class FakeCollection:
-        def mapped(self, obs_keys=None, parallel=None, **kwargs):
-            if "obsm_keys" in kwargs:
-                raise TypeError("mapped() got an unexpected keyword argument 'obsm_keys'")
-            return "unreachable"  # pragma: no cover
+        def mapped(self, **kwargs):
+            calls.append(kwargs)
+            return "should not be reached"
 
-    with pytest.raises(NotImplementedError, match="obsm_keys"):
+    with pytest.raises(NotImplementedError, match="authoritative protein feature axis"):
         MrTotalVIBatchDataModule(
             FakeCollection(),
             protein_expression_obsm_key="protein_expression",
             sample_key="sample",
             parallel=False,
         )
+    assert calls == [], "mapped() must not be called by the quarantined backend"
 
 
 # ---------------------------------------------------------------------------
@@ -698,6 +692,7 @@ def test_locate_resolves_file_and_local_index_at_every_boundary():
         [a1, a2, a3],
         obs_keys=["sample"],
         protein_expression_obsm_key="protein_expression",
+        protein_names_uns_key="protein_names",
     )
     n = a1.n_obs
 
@@ -715,6 +710,135 @@ def test_mismatched_protein_column_count_across_files_raises():
     a2.obsm["protein_expression"] = prot[:, : prot.shape[1] // 2]
 
     with pytest.raises(ValueError, match="same number of"):
+        _InMemoryProteinMappedDataset(
+            [a1, a2],
+            obs_keys=["sample"],
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+        )
+
+
+def test_multifile_same_width_reordered_protein_axis_raises():
+    a1, a2 = _make_adata(seed=1), _make_adata(seed=2)
+    a2.uns["protein_names"] = a2.uns["protein_names"][::-1].copy()
+
+    with pytest.raises(ValueError, match="exact order"):
+        _InMemoryProteinMappedDataset(
+            [a1, a2],
+            obs_keys=["sample"],
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+        )
+
+
+def test_multifile_same_width_renamed_protein_axis_raises():
+    a1, a2 = _make_adata(seed=1), _make_adata(seed=2)
+    a2.uns["protein_names"] = a2.uns["protein_names"].copy()
+    a2.uns["protein_names"][0] = "renamed"
+
+    with pytest.raises(ValueError, match="exact order"):
+        _InMemoryProteinMappedDataset(
+            [a1, a2],
+            obs_keys=["sample"],
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+        )
+
+
+@pytest.mark.parametrize("invalid_names", [["", "p1"], ["p0", "p0"]])
+def test_multifile_empty_or_duplicate_protein_names_raise(invalid_names):
+    a1, a2 = _make_adata(seed=1), _make_adata(seed=2)
+    width = a1.obsm["protein_expression"].shape[1]
+    names = [f"p{i}" for i in range(width)]
+    names[:2] = invalid_names
+    a1.uns["protein_names"] = np.asarray(names, dtype=object)
+    a2.uns["protein_names"] = np.asarray(names, dtype=object)
+
+    with pytest.raises(ValueError, match="non-empty|unique"):
+        _InMemoryProteinMappedDataset(
+            [a1, a2],
+            obs_keys=["sample"],
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+        )
+
+
+def test_dataframe_and_uns_protein_axes_must_agree_exactly(adata_protein_df):
+    adata = adata_protein_df.copy()
+    adata.uns["protein_names"] = np.asarray(
+        adata.obsm["protein_expression"].columns,
+        dtype=object,
+    ).copy()
+    adata.uns["protein_names"][0] = "same_width_but_renamed"
+
+    with pytest.raises(ValueError, match="agree exactly"):
+        _InMemoryProteinMappedDataset(
+            [adata],
+            obs_keys=["sample"],
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+        )
+
+
+def test_training_and_validation_protein_axes_must_agree_exactly():
+    train = _make_adata(seed=1)
+    validation = _make_adata(seed=2)
+    validation.uns["protein_names"] = validation.uns["protein_names"][::-1].copy()
+
+    with pytest.raises(ValueError, match="Training and validation.*exact order"):
+        MrTotalVIBatchDataModule(
+            train,
+            collection_val=validation,
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+            sample_key="sample",
+            batch_key="batch",
+            parallel=False,
+        )
+
+
+def test_training_and_validation_require_authoritative_protein_axes():
+    train = _make_adata(seed=1)
+    validation = _make_adata(seed=2)
+    train.uns.pop("protein_names")
+    validation.uns.pop("protein_names")
+
+    with pytest.raises(ValueError, match="require authoritative names"):
+        MrTotalVIBatchDataModule(
+            train,
+            collection_val=validation,
+            protein_expression_obsm_key="protein_expression",
+            sample_key="sample",
+            batch_key="batch",
+            parallel=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "malformed_name",
+    [None, ["nested"], ("tuple",)],
+)
+def test_list_like_or_non_string_protein_name_fails_cleanly(malformed_name):
+    adata = _make_adata(seed=1)
+    names = adata.uns["protein_names"].astype(object).tolist()
+    names[0] = malformed_name
+    adata.uns["protein_names"] = names
+
+    with pytest.raises(ValueError, match="one-dimensional|non-empty strings"):
+        _InMemoryProteinMappedDataset(
+            [adata],
+            obs_keys=["sample"],
+            protein_expression_obsm_key="protein_expression",
+            protein_names_uns_key="protein_names",
+        )
+
+
+def test_multifile_without_authoritative_protein_names_raises():
+    a1, a2 = _make_adata(seed=1), _make_adata(seed=2)
+    a1.uns.pop("protein_names")
+    a2.uns.pop("protein_names")
+
+    with pytest.raises(ValueError, match="require authoritative names"):
         _InMemoryProteinMappedDataset(
             [a1, a2],
             obs_keys=["sample"],
@@ -738,6 +862,7 @@ def test_full_protein_matrix_and_full_encoded_column_direct():
         [a1, a2],
         obs_keys=["sample", "batch"],
         protein_expression_obsm_key="protein_expression",
+        protein_names_uns_key="protein_names",
     )
 
     expected = np.concatenate(

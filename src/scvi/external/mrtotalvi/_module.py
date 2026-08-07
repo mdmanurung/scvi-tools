@@ -57,7 +57,7 @@ class MrTotalVAE(EmbeddingModuleMixin, TOTALVAE):
     Two-level KL loss:
 
     * ``kl_u = KL(q_u \\| p_u)`` — from the sample-conditioned u-encoder, where ``p_u``
-      is by default a learned mixture-of-Gaussians prior (``u_prior_mixture=True``).
+      is by default a learned mixture-of-Gaussians prior (``u_prior="mog"``).
     * ``kl_z = -\\log p(\\varepsilon) = -\\log N(0, \\exp(\\text{pz\\_scale}))`` — eps residual.
 
     Parameters
@@ -118,8 +118,9 @@ class MrTotalVAE(EmbeddingModuleMixin, TOTALVAE):
         u_prior_scale: float = 0.0,
         u_prior_mixture: bool = True,
         u_prior_mixture_k: int = 20,
-        u_prior_label_weight: float = 10.0,
+        u_prior_label_weight: float = 0.0,
         u_prior: str = "mog",
+        u_prior_supervision: str = "none",
         qz_kwargs: dict | None = None,
         qu_kwargs: dict | None = None,
         use_map: bool = True,
@@ -139,6 +140,19 @@ class MrTotalVAE(EmbeddingModuleMixin, TOTALVAE):
                 "additive residual hierarchy is invalid."
             )
         kwargs["latent_distribution"] = "normal"
+        if u_prior not in {"standard", "mog", "vamp"}:
+            raise ValueError("u_prior must be exactly one of {'standard', 'mog', 'vamp'}.")
+        if bool(u_prior_mixture) != (u_prior != "standard"):
+            raise ValueError(
+                "u_prior_mixture contradicts u_prior; pass the resolved prior enum "
+                "through MrTotalVI instead of constructing a contradictory module."
+            )
+        if u_prior_supervision not in {"none", "labels"}:
+            raise ValueError("u_prior_supervision must be one of {'none', 'labels'}.")
+        if u_prior_supervision == "none" and float(u_prior_label_weight) != 0.0:
+            raise ValueError(
+                "u_prior_supervision='none' requires u_prior_label_weight=0.0."
+            )
 
         n_continuous_cov = kwargs.get("n_continuous_cov", 0)
         n_cats_per_cov = kwargs.get("n_cats_per_cov", None)
@@ -158,6 +172,7 @@ class MrTotalVAE(EmbeddingModuleMixin, TOTALVAE):
         self.u_prior_mixture_k = int(u_prior_mixture_k)
         self.u_prior_label_weight = float(u_prior_label_weight)
         self.u_prior_type = u_prior
+        self.u_prior_supervision = u_prior_supervision
         self.qz_kwargs = qz_kwargs or {}
         self.qu_kwargs = qu_kwargs or {}
         self._use_map = use_map
@@ -370,6 +385,7 @@ class MrTotalVAE(EmbeddingModuleMixin, TOTALVAE):
             u_prior_mixture_k=self.u_prior_mixture_k,
             u_prior_label_weight=self.u_prior_label_weight,
             u_prior_type=getattr(self, "u_prior_type", "mog"),
+            u_prior_supervision=getattr(self, "u_prior_supervision", "none"),
             u_vamp_pseudo_dim=self.n_input_genes + self.n_input_proteins,
             prior_centroids=prior_centroids,
             freeze_prior_after_init=freeze_prior_after_init,

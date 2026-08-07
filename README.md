@@ -11,6 +11,10 @@
 > the upstream `scvi-tools` package (they collide on the `scvi` import). Public packaging is
 > deferred pending resolution of that namespace decision.
 
+The [usage-readiness matrix](docs/usage_readiness.md) is the authoritative capability status.
+Source tests, installed-wheel acceptance, scientific validation, and human promotion are separate
+states; shorter examples on this page never override that authority.
+
 CytoANVI is a semi-supervised variational autoencoder for antibody-based single-cell cytometry. It
 extends [CytoVI](https://scvi-tools.org/) (protein-intensity VAE) with the scANVI-style M1+M2
 latent hierarchy and a label classifier, giving you a single model that jointly learns a batch-
@@ -23,8 +27,8 @@ intensities rather than counts, and panels that don't share all markers).
 - **Semi-supervised label transfer** — train on a mix of labeled and unlabeled cells; predict labels
   (hard or soft/probabilistic) for the rest.
 - **Batch-corrected latent space** — a shared `z1` latent suitable for UMAP, clustering, kNN.
-- **Novelty / out-of-distribution detection** — per-cell uncertainty via test-time augmentation, so
-  you can flag cells that don't resemble any reference population.
+- **Novelty / out-of-distribution research** — the former TTA estimator is quarantined after a
+  below-chance multi-seed result; no stable novelty API is currently supported.
 - **Hierarchical label transfer** — supply a cell-type tree (or learn one with scHPL/treeArches) and
   predict with scores propagated through the hierarchy.
 - **Panel-divergent reference→query mapping** — scArches-style surgery that pads and masks markers
@@ -42,7 +46,7 @@ intensities rather than counts, and panels that don't share all markers).
 - [Feature guide](#feature-guide)
   - [1. Semi-supervised label transfer](#1-semi-supervised-label-transfer)
   - [2. Latent space, normalized expression, DE](#2-latent-space-normalized-expression-and-differential-expression)
-  - [3. Novelty / OOD uncertainty](#3-novelty--ood-uncertainty)
+  - [3. Novelty / OOD status](#3-novelty--ood-status)
   - [4. Warm start from a CytoVI model](#4-warm-start-from-a-cytovi-model)
   - [5. Hierarchical label transfer](#5-hierarchical-label-transfer)
   - [6. Reference → query mapping (panel-divergent surgery)](#6-reference--query-mapping-panel-divergent-surgery)
@@ -70,14 +74,14 @@ pip install .
 python -c "from cytoanvi import CytoANVI; import cytoanvi; print('cytoanvi', cytoanvi.__version__)"
 ```
 
-Install a [PyTorch](https://pytorch.org) build matching your CUDA/CPU setup. The core label-transfer,
-uncertainty, and save/load APIs need no extra dependencies; optional backends are listed under
+Install a [PyTorch](https://pytorch.org) build matching your CUDA/CPU setup. The core label-transfer
+and save/load APIs need no extra dependencies; optional backends are listed under
 [Optional dependencies](#optional-dependencies).
 
 ## Quick start
 
-The following is the minimal end-to-end workflow (train → predict → latent → uncertainty →
-save/load). Replace the synthetic array with your own arcsinh-transformed marker intensities.
+The following is the minimal end-to-end workflow (train → predict → latent → save/load). Replace
+the synthetic array with your own arcsinh-transformed marker intensities.
 
 ```python
 import numpy as np
@@ -105,7 +109,6 @@ model.train(max_epochs=1000, batch_size=4096)       # publication default; use f
 
 adata.obs["pred"] = model.predict()                 # hard labels for every cell
 adata.obsm["X_cytoanvi"] = model.get_latent_representation()
-adata.obs["uncertainty"] = model.get_uncertainty()  # per-cell novelty score
 
 model.save("cytoanvi_model", overwrite=True)
 model = CytoANVI.load("cytoanvi_model", adata=adata)
@@ -167,21 +170,16 @@ The latent `z` is the input for UMAP/clustering/kNN. `get_normalized_expression`
 `differential_expression` are inherited from the CytoVI/scVI machinery and respect the cytometry
 likelihood.
 
-### 3. Novelty / OOD uncertainty
+### 3. Novelty / OOD status
 
-`get_uncertainty` returns a per-cell Bregman-Information score from test-time augmentation — higher
-means the cell is less consistent under perturbation, i.e. more likely novel/out-of-distribution.
-Calibrate a threshold on reference cells and apply it to new cells.
+The former stable TTA estimator and threshold helper are **no-go**. Across three seeds its mean OOD
+AUROC was below chance, while a latent-space kNN diagnostic performed well. Stable
+`get_uncertainty()` and the indirect TTA replay selector therefore fail closed in 0.2.0.
 
-```python
-from cytoanvi import get_uncertainty_threshold
-
-ref_unc = model.get_uncertainty(tta_rep=50)                       # scores on reference cells
-threshold = get_uncertainty_threshold(ref_unc, specificity=0.95)  # 95% of reference below threshold
-
-query_unc = model.get_uncertainty(query_adata)
-query_adata.obs["is_novel"] = query_unc > threshold
-```
+No replacement novelty workflow is promoted. A future latent-distance/density method must freeze
+reference-only calibration, independent biological OOD truth, prevalence, and operating-point
+errors before use. The explicitly named experimental TTA surface exists only for historical method
+reproduction and is not a supported decision API.
 
 ### 4. Warm start from a CytoVI model
 
@@ -234,9 +232,11 @@ edges = hierarchy.learn_hierarchy(
 model.set_hierarchy(edges)
 ```
 
-See the treeArches tutorial (`docs/tutorials/notebooks/cytometry/CytoANVI_treeArches_tutorial.md`)
-and the `cytoanvi.hierarchy` module (`learn_hierarchy`, `run_tree_arches_pipeline`,
-`update_hierarchy`) for the full reference→query hierarchy pipeline.
+Run the tracked engineering fixture (`vignettes/cytoanvi_treearches_synthetic.py`) and use the
+`cytoanvi.hierarchy` module (`learn_hierarchy`, `run_tree_arches_pipeline`, `update_hierarchy`) for
+the reference→query hierarchy pipeline. The richer tutorial lives in an external uninitialized
+gitlink; its repair is `blocked_external_submodule` in the usage-readiness packet and is not part of
+the 0.2.0 artifact.
 
 ### 6. Reference → query mapping (panel-divergent surgery)
 
@@ -265,20 +265,22 @@ q_model = CytoANVI.load_query_data_with_replay(
     query_adata,
     reference_model,
     replay_adata=reference_adata,      # reference cells rehearsed during the update
-    control_adata=control_adata,       # optional query controls for the control Fisher
+    control_adata=control_adata,       # required query controls for the control Fisher
     freeze_classifier=True,
 )
 q_model.train(max_epochs=200, plan_kwargs={"ewc_importance": 1.0})   # tune ewc_importance for your data
 ```
 
-> **Note on `ewc_importance` (λ):** the EWC importances are a diagonal empirical Fisher computed by
+> **Experimental/no-go for consequential updates.** Replay and controls must be predeclared, and a
+> reloaded continual model cannot train until replay is explicitly reconstructed. The EWC
+> importances are a diagonal empirical Fisher computed by
 > `cytoanvi._continual.fisher_importances`. λ is **not** portable from RNA-domain EWC — tune it for
-> your data (start around 1.0 and adjust).
+> a frozen protocol without using the final evaluation set. There is no promoted value.
 
 ### 8. Query-mapping QC (mapQC)
 
 Score how well query cells embed into the reference neighborhood structure (requires the
-`cytoanvi-mapping-qc` extra).
+`cytoanvi-mapping-qc` extra, pinned to the only tested compatibility version, mapQC 0.1.1).
 
 ```python
 joint = model.score_query_mapping(
@@ -291,6 +293,9 @@ joint = model.score_query_mapping(
 )
 joint.obs["mapqc_score"]           # per-cell mapping-quality score
 ```
+
+mapQC is advisory/experimental, not an automatic gate: one benchmark rejected every Nuñez query
+despite strong label transfer, and no independent false-accept/false-reject threshold is frozen.
 
 ### 9. Missing markers / multi-panel data
 
@@ -323,8 +328,9 @@ model.save("my_model", overwrite=True)
 model = CytoANVI.load("my_model", adata=adata)
 ```
 
-Save/load round-trips the panel-aware marker mask and hierarchy, so a reloaded model predicts
-identically and is ready for query surgery.
+Save/load round-trips the panel-aware marker mask and hierarchy, so a reloaded core model predicts
+identically and is ready for query surgery. Continual replay batches are intentionally not saved;
+reconstruct them explicitly before any further continual training.
 
 ## Key training parameters
 
@@ -367,13 +373,12 @@ pip install ".[cytoanvi-annbatch]"      # experimental large-data benchmark load
 
 ## Limitations and status
 
-CytoANVI is a research release candidate. The core model, save/load, uncertainty, hierarchy, and
-query-surgery APIs are tested and usable, but the full publication benchmark suite is still in
-progress (see `benchmarks/ANALYSIS_MANIFEST.md` for the honest per-task status and label-provenance
-caveats). In particular, cross-panel and novelty-detection claims depend on datasets with
-independent ground-truth labels that are still being assembled — treat those outputs as exploratory
-until the corresponding benchmarks land. Do not co-install with `scvi-tools`, and do not publish this
-build to PyPI until the `scvi/` namespace question is resolved.
+CytoANVI is a research candidate with capability-specific status. Core label transfer, latent,
+save/load, and mapping remain conditional on an independently annotated target holdout. Hierarchy
+and integration are exploratory. Stable TTA novelty is no-go; continual update and automatic mapQC
+gating are not usage-ready. The exact 0.2.0 wheel is not engineering-accepted until the isolated
+receipt passes. See [the authoritative matrix](docs/usage_readiness.md); do not co-install with
+`scvi-tools`, publish, or release based on source tests alone.
 
 ## Citation
 

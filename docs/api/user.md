@@ -1,5 +1,8 @@
 # User
 
+API presence does not imply usage readiness or scientific promotion. See the authoritative
+{doc}`/usage_readiness` capability table before using CytoANVI or MrTotalVI outputs.
+
 Import scvi-tools as:
 
 ```
@@ -90,7 +93,6 @@ import scvi
 
    CytoANVI
    CytoANVAE
-   get_uncertainty_threshold
    hierarchy
    mapping_qc
 ```

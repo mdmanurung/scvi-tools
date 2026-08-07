@@ -3,6 +3,30 @@
 Starting from version 0.20.1, this format is based on [Keep a Changelog], and this project adheres
 to [Semantic Versioning]. The full commit history is available in the [commit logs](https://github.com/scverse/scvi-tools/commits/).
 
+## Version 0.2
+
+### 0.2.0 (candidate; 2026-08-07)
+
+This is a breaking, provenance-gated candidate for CytoANVI and MrTotalVI expert research use.
+Source tests, exact installed-artifact acceptance, capability-specific scientific evidence, and
+human promotion are separate states; see the
+[authoritative usage-readiness matrix](docs/usage_readiness.md).
+
+#### Changed
+
+- Make unsupported CytoANVI adversarial, replay-free continual, and stable TTA novelty paths fail
+  closed; make empirical priors/weights training-split scoped and pin mapQC compatibility to 0.1.1.
+- Replace ambiguous MrTotalVI prior/supervision controls with explicit validated contracts; add
+  exhaustive raw-count, sample/subset, and protein-axis validation.
+- Refuse public MrTotalVI biological DE and `use_vmap=True`; remove the incomplete streaming class
+  from stable exports and document conditional `u`/`z` shapes.
+- Add exact artifact manifests, isolated installed-wheel acceptance, P2 protocol schemas, and a
+  strict non-promoting 19-row capability matrix.
+
+#### Migration
+
+See [`docs/migration/cytoanvi-mrtotalvi-0.2.0.md`](docs/migration/cytoanvi-mrtotalvi-0.2.0.md).
+
 ## Version 1.5
 
 ### 1.5.0rc1 (2026-07-03)

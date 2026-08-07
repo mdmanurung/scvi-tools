@@ -38,6 +38,10 @@ def _empty_mode_inputs():
     return scores, mask, nhood_info
 
 
+def test_real_mapqc_runtime_matches_exact_guard():
+    mapping_qc._require_mapqc()
+
+
 def test_patch_applies_to_real_module_and_prevents_indexerror():
     """The guard must patch the real mapqc module and actually stop the real ``IndexError``.
 

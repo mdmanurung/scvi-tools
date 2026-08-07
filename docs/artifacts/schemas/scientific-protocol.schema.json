@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mdmanurung.github.io/cytoanvi/schemas/scientific-protocol-v1.json",
+  "title": "Capability-specific P2 scientific protocol",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "protocol_id", "model", "status", "artifact", "capabilities", "independent_review"],
+  "properties": {
+    "schema_version": {"const": "usage-readiness-scientific-protocol-v1"},
+    "protocol_id": {"type": "string", "minLength": 1},
+    "model": {"enum": ["cytoanvi", "mrtotalvi"]},
+    "status": {"enum": ["frozen", "draft_unfrozen", "blocked"]},
+    "artifact": {"$ref": "#/$defs/artifact"},
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/capability"}
+    },
+    "independent_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reviewer",
+        "date",
+        "independence_rule",
+        "capability_reviews"
+      ],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "rejected"]},
+        "reviewer": {"type": ["string", "null"]},
+        "date": {"type": ["string", "null"], "format": "date"},
+        "independence_rule": {"type": ["string", "null"]},
+        "capability_reviews": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/review_receipt"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "approved"}}},
+          "then": {
+            "properties": {
+              "reviewer": {"type": "string", "minLength": 1},
+              "date": {"type": "string", "format": "date"},
+              "independence_rule": {"type": "string", "minLength": 1},
+              "capability_reviews": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "review_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "stage",
+        "status",
+        "reviewer",
+        "date",
+        "independence_attestation"
+      ],
+      "properties": {
+        "capability_id": {"type": "string", "minLength": 1},
+        "stage": {"enum": ["pre_run", "post_run"]},
+        "status": {"enum": ["approved", "rejected"]},
+        "reviewer": {"type": "string", "minLength": 1},
+        "date": {"type": "string", "format": "date"},
+        "independence_attestation": {"type": "string", "minLength": 1}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "wheel_sha256", "source_commit"],
+      "properties": {
+        "version": {"const": "0.2.0"},
+        "wheel_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "frozen_cohort": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "role", "manifest_sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 3},
+        "role": {"type": "string", "minLength": 3},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "frozen_split": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["split_id", "split_sha256", "group_key", "leakage_boundary"],
+      "properties": {
+        "split_id": {"type": "string", "minLength": 3},
+        "split_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "group_key": {"type": "string", "minLength": 1},
+        "leakage_boundary": {"type": "string", "minLength": 3}
+      }
+    },
+    "frozen_rng_streams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["training_seeds", "streams"],
+      "properties": {
+        "training_seeds": {
+          "type": "array",
+          "minItems": 3,
+          "items": {"type": "integer", "minimum": 0},
+          "uniqueItems": true
+        },
+        "streams": {
+          "type": "object",
+          "required": ["split", "training", "uncertainty"],
+          "minProperties": 3,
+          "patternProperties": {
+            "^[A-Za-z][A-Za-z0-9_.-]*$": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "frozen_compute_budget": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "budget_id",
+        "evaluation_grid",
+        "maximum_walltime_seconds",
+        "accelerator",
+        "devices"
+      ],
+      "properties": {
+        "budget_id": {"type": "string", "minLength": 3},
+        "evaluation_grid": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "maximum_walltime_seconds": {"type": "integer", "minimum": 1},
+        "accelerator": {"const": "gpu"},
+        "devices": {"type": "integer", "minimum": 1}
+      }
+    },
+    "frozen_endpoint": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "metric", "aggregation_unit", "direction"],
+      "properties": {
+        "name": {"type": "string", "minLength": 3},
+        "metric": {"type": "string", "minLength": 1},
+        "aggregation_unit": {"type": "string", "minLength": 1},
+        "direction": {"enum": ["maximize", "minimize", "two_sided", "conjunctive"]}
+      }
+    },
+    "frozen_margin": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["kind", "operator", "value", "unit"],
+      "properties": {
+        "kind": {"enum": ["superiority", "noninferiority", "equivalence", "absolute"]},
+        "operator": {"enum": [">", ">=", "<", "<=", "abs<="]},
+        "value": {"type": "number"},
+        "unit": {"type": "string", "minLength": 1}
+      }
+    },
+    "frozen_uncertainty": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["method", "biological_unit", "confidence_level", "resamples"],
+      "properties": {
+        "method": {"type": "string", "minLength": 3},
+        "biological_unit": {"type": "string", "minLength": 1},
+        "confidence_level": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "resamples": {"type": "integer", "minimum": 1}
+      }
+    },
+    "frozen_multiplicity": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["method", "family", "alpha"],
+      "properties": {
+        "method": {"type": "string", "minLength": 2},
+        "family": {"type": "string", "minLength": 3},
+        "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "frozen_no_call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "conditions", "action"],
+      "properties": {
+        "policy_id": {"type": "string", "minLength": 3},
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 3},
+          "uniqueItems": true
+        },
+        "action": {"const": "no_call"}
+      }
+    },
+    "frozen_outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "schema", "schema_sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "schema": {"type": "string", "minLength": 1},
+              "schema_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "freeze_status",
+        "cohorts",
+        "biological_unit",
+        "split_and_leakage_boundary",
+        "rng_streams",
+        "compute_budget",
+        "representation_semantics",
+        "primary_endpoint",
+        "numeric_margin",
+        "donor_level_uncertainty",
+        "multiplicity",
+        "controls",
+        "no_call_policy",
+        "immutable_outputs",
+        "terminal_manifest_schema",
+        "pre_run_review",
+        "post_run_review",
+        "blockers"
+      ],
+      "properties": {
+        "capability_id": {"type": "string", "minLength": 1},
+        "freeze_status": {"enum": ["frozen", "draft_unfrozen", "blocked"]},
+        "cohorts": {"type": "array", "items": {"type": "object"}},
+        "biological_unit": {"type": ["string", "null"]},
+        "split_and_leakage_boundary": {"type": ["object", "null"]},
+        "rng_streams": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["training_seeds", "streams"],
+          "properties": {
+            "training_seeds": {"type": "array", "minItems": 3, "items": {"type": "integer"}, "uniqueItems": true},
+            "streams": {"type": "object"}
+          }
+        },
+        "compute_budget": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "properties": {
+                "evaluation_grid": {
+                  "description": "Complete non-seed arm combinations; terminal run IDs are each arm crossed with every training seed.",
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {"type": "string", "minLength": 1},
+                  "uniqueItems": true
+                }
+              }
+            }
+          ]
+        },
+        "representation_semantics": {"type": ["array", "null"], "items": {"type": "string"}},
+        "primary_endpoint": {"type": ["object", "null"]},
+        "numeric_margin": {"type": ["object", "null"]},
+        "donor_level_uncertainty": {"type": ["object", "null"]},
+        "multiplicity": {"type": ["object", "null"]},
+        "controls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["positive", "negative"],
+          "properties": {
+            "positive": {"type": "array", "items": {"type": "string"}},
+            "negative": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "no_call_policy": {"type": ["object", "null"]},
+        "immutable_outputs": {"type": ["object", "null"]},
+        "terminal_manifest_schema": {"const": "docs/artifacts/schemas/terminal-run-manifest.schema.json"},
+        "pre_run_review": {"enum": ["pending", "approved", "rejected"]},
+        "post_run_review": {"enum": ["pending", "approved", "rejected", "not_run"]},
+        "blockers": {"type": "array", "items": {"type": "string"}}
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["freeze_status"],
+            "properties": {"freeze_status": {"const": "frozen"}}
+          },
+          "then": {
+            "properties": {
+              "cohorts": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"$ref": "#/$defs/frozen_cohort"}
+              },
+              "biological_unit": {"type": "string", "minLength": 1},
+              "split_and_leakage_boundary": {"$ref": "#/$defs/frozen_split"},
+              "rng_streams": {"$ref": "#/$defs/frozen_rng_streams"},
+              "compute_budget": {"$ref": "#/$defs/frozen_compute_budget"},
+              "representation_semantics": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 3},
+                "uniqueItems": true
+              },
+              "primary_endpoint": {"$ref": "#/$defs/frozen_endpoint"},
+              "numeric_margin": {"$ref": "#/$defs/frozen_margin"},
+              "donor_level_uncertainty": {"$ref": "#/$defs/frozen_uncertainty"},
+              "multiplicity": {"$ref": "#/$defs/frozen_multiplicity"},
+              "controls": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["positive", "negative"],
+                "properties": {
+                  "positive": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 3},
+                    "uniqueItems": true
+                  },
+                  "negative": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 3},
+                    "uniqueItems": true
+                  }
+                }
+              },
+              "no_call_policy": {"$ref": "#/$defs/frozen_no_call"},
+              "immutable_outputs": {"$ref": "#/$defs/frozen_outputs"},
+              "pre_run_review": {"const": "approved"},
+              "blockers": {"maxItems": 0}
+            }
+          }
+        }
+      ]
+    }
+  }
+}

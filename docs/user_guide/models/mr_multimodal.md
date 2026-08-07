@@ -11,10 +11,18 @@ sample latent:
 Both models keep the stock TotalVI/MultiVI decoders unchanged. The hierarchy changes the
 encoder and latent prior, not the RNA/protein/ATAC likelihood definitions.
 
+The {doc}`/usage_readiness` matrix is authoritative. MrTotalVI engineering coverage does not
+promote a prior, representation claim, DA/DE inference, streaming, or new-sample inference.
+
 ## Setup
 
-Register a `sample_key` for the donor or sample axis. Optionally register `labels_key` to use one
-mixture-prior component per label.
+Register a `sample_key` for the donor or sample axis. RNA (the registered layer or `X`) and protein
+(`obsm`) inputs must be finite, non-negative, integer-like **raw counts**. Setup exhaustively checks
+all values before mutating AnnData state.
+
+`labels_key` records annotations but does not change the default unsupervised objective. To opt into
+label supervision, set `u_prior_supervision="labels"` and a finite positive
+`u_prior_label_weight`; disclose that choice in every comparison.
 
 ```python
 scvi.external.MrTotalVI.setup_anndata(
@@ -30,6 +38,7 @@ model = scvi.external.MrTotalVI(
     sample_key="donor",
     n_latent=20,
     n_latent_u=10,
+    u_prior_supervision="none",  # default even when labels_key is registered
 )
 ```
 
@@ -71,35 +80,38 @@ scvi.external.MrMultiVI.setup_mudata(
 
 ## Prior Options
 
-By default the models use a learned mixture-of-Gaussians prior over `u`.
+New MrTotalVI calls resolve `u_prior` to exactly `"standard"`, `"mog"`, or `"vamp"`; the default
+is `"mog"` for continuity, not because it is scientifically preferred.
 
 - `n_latent_u=None` preserves the original isomorphic hierarchy, so `u` and `z` have the same
   dimensionality.
 - `n_latent_u < n_latent` learns a lower-dimensional `u` and projects it into `z`.
-- `u_prior_mixture=True` uses learned mixture logits, means, and scales.
-- `labels_key` with more than one label switches the mixture count to `n_labels` and biases each
-  cell toward its observed label component.
-- `u_prior_mixture=False` uses an analytic Gaussian prior over `u`.
+- `u_prior="mog"` uses learned mixture logits, means, and scales.
+- `u_prior="standard"` uses an analytic Gaussian prior over `u`.
+- `u_prior="vamp"` uses pseudoinputs; data initialization is restricted to frozen training indices
+  and records its seed and ordered-index digest.
+- `u_prior_supervision="labels"` is the only label-conditioned mode and requires registered labels
+  plus a finite positive weight. The default is `"none"` with weight `0.0`.
 - `z_u_prior=False` omits the residual `eps` prior penalty while keeping the `u` prior.
+
+The deprecated `u_prior_mixture` boolean is accepted only for the exact migration combinations in
+{doc}`/migration/cytoanvi-mrtotalvi-0.2.0`; contradictory combinations fail before module
+construction.
 
 `latent_distribution="ln"` is rejected because the additive `u -> z` hierarchy is Euclidean.
 
-### Choosing a prior: clustering vs. differential abundance
+### Choosing a prior: unsettled
 
-`u_prior="mog"` is the default because it gives tighter cell-type clusters. On a 57k-cell CITE-seq
-T/NK subset with 21 fine-grained labels, switching to the VampPrior dispersed 6 of the clusters and
-tightened none (Proliferating NK +90%, CM CD4 T TSHZ2+ +64%, SOX4+ Naïve CD4 T +57%, CM CD4 T +54%,
-KLRB1+ CM CD4 T Th17-like +46%, Treg +32%). Keep the default for clustering-first workflows.
+No prior is generally recommended. The analysis historically used to justify MoG is unrecoverable
+and used non-authoritative geometry. One-dataset Vamp results are insufficient for promotion.
+Prespecify prior choice, include MoG/Vamp sensitivity where relevant, and do not choose after seeing
+the biological outcome. The following is an experimental sensitivity arm, not a preferred recipe.
 
-For `differential_abundance` with `MrTotalVI`, prefer the VampPrior recipe below. It has to be
-requested explicitly — `init_prior_from_data` and `freeze_prior_after_init` both default to `False`.
-
-The two flags are not gated the same way. `init_prior_from_data` applies only to `u_prior="vamp"`
-and is ignored under `"mog"`. `freeze_prior_after_init` applies to **both** priors: under `"vamp"`
-it freezes `u_vamp_pseudo`, and under `"mog"` it freezes `u_prior_means` and `u_prior_scales`. Since
-MoG centroids are never initialised from data, setting `freeze_prior_after_init=True` with
-`u_prior="mog"` freezes the prior at its *random* initialisation — almost certainly not what you
-want. Set it only together with `u_prior="vamp"`.
+The two flags are not gated the same way. `init_prior_from_data` applies only to `u_prior="vamp"`.
+When enabled, initialization uses only the frozen training indices and persists the seed and
+ordered-index digest; validation/test cells cannot influence pseudoinputs. `freeze_prior_after_init`
+also exists for historical sensitivity work, but no combination of these flags is a recommended
+scientific default.
 
 ```python
 model = scvi.external.MrTotalVI(
@@ -113,15 +125,8 @@ model = scvi.external.MrTotalVI(
 )
 ```
 
-Data-driven initialisation runs k-means on a subsample (≤10 000 cells) of the raw encoder input and
-places the VampPrior pseudo-inputs near the data manifold; freezing then holds them there for the
-rest of training, which anchors the `u`-encoder in one basin across seeds.
-
-On 10k human CITE-seq cells from 10 donors with a donor × timepoint sample key, this recipe gave a
-cross-seed W22 enrichment of **+0.445 ± 0.192** (3 seeds, all positive), against **0.875** standard
-deviation for the same architecture with the MoG prior — a 78% reduction in cross-seed spread. The
-recipe was validated on that one dataset and sample key; treat the magnitude as dataset-specific and
-re-check stability across seeds on your own data.
+This code block is therefore an explicitly prespecified sensitivity arm. It is not evidence that
+Vamp is preferable to MoG or standard Gaussian on a new dataset.
 
 ## Representations
 
@@ -220,9 +225,9 @@ Technical contexts are explicit:
   joint batch/panel contexts within each sample. Batch and panel cannot be
   marginalized separately.
 
-In-memory output has a hard 512 MiB estimate including summaries and overhead.
-Pass `zarr_path` for atomic, chunked region output; an existing destination is
-never overwritten.
+In-memory output has a hard 512 MiB estimate including summaries and overhead. Requests above that
+limit must be reduced through explicit cell, target, or feature subsetting. Public `zarr_path` /
+`zarr_chunks` streaming is quarantined and fails before filesystem access.
 
 All targets are limited to registered samples. These datasets are model-based,
 non-causal transformations. Centering defines the reported decomposition; it
@@ -245,7 +250,8 @@ reference mixture excludes that cell. These outputs and grouped
 
 ## Statistical APIs
 
-Both multimodal Mr models expose:
+Both multimodal Mr models expose aggregated-posterior and outlier utilities. MrTotalVI also exposes
+descriptive DA:
 
 ```python
 ap = model.get_aggregated_posterior()
@@ -253,20 +259,14 @@ da = model.differential_abundance(sample_cov_keys=["condition"])
 outliers = model.get_outlier_cell_sample_pairs()
 ```
 
-On legacy models, `MrTotalVI.differential_expression()` returns latent-space
-`beta`, `effect_size`, and `pvalue` from the local counterfactual linear model,
-and optionally decoded gene/protein-space LFC arrays when `store_lfc=True`.
-It fails closed on centered-v2 models because v2 DE validation is outside the
-package contract:
+`MrTotalVI.differential_abundance()` is descriptive and non-inferential. Its public
+`differential_expression()` fails closed for both legacy and centered-v2 models. For biological
+DE, aggregate raw counts at the donor-by-condition level and use a replicate-aware method such as
+PyDESeq2, edgeR, or dreamlet:
 
 ```python
-ds = model.differential_expression(
-    sample_cov_keys=["condition"],
-    store_lfc=True,          # adds lfc, lfc_std, feature coords
-    delta=0.5,               # adds pde = P(|lfc| >= delta)
-    store_baseline=True,     # adds baseline_expression
-)
-# ds["lfc"].coords["feature"] values: "gene" or "protein"
+model.differential_expression(sample_cov_keys=["condition"])
+# RuntimeError: use donor-pseudobulk PyDESeq2/edgeR/dreamlet.
 ```
 
 `MrMultiVI.differential_expression()` supports `store_lfc=True` for RNA-only or RNA+protein
@@ -279,9 +279,8 @@ a clear error rather than `AttributeError`; the implementation is deferred to v2
 These limitations are intentional cuts documented in ADR-0005 / ADR-0006.
 
 **Differential expression:**
-- Both models default to `use_vmap=False`. MrTotalVI's inherited TotalVI decoder uses BatchNorm
-  (incompatible with `torch.vmap`). MrMultiVI uses LayerNorm and may support `use_vmap=True` as
-  an opt-in in a future release.
+- MrTotalVI accepts only `use_vmap=False`; `use_vmap=True` raises before inference/statistics.
+  MrMultiVI behavior is unchanged by the 0.2.0 MrTotalVI hardening.
 - `MrMultiVI.differential_expression` rejects ATAC-containing models. Use `differential_abundance`
   for sample-level DA over `u` instead.
 
@@ -294,8 +293,8 @@ cell identity, `eps` carries minimal cell-state treatment signal. On one CITE-se
 MrTotalVI, MrMultiVI) was **anti-concordant** with pseudobulk DE gold standard (PyDESeq2,
 Spearman rho −0.24 to +0.04 across all cell types). This limitation is architectural and
 cell-type-universal: no cell type showed positive concordance between model LFC and pseudobulk
-direction. Cross-validate eps-space LFC against pseudobulk (e.g. PyDESeq2 or edgeR) before
-drawing biological conclusions from `store_lfc=True` output.
+direction. These historical internals remain private for reproduction; the public MrTotalVI method
+does not return p-values or decoded LFC. Use donor-pseudobulk for biological inference.
 
 **Differential abundance — sample-count sensitivity:**
 `MrTotalVI.differential_abundance` is unreliable when `sample_key` maps to many samples relative
@@ -304,8 +303,8 @@ cohort, 3 seeds), MrTotalVI DA varied from −9.0 to +9.7 across seeds (per-seed
 s1 = −9.04, s2 = +9.67; std 9.46 >> mean 1.12). MrMultiVI DA at the same setup was stable
 (per-seed: s0 = +0.84, s1 = +0.94, s2 = +1.09; mean +0.96 ± 0.13). If using
 `differential_abundance` with a `sample_key` that expands the sample count significantly (e.g.
-`sample_key="donor_timepoint"`), validate stability across seeds before reporting results. Prefer
-MrMultiVI for DA when both modalities are available.
+`sample_key="donor_timepoint"`), do not interpret the package output as inferential evidence.
+Use an independently validated, replicate-aware compositional method for biological DA.
 
 **Integration benchmarks (single dataset, batch-correction only):**
 MrMultiVI's integration improvement over MultiVI has been benchmarked on one CITE-seq dataset
@@ -321,6 +320,10 @@ validation (macaque CITE-seq) is pending.
 
 **ArchesMixin / scArches surgery:**
 Neither model supports reference-query surgery or the `ArchesMixin` protocol.
+
+**Streaming and new-sample inference:**
+`MrTotalVIBatchDataModule` is not a stable public training API, and 0.2.0 does not claim end-to-end
+streaming training or inference for biological samples absent from the registered training set.
 
 **Objective (methods note):**
 The default training objective (`use_map=True`) is a MAP/cross-entropy penalty on the residual

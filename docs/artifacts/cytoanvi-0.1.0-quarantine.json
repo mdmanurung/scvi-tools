@@ -1,0 +1,25 @@
+{
+  "schema_version": "usage-readiness-quarantine-v1",
+  "artifact": {
+    "filename": "dist/cytoanvi-0.1.0-py3-none-any.whl",
+    "distribution": "cytoanvi",
+    "version": "0.1.0",
+    "sha256": "340dfbd2d571e44cf5e8b6d1bc8a62798ce9753abc5df099654a026095f19c8d"
+  },
+  "status": "no_go_stale_engineering_baseline",
+  "immutable": true,
+  "recorded_source_commit": null,
+  "reasons": [
+    "same-version wheel predates current deterministic prediction and mapping fixes",
+    "same-version wheel does not contain the reviewed MrTotalVI source surface",
+    "source-level tests do not establish this installed artifact's readiness"
+  ],
+  "prohibited_actions": [
+    "move",
+    "delete",
+    "overwrite",
+    "rebuild_as_0.1.0",
+    "promote"
+  ],
+  "replacement_policy": "Only an exact clean-tree 0.2.0 candidate with a sealed manifest and isolated installed acceptance can supersede this engineering baseline."
+}

@@ -12,9 +12,9 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import pytest
-from benchmarks.cytoanvi import metrics
+from benchmarks.cytoanvi import metrics, tasks
 from benchmarks.cytoanvi import run as cyto_run
-from benchmarks.cytoanvi import tasks
+
 import cytoanvi
 from scvi.model.base import SemisupervisedTrainingMixin
 
@@ -220,7 +220,9 @@ def test_b9_query_surgery_uses_trainer_safe_publication_knobs(monkeypatch):
             return FakeQueryModel(query_train.n_obs)
 
     def fake_build_mapqc_anndata(query_model, ref_adata, query_adata, sample_key):
-        obs = pd.DataFrame(index=[f"joint_{i}" for i in range(ref_adata.n_obs + query_adata.n_obs)])
+        obs = pd.DataFrame(
+            index=[f"joint_{i}" for i in range(ref_adata.n_obs + query_adata.n_obs)]
+        )
         return ad.AnnData(
             X=np.ones((ref_adata.n_obs + query_adata.n_obs, 2), dtype=np.float32),
             obs=obs,
@@ -322,6 +324,9 @@ def test_b4_uses_replay_latent_drift_for_unseen_query_batches(monkeypatch):
             offset = {"reference": 0.0, "plain": 1.0, "continual": 0.5}[self.role]
             return np.full((latent_adata.n_obs, 2), offset, dtype=np.float32)
 
+        def experimental_get_uncertainty(self, adata, batch_size=None, seed=None):
+            return np.arange(adata.n_obs, dtype=np.float32)
+
     def fake_train_cytoanvi(ref_adata, **kwargs):
         model = FakeModel(role="reference")
         model.n_obs = ref_adata.n_obs
@@ -330,7 +335,7 @@ def test_b4_uses_replay_latent_drift_for_unseen_query_batches(monkeypatch):
     class FakeCytoANVI:
         @staticmethod
         def select_replay_by_uncertainty(ref_model, ref_adata, fraction):
-            return ref_adata[:20].copy()
+            pytest.fail("stable indirect TTA selector must stay quarantined")
 
         @staticmethod
         def load_query_data(query_adata, ref_model):
@@ -358,9 +363,10 @@ def test_b4_uses_replay_latent_drift_for_unseen_query_batches(monkeypatch):
     assert "replay_latent_drift" in result["plain_surgery"]
     assert "replay_latent_drift" in result["continual_update"]
     assert "control_latent_drift" not in result["plain_surgery"]
-    assert result["plain_surgery"]["replay_latent_drift"] > result["continual_update"][
-        "replay_latent_drift"
-    ]
+    assert (
+        result["plain_surgery"]["replay_latent_drift"]
+        > result["continual_update"]["replay_latent_drift"]
+    )
 
 
 def test_b6_does_not_recommend_lambda_when_replay_drift_ties(monkeypatch):
@@ -647,7 +653,14 @@ def test_b5_holdout_sweep_forwards_mode_nan_layer_and_training_config(monkeypatc
     adata = ad.AnnData(X=np.ones((len(labels), 4), dtype=np.float32), obs=obs)
     seen = {}
 
-    def fake_b5(*args, holdout_type=None, nan_layer=None, b5_mode=None, cytoanvi_training_config=None, **kwargs):
+    def fake_b5(
+        *args,
+        holdout_type=None,
+        nan_layer=None,
+        b5_mode=None,
+        cytoanvi_training_config=None,
+        **kwargs,
+    ):
         seen[holdout_type] = {
             "nan_layer": nan_layer,
             "b5_mode": b5_mode,
@@ -681,7 +694,7 @@ def test_b5_inductive_trains_only_seen_labeled_cells(monkeypatch):
     train_labels = []
 
     class FakeModel:
-        def get_uncertainty(self, adata, mode="latent", batch_size=None):
+        def experimental_get_uncertainty(self, adata, mode="latent", batch_size=None, seed=None):
             scores = np.linspace(0.0, 1.0, adata.n_obs)
             return scores if mode == "latent" else scores[::-1]
 
@@ -721,13 +734,16 @@ def test_b4_real_case_control_split_metadata(monkeypatch):
         def get_latent_representation(self, adata):
             return np.zeros((adata.n_obs, 2), dtype=np.float32)
 
+        def experimental_get_uncertainty(self, adata, batch_size=None, seed=None):
+            return np.arange(adata.n_obs, dtype=np.float32)
+
     def fake_train_cytoanvi(ref_adata, **kwargs):
         return FakeModel(), ref_adata.copy()
 
     class FakeCytoANVI:
         @staticmethod
         def select_replay_by_uncertainty(ref_model, ref_adata, fraction):
-            return ref_adata[:20].copy()
+            pytest.fail("stable indirect TTA selector must stay quarantined")
 
     monkeypatch.setattr(tasks, "train_cytoanvi", fake_train_cytoanvi)
     monkeypatch.setattr(cytoanvi, "CytoANVI", FakeCytoANVI)

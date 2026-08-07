@@ -3,7 +3,7 @@
 Runs the full CytoANVI story on the two CytoVI vignette datasets:
 
   D2 Nuñez PBMC  — same antibody panel, two batches, 11 manual cell types
-                   → semi-supervised label transfer, integration, novelty, continual update
+                   → semi-supervised label transfer and integration
   D1 Roider BNHL — two divergent panels (shared backbone + panel-specific markers)
                    → panel-aware query mapping via scArches surgery
 
@@ -15,6 +15,9 @@ Usage (from repo root, scvi-tools >= 1.4.3 env with GPU recommended):
     PYTHONPATH=src:. python vignettes/cytoanvi_showcase.py --smoke
 
 Outputs land in ``.scratch/cytoanvi-vignette/`` (JSON summary + UMAP figures).
+The authoritative capability boundaries are in ``docs/usage_readiness.md``. Stable novelty and
+continual-update recipes are intentionally not executed here: TTA is no-go and continual updates
+require a separately frozen replay/control protocol.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+
 import scvi
 
 REPO = Path(__file__).resolve().parents[1]
@@ -74,12 +78,11 @@ def _holdout_mask(labels, unlabeled_category, frac, seed):
 
 
 def section_nunez(max_epochs: int, subsample: int, seed: int) -> dict:
-    """Nuñez PBMC: label transfer, integration, novelty, continual update."""
+    """Nuñez PBMC: exploratory label transfer and integration diagnostics."""
     from benchmarks.common.scib import LATENT_OBSM, run_scib_benchmark
-    from benchmarks.common.training import latent_obsm, train_cytoanvi, train_cytovi
+    from benchmarks.common.training import latent_obsm, train_cytoanvi
     from benchmarks.cytoanvi import data as data_mod
     from benchmarks.cytoanvi import metrics as bench_metrics
-    from benchmarks.cytoanvi import tasks as task_mod
     from benchmarks.cytoanvi.baselines import cytovi_latent_and_knn
 
     _banner("Section A — Nuñez PBMC (same panel, batch correction + label transfer)")
@@ -109,14 +112,6 @@ def section_nunez(max_epochs: int, subsample: int, seed: int) -> dict:
     )
 
     scvi.settings.seed = seed
-    kw = dict(
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        batch_key=BATCH_KEY,
-        seed=seed,
-        max_epochs=max_epochs,
-    )
-
     # --- B1 + B2: one CytoANVI and one CytoVI train each (no redundant retrains) ---
     true = np.asarray(adata.obs[LABELS_KEY].astype(str))
     held = _holdout_mask(true, UNLABELED, 0.2, seed)
@@ -158,7 +153,8 @@ def section_nunez(max_epochs: int, subsample: int, seed: int) -> dict:
         "cytovi_knn": b1_knn,
     }
     print(
-        f"     CytoANVI  macro-F1={b1_cytoanvi['macro_f1']:.3f}  acc={b1_cytoanvi['accuracy']:.3f}  "
+        f"     CytoANVI  macro-F1={b1_cytoanvi['macro_f1']:.3f}  "
+        f"acc={b1_cytoanvi['accuracy']:.3f}  "
         f"(n_held={b1['n_held']})",
         flush=True,
     )
@@ -212,25 +208,12 @@ def section_nunez(max_epochs: int, subsample: int, seed: int) -> dict:
     anvi_adata.obs["pred"] = cytoanvi_pred
     _umap_figure(anvi_adata, [BATCH_KEY, LABELS_KEY, "pred"], OUT_DIR / "nunez_umap.png")
 
-    print("\n  → B5 novelty detection (hold out one cell type) …", flush=True)
-    holdout = "Classical monocytes"
-    b5 = task_mod.task_b5_novelty(adata, holdout_type=holdout, **kw)
-    print(f"     holdout={holdout!r}  AUROC={b5['auroc']:.3f}  n_novel={b5['n_novel']}", flush=True)
-
-    print("\n  → B4 continual update vs plain surgery …", flush=True)
-    b4 = task_mod.task_b4_continual(adata, **kw)
     print(
-        f"     plain surgery replay drift={b4['plain_surgery']['replay_latent_drift']:.4f}  "
-        f"query acc={b4['plain_surgery']['query_label_transfer']['accuracy']:.3f}",
+        "\n  Novelty and continual-update sections are intentionally omitted; "
+        "see docs/usage_readiness.md for the no-go/blocked boundaries.",
         flush=True,
     )
-    print(
-        f"     continual+replay drift={b4['continual_update']['replay_latent_drift']:.4f}  "
-        f"query acc={b4['continual_update']['query_label_transfer']['accuracy']:.3f}",
-        flush=True,
-    )
-
-    return {"dataset": "nunez", "b1": b1, "b2": b2, "b5": b5, "b4": b4}
+    return {"dataset": "nunez", "b1": b1, "b2": b2}
 
 
 def section_roider(max_epochs: int, seed: int) -> dict:
@@ -238,6 +221,7 @@ def section_roider(max_epochs: int, seed: int) -> dict:
     from benchmarks.common.training import train_cytoanvi
     from benchmarks.cytoanvi import data as data_mod
     from benchmarks.cytoanvi import tasks as task_mod
+
     from scvi.external import cytovi
 
     _banner("Section B — Roider BNHL (panel-divergent query mapping)")
@@ -261,13 +245,13 @@ def section_roider(max_epochs: int, seed: int) -> dict:
     )
 
     scvi.settings.seed = seed
-    kw = dict(
-        labels_key=LABELS_KEY,
-        unlabeled_category=UNLABELED,
-        batch_key=BATCH_KEY,
-        seed=seed,
-        max_epochs=max_epochs,
-    )
+    kw = {
+        "labels_key": LABELS_KEY,
+        "unlabeled_category": UNLABELED,
+        "batch_key": BATCH_KEY,
+        "seed": seed,
+        "max_epochs": max_epochs,
+    }
 
     print("\n  → B3 panel-divergent mapping …", flush=True)
     b3 = task_mod.task_b3_panel_divergent(p1, p2, **kw)
@@ -342,9 +326,7 @@ def section_warmstart(max_epochs: int = 15) -> dict:
 def section_synthetic_smoke(max_epochs: int = 10) -> dict:
     """Minimal synthetic run mirroring example_reference_query.py."""
     _banner("Section D — Synthetic smoke (example_reference_query)")
-    example_path = (
-        REPO / "docs" / "tutorials" / "notebooks" / "cytometry" / "cytoanvi_example_reference_query.py"
-    )
+    example_path = REPO / "vignettes" / "cytoanvi_example_reference_query.py"
     spec = importlib.util.spec_from_file_location("cytoanvi_example_reference_query", example_path)
     example_reference_query = importlib.util.module_from_spec(spec)
     if spec.loader is None:
@@ -355,20 +337,25 @@ def section_synthetic_smoke(max_epochs: int = 10) -> dict:
 
 
 def print_plan() -> None:
+    """Print the bounded showcase plan and explicit no-go boundaries."""
     _banner("CytoANVI showcase vignette — plan")
     print(
         textwrap.dedent(
             """
             CytoANVI extends CytoVI with a scANVI-style classifier for antibody cytometry.
-            This vignette demonstrates every major API surface on real + synthetic data:
+            This vignette demonstrates bounded exploratory engineering surfaces on real and
+            synthetic data.
+            Capability status and promotion remain governed by docs/usage_readiness.md:
 
               1. Semi-supervised reference training (partial labels, y_prior, predict)
               2. Label transfer vs CytoVI k-NN baseline (macro-F1 on held-out cells)
               3. Latent integration quality (scib-metrics: batch vs bio tradeoff)
               4. Panel-divergent query mapping (prepare_query_anndata, nan_layer, surgery)
-              5. Uncertainty scoring for novel/ambiguous cells (get_uncertainty, Bregman info)
-              6. Continual reference update (load_query_data_with_replay, EWC + replay buffer)
-              7. Warm-start from a trained CytoVI model (from_cytovi_model)
+              5. Warm-start from a trained CytoVI model (from_cytovi_model)
+
+            Stable TTA novelty is no-go. Continual updates are not run here because they require
+            predeclared replay and an external matched control under a separately approved
+            protocol.
 
             Datasets: Nuñez PBMC (D2), Roider BNHL (D1), plus synthetic sanity checks.
             """
@@ -378,6 +365,7 @@ def print_plan() -> None:
 
 
 def main() -> None:
+    """Run the selected bounded showcase sections."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--max-epochs", type=int, default=100, help="training epochs per model")
     ap.add_argument("--subsample", type=int, default=50_000, help="Nuñez cell cap")
@@ -404,7 +392,9 @@ def main() -> None:
         results["sections"]["smoke"] = section_synthetic_smoke(max_epochs=min(10, args.max_epochs))
     else:
         if not args.skip_nunez:
-            results["sections"]["nunez"] = section_nunez(args.max_epochs, args.subsample, args.seed)
+            results["sections"]["nunez"] = section_nunez(
+                args.max_epochs, args.subsample, args.seed
+            )
         if not args.skip_roider:
             results["sections"]["roider"] = section_roider(args.max_epochs, args.seed)
         results["sections"]["warmstart"] = section_warmstart(max_epochs=min(20, args.max_epochs))

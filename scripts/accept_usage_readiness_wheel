@@ -1,0 +1,945 @@
+#!/usr/bin/env python3
+"""Accept one exact cytoanvi 0.2.0 wheel against an offline dependency authority."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import configparser
+import csv
+import hashlib
+import json
+import os
+import platform
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
+
+ACCEPTANCE_INPUT_PATHS = frozenset(
+    {
+        "scripts/accept_usage_readiness_wheel",
+        "scripts/usage_readiness_installed_smoke.py",
+        "vignettes/cytoanvi_treearches_synthetic.py",
+    }
+)
+EXPECTED_CONSOLE_SCRIPTS = {
+    "cytoanvi-install-skills": "scvi._skills.install:main",
+}
+CANONICAL_MANIFEST_PATH = "docs/artifacts/cytoanvi-0.2.0/manifest.json"
+CANONICAL_INVENTORY_PATH = "docs/artifacts/cytoanvi-0.2.0/inventory.json"
+CANONICAL_RECEIPT_PATH = "docs/artifacts/cytoanvi-0.2.0/installed-acceptance.json"
+PINNED_REQUIREMENT_RE = re.compile(
+    r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+    r"(?:\[[A-Za-z0-9._,-]+\])?=="
+    r"(?P<version>[A-Za-z0-9](?:[A-Za-z0-9.!+_-]*[A-Za-z0-9])?)$"
+)
+REQUIREMENT_HASH_RE = re.compile(r"^--hash=sha256:[0-9a-f]{64}$")
+
+
+def now() -> str:
+    """Return a UTC timestamp suitable for JSON Schema date-time."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest of a file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    """Atomically replace a JSON state file."""
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=False) + "\n")
+    temporary.replace(path)
+
+
+def repository_for_manifest(manifest_path: Path) -> Path:
+    """Require the canonical manifest location and return its repository root."""
+    for parent in manifest_path.parents:
+        if (parent / CANONICAL_MANIFEST_PATH).resolve() == manifest_path:
+            return parent
+    raise ValueError(f"Manifest is not at canonical path {CANONICAL_MANIFEST_PATH}")
+
+
+def receipt_digest(receipt: dict[str, Any]) -> str:
+    """Hash a receipt after nulling its self-digest field."""
+    payload = dict(receipt)
+    payload["receipt_sha256"] = None
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def record_digest(hex_digest: str) -> str:
+    """Encode a hexadecimal SHA-256 digest in wheel RECORD form."""
+    encoded = base64.urlsafe_b64encode(bytes.fromhex(hex_digest)).decode().rstrip("=")
+    return f"sha256={encoded}"
+
+
+def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess to terminal success while capturing its output."""
+    return subprocess.run(command, cwd=cwd, env=env, check=True, text=True, capture_output=True)
+
+
+def require_relative_child(root: Path, relative: str) -> Path:
+    """Resolve a traversal-free non-symlink child of an authority root."""
+    relative_path = Path(relative)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError(f"Authority path is not a traversal-free relative path: {relative}")
+    candidate = root
+    for part in relative_path.parts:
+        candidate = candidate / part
+        if candidate.is_symlink():
+            raise ValueError(f"Authority path contains a symlink: {relative}")
+    candidate = candidate.resolve()
+    if root != candidate and root not in candidate.parents:
+        raise ValueError(f"Authority path escapes its root: {relative}")
+    return candidate
+
+
+def parse_requirements_lock(text: str) -> list[tuple[str, str, tuple[str, ...]]]:
+    """Parse the deliberately narrow offline lock grammar used by acceptance."""
+    logical_records: list[str] = []
+    continuation: list[str] = []
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            if continuation:
+                raise ValueError(
+                    f"requirements.lock interrupts a continued record at line {line_number}"
+                )
+            continue
+        if "#" in line:
+            raise ValueError(
+                f"requirements.lock forbids inline comments at line {line_number}"
+            )
+        continued = line.endswith("\\")
+        fragment = line[:-1].rstrip() if continued else line
+        if not fragment or "\\" in fragment:
+            raise ValueError(
+                f"requirements.lock has an invalid continuation at line {line_number}"
+            )
+        continuation.append(fragment)
+        if not continued:
+            logical_records.append(" ".join(continuation))
+            continuation = []
+    if continuation:
+        raise ValueError("requirements.lock ends with a dangling continuation")
+    if not logical_records:
+        raise ValueError("requirements.lock contains no pinned requirements")
+
+    parsed: list[tuple[str, str, tuple[str, ...]]] = []
+    normalized_names: set[str] = set()
+    for record in logical_records:
+        try:
+            tokens = shlex.split(record, posix=True)
+        except ValueError as exc:
+            raise ValueError(f"requirements.lock has invalid quoting: {record!r}") from exc
+        if len(tokens) < 2:
+            raise ValueError(
+                "requirements.lock records require name==version and at least one SHA-256 hash"
+            )
+        requirement = PINNED_REQUIREMENT_RE.fullmatch(tokens[0])
+        if requirement is None:
+            raise ValueError(
+                "requirements.lock permits only pinned name==version records; "
+                f"got {tokens[0]!r}"
+            )
+        hashes = tuple(tokens[1:])
+        if any(REQUIREMENT_HASH_RE.fullmatch(token) is None for token in hashes):
+            raise ValueError(
+                "requirements.lock permits only --hash=sha256:<64 lowercase hex> "
+                f"after each pin; got {record!r}"
+            )
+        if len(hashes) != len(set(hashes)):
+            raise ValueError(f"requirements.lock repeats a hash for {tokens[0]!r}")
+        normalized = re.sub(r"[-_.]+", "-", requirement.group("name")).lower()
+        if normalized in normalized_names:
+            raise ValueError(f"requirements.lock repeats package {normalized!r}")
+        normalized_names.add(normalized)
+        parsed.append((normalized, requirement.group("version"), hashes))
+    return parsed
+
+
+def wheel_console_scripts(wheel: Path) -> dict[str, str]:
+    """Read the exact console-script entry points from the sealed candidate wheel."""
+    with zipfile.ZipFile(wheel) as archive:
+        entry_point_paths = [
+            name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
+        ]
+        if len(entry_point_paths) != 1:
+            raise ValueError("Candidate wheel must contain exactly one entry_points.txt")
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.optionxform = str
+        parser.read_string(archive.read(entry_point_paths[0]).decode("utf-8"))
+    scripts = (
+        dict(parser.items("console_scripts")) if parser.has_section("console_scripts") else {}
+    )
+    if any(Path(name).name != name or not name for name in scripts):
+        raise ValueError("Candidate wheel contains a non-basename console-script name")
+    if scripts != EXPECTED_CONSOLE_SCRIPTS:
+        raise ValueError(
+            "Candidate console scripts differ from the frozen source contract: "
+            f"expected={EXPECTED_CONSOLE_SCRIPTS}, observed={scripts}"
+        )
+    return scripts
+
+
+def resolve_recorded_file(manifest_path: Path, recorded_path: str) -> Path:
+    """Resolve an absolute or repository-relative file recorded in a manifest."""
+    raw = Path(recorded_path)
+    if raw.is_absolute():
+        if raw.is_file():
+            return raw
+        raise ValueError(f"recorded file does not exist: {raw}")
+    for parent in manifest_path.parents:
+        candidate = parent / raw
+        if candidate.is_file():
+            return candidate
+    raise ValueError(f"cannot resolve recorded repository file: {recorded_path}")
+
+
+def validate_installed_inventory(
+    sealed_files: list[dict[str, Any]],
+    identity: dict[str, Any],
+    wheel_sha256: str,
+    expected_console_records: dict[str, str] | None = None,
+    expected_console_targets: dict[str, str] | None = None,
+) -> int:
+    """Match installed payload bytes and admit only enumerated pip-generated files."""
+    installed = identity["installed_inventory"]
+    sealed_by_path = {entry["path"]: entry for entry in sealed_files}
+    actual_by_path = {entry["path"]: entry for entry in installed["files"]}
+    if len(sealed_by_path) != len(sealed_files) or len(actual_by_path) != len(installed["files"]):
+        raise RuntimeError("Sealed or installed inventory contains duplicate paths")
+    sealed_records = [path for path in sealed_by_path if path.endswith(".dist-info/RECORD")]
+    if len(sealed_records) != 1 or installed["record"]["path"] != sealed_records[0]:
+        raise RuntimeError("Installed RECORD path differs from the sealed wheel")
+    record_path = sealed_records[0]
+
+    missing = sorted(set(sealed_by_path) - set(actual_by_path))
+    if missing:
+        raise RuntimeError(f"Installed distribution omits sealed wheel files: {missing}")
+    changed = sorted(
+        path
+        for path in set(sealed_by_path) - {record_path}
+        if (
+            actual_by_path[path]["sha256"],
+            actual_by_path[path]["size_bytes"],
+        )
+        != (sealed_by_path[path]["sha256"], sealed_by_path[path]["size_bytes"])
+    )
+    if changed:
+        raise RuntimeError(f"Installed wheel payload hash/size mismatch: {changed}")
+
+    dist_info = record_path.removesuffix("/RECORD")
+    allowed_metadata = {
+        f"{dist_info}/INSTALLER",
+        f"{dist_info}/REQUESTED",
+        f"{dist_info}/direct_url.json",
+    }
+    expected_console_records = expected_console_records or {}
+    expected_console_targets = expected_console_targets or {}
+    if set(expected_console_targets) != set(expected_console_records):
+        raise RuntimeError("Expected console-script paths and targets differ")
+    if any(Path(name).name != name for name in expected_console_records):
+        raise RuntimeError("Expected console-script names must be basenames")
+    allowed_console_paths = set(expected_console_records.values())
+    if len(allowed_console_paths) != len(expected_console_records):
+        raise RuntimeError("Expected console-script RECORD paths are not unique")
+    cache_tag = sys.implementation.cache_tag
+    allowed_bytecode = set()
+    for path in sealed_by_path:
+        if not path.endswith(".py"):
+            continue
+        source = Path(path)
+        base = source.parent / "__pycache__" / f"{source.stem}.{cache_tag}"
+        allowed_bytecode.update(
+            {
+                f"{base}.pyc",
+                f"{base}.opt-1.pyc",
+                f"{base}.opt-2.pyc",
+            }
+        )
+    extras = set(actual_by_path) - set(sealed_by_path)
+    unexpected = sorted(extras - allowed_metadata - allowed_bytecode - allowed_console_paths)
+    if unexpected:
+        raise RuntimeError(
+            f"Installed distribution contains unexpected generated files: {unexpected}"
+        )
+    empty_bytecode = sorted(
+        path for path in extras & allowed_bytecode if actual_by_path[path]["size_bytes"] <= 0
+    )
+    if empty_bytecode:
+        raise RuntimeError(f"Installed bytecode files are empty: {empty_bytecode}")
+
+    generated = installed["pip_generated"]
+    installer_path = f"{dist_info}/INSTALLER"
+    requested_path = f"{dist_info}/REQUESTED"
+    direct_url_path = f"{dist_info}/direct_url.json"
+    if installer_path in extras and generated.get("INSTALLER", "").strip() != "pip":
+        raise RuntimeError("pip-generated INSTALLER does not identify pip")
+    if requested_path in extras and generated.get("REQUESTED") != "":
+        raise RuntimeError("pip-generated REQUESTED marker is not empty")
+    if direct_url_path in extras:
+        direct_url = generated.get("direct_url.json")
+        if not isinstance(direct_url, dict):
+            raise RuntimeError("pip-generated direct_url.json is not a JSON object")
+        archive_info = direct_url.get("archive_info", {})
+        recorded_hash = archive_info.get("hash")
+        recorded_hashes = archive_info.get("hashes", {})
+        if (
+            recorded_hash != f"sha256={wheel_sha256}"
+            and recorded_hashes.get("sha256") != wheel_sha256
+        ):
+            raise RuntimeError("pip-generated direct_url.json does not bind the wheel SHA-256")
+
+    console_entries = generated.get("console_scripts", [])
+    if not isinstance(console_entries, list) or any(
+        not isinstance(entry, dict) for entry in console_entries
+    ):
+        raise RuntimeError("Installed console-script inventory is malformed")
+    console_by_name = {entry.get("name"): entry for entry in console_entries}
+    if len(console_by_name) != len(console_entries) or set(console_by_name) != set(
+        expected_console_records
+    ):
+        raise RuntimeError("Installed console-script names differ from sealed entry points")
+    for name, expected_path in expected_console_records.items():
+        entry = console_by_name[name]
+        if set(entry) != {"name", "target", "path", "sha256", "size_bytes"}:
+            raise RuntimeError(f"Installed console-script receipt is malformed: {name}")
+        if entry["target"] != expected_console_targets[name]:
+            raise RuntimeError(f"Installed console-script target differs from the wheel: {name}")
+        if entry["path"] != expected_path or expected_path not in actual_by_path:
+            raise RuntimeError(f"Installed console-script path differs from fresh venv: {name}")
+        actual_entry = actual_by_path[expected_path]
+        if (entry["sha256"], entry["size_bytes"]) != (
+            actual_entry["sha256"],
+            actual_entry["size_bytes"],
+        ):
+            raise RuntimeError(f"Installed console-script receipt bytes differ: {name}")
+
+    rows = list(csv.reader(installed["record"]["lines"]))
+    if any(len(row) != 3 for row in rows):
+        raise RuntimeError("Installed RECORD output has malformed rows")
+    record_paths = [row[0] for row in rows]
+    if len(record_paths) != len(set(record_paths)) or set(record_paths) != set(actual_by_path):
+        raise RuntimeError("Installed RECORD does not exactly account for the installed inventory")
+    for path, encoded_hash, encoded_size in rows:
+        if path == record_path:
+            if encoded_hash or encoded_size:
+                raise RuntimeError("Installed RECORD self-entry has a hash or size")
+            continue
+        entry = actual_by_path[path]
+        if not encoded_hash and not encoded_size and path in allowed_bytecode:
+            continue
+        if encoded_hash != record_digest(entry["sha256"]):
+            raise RuntimeError(f"Installed RECORD SHA-256 mismatch for {path}")
+        if encoded_size != str(entry["size_bytes"]):
+            raise RuntimeError(f"Installed RECORD size mismatch for {path}")
+    return len(actual_by_path)
+
+
+def verify_acceptance_inputs(repository: Path, entries: list[dict[str, Any]]) -> None:
+    """Refuse post-build drift in the harness and copied engineering fixtures."""
+    by_path = {entry["path"]: entry for entry in entries}
+    if len(by_path) != len(entries) or set(by_path) != ACCEPTANCE_INPUT_PATHS:
+        raise ValueError("sealed acceptance-input set differs from the mandatory harness inputs")
+    for relative, expected in by_path.items():
+        path = repository / relative
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"acceptance input is not a regular non-symlink file: {relative}")
+        if (
+            sha256_file(path) != expected["sha256"]
+            or path.stat().st_size != expected["size_bytes"]
+        ):
+            raise ValueError(f"acceptance input drifted after the candidate build: {relative}")
+
+
+def verify_authority(path: Path) -> tuple[dict[str, Any], Path, Path, str]:
+    """Verify an offline, wheel-only dependency authority against this runtime."""
+    if path.absolute().is_symlink():
+        raise ValueError("dependency authority root must not be a symlink")
+    root = path.resolve()
+    authority_path = root / "authority.json"
+    if not authority_path.is_file() or authority_path.is_symlink():
+        raise ValueError("dependency authority lacks authority.json")
+    authority = json.loads(authority_path.read_text())
+    expected_keys = {
+        "schema_version",
+        "python",
+        "platform",
+        "requirements_file",
+        "requirements_sha256",
+        "wheelhouse",
+        "wheel_inventory",
+    }
+    if set(authority) != expected_keys:
+        raise ValueError(f"authority.json keys differ: {sorted(set(authority) ^ expected_keys)}")
+    if authority["schema_version"] != "cytoanvi-dependency-authority-v1":
+        raise ValueError("unknown dependency authority schema")
+    current_python = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if authority["python"] != current_python:
+        raise ValueError(
+            f"authority Python {authority['python']} != executor Python {current_python}"
+        )
+    libc_name, libc_version = platform.libc_ver()
+    runtime_platform = (
+        f"{platform.system().lower()}-{platform.machine()}-{libc_name}{libc_version}"
+    )
+    if authority["platform"] != runtime_platform:
+        raise ValueError(
+            f"authority platform {authority['platform']!r} != runtime platform "
+            f"{runtime_platform!r}"
+        )
+
+    requirements = require_relative_child(root, authority["requirements_file"])
+    wheelhouse = require_relative_child(root, authority["wheelhouse"])
+    if (
+        not requirements.is_file()
+        or requirements.is_symlink()
+        or not wheelhouse.is_dir()
+        or wheelhouse.is_symlink()
+    ):
+        raise ValueError("authority requirements file or wheelhouse is missing")
+    if sha256_file(requirements) != authority["requirements_sha256"]:
+        raise ValueError("requirements.lock SHA-256 mismatch")
+    locked_requirements = parse_requirements_lock(requirements.read_text())
+    locked_names = {name for name, _version, _hashes in locked_requirements}
+    if locked_names & {"cytoanvi", "scvi-tools"}:
+        raise ValueError("dependency lock must not install cytoanvi or scvi-tools")
+
+    inventory = authority["wheel_inventory"]
+    if not isinstance(inventory, list) or not inventory:
+        raise ValueError("wheel_inventory must be a non-empty list")
+    if any(not isinstance(item, dict) for item in inventory):
+        raise ValueError("wheel_inventory entries must be objects")
+    filenames = [item.get("filename") for item in inventory]
+    if len(filenames) != len(set(filenames)) or any(
+        not isinstance(name, str) for name in filenames
+    ):
+        raise ValueError("wheel_inventory filenames must be unique strings")
+    if any(Path(name).name != name or not name.endswith(".whl") for name in filenames):
+        raise ValueError("wheel_inventory filenames must be basename-only .whl files")
+    wheelhouse_entries = list(wheelhouse.iterdir())
+    invalid_entries = sorted(
+        entry.name
+        for entry in wheelhouse_entries
+        if entry.is_symlink() or not entry.is_file() or not entry.name.endswith(".whl")
+    )
+    if invalid_entries:
+        raise ValueError(
+            f"wheelhouse entries must be regular non-symlink .whl files: {invalid_entries}"
+        )
+    actual = sorted(entry.name for entry in wheelhouse_entries)
+    if actual != sorted(filenames):
+        raise ValueError("wheelhouse file set differs from authority inventory")
+    for item in inventory:
+        if set(item) != {"filename", "sha256"}:
+            raise ValueError("wheel_inventory entries require only filename and sha256")
+        wheel = wheelhouse / item["filename"]
+        if wheel.is_symlink() or not wheel.is_file():
+            raise ValueError(f"wheelhouse entry is not a regular non-symlink file: {wheel.name}")
+        if sha256_file(wheel) != item["sha256"]:
+            raise ValueError(f"wheelhouse hash mismatch for {wheel.name}")
+    return authority, requirements, wheelhouse, sha256_file(authority_path)
+
+
+def blocked_receipt(
+    *, command: str, started_at: str, start_time: float, reason: str, manifest: dict[str, Any]
+) -> dict[str, Any]:
+    """Create a sealed receipt for unavailable or invalid dependency authority."""
+    receipt = {
+        "schema_version": "cytoanvi-installed-acceptance-v1",
+        "status": "blocked_dependency_authority",
+        "artifact": {
+            "version": "0.2.0",
+            "wheel_sha256": manifest["wheel"]["sha256"],
+            "source_commit": manifest["source"]["commit"],
+        },
+        "dependency_authority": {"path": None, "sha256": None, "verified": False},
+        "execution": {
+            "command": command,
+            "started_at": started_at,
+            "completed_at": now(),
+            "runtime_seconds": time.monotonic() - start_time,
+            "exit_status": None,
+            "cwd": None,
+        },
+        "isolation": {
+            "outside_checkout": False,
+            "pythonpath_unset": False,
+            "editable_installs_absent": False,
+            "scvi_tools_absent": False,
+            "fresh_environment": False,
+        },
+        "checks": [{"id": "dependency_authority", "status": "blocked", "detail": reason}],
+        "receipt_sha256": None,
+    }
+    receipt["receipt_sha256"] = receipt_digest(receipt)
+    return receipt
+
+
+def isolated_subprocess_environment(temporary_root: Path) -> dict[str, str]:
+    """Build a small allowlisted environment for venv, pip, and smoke subprocesses."""
+    environment = {
+        "HOME": str(temporary_root / "home"),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "MPLCONFIGDIR": str(temporary_root / "mpl"),
+        "NUMBA_CACHE_DIR": str(temporary_root / "numba"),
+        "PATH": os.defpath,
+        "PIP_CONFIG_FILE": os.devnull,
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        "TMPDIR": str(temporary_root),
+        "XDG_CACHE_HOME": str(temporary_root / "cache"),
+    }
+    if value := os.environ.get("LC_ALL"):
+        environment["LC_ALL"] = value
+    (temporary_root / "home").mkdir()
+    return environment
+
+
+def acceptance_receipt(
+    *,
+    status: str,
+    attempt_id: str,
+    manifest: dict[str, Any],
+    command: str,
+    started_at: str,
+    start_time: float,
+    exit_status: int | None,
+    cwd: Path | None,
+    authority_path: Path | None,
+    authority_sha256: str | None,
+    authority_verified: bool,
+    isolation: dict[str, bool],
+    checks: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Construct and self-seal one acceptance-attempt state."""
+    receipt = {
+        "schema_version": "cytoanvi-installed-acceptance-v1",
+        "status": status,
+        "acceptance_attempt_id": attempt_id,
+        "artifact": {
+            "version": "0.2.0",
+            "wheel_sha256": manifest["wheel"]["sha256"],
+            "source_commit": manifest["source"]["commit"],
+        },
+        "dependency_authority": {
+            "path": str(authority_path) if authority_path is not None else None,
+            "sha256": authority_sha256,
+            "verified": authority_verified,
+        },
+        "execution": {
+            "command": command,
+            "started_at": started_at,
+            "completed_at": None if status == "in_progress" else now(),
+            "runtime_seconds": time.monotonic() - start_time,
+            "exit_status": exit_status,
+            "cwd": str(cwd) if cwd is not None else None,
+        },
+        "isolation": isolation,
+        "checks": checks,
+        "receipt_sha256": None,
+    }
+    receipt["receipt_sha256"] = receipt_digest(receipt)
+    return receipt
+
+
+def write_acceptance_state(
+    *,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    receipt_path: Path,
+    receipt: dict[str, Any],
+    blocker: str | None,
+) -> None:
+    """Invalidate the receipt first, then atomically publish matching manifest state."""
+    atomic_json(receipt_path, receipt)
+    manifest["installed_acceptance"].update(
+        {
+            "status": receipt["status"],
+            "acceptance_attempt_id": receipt["acceptance_attempt_id"],
+            "receipt": CANONICAL_RECEIPT_PATH,
+            "receipt_sha256": sha256_file(receipt_path),
+            "blocker": blocker,
+        }
+    )
+    atomic_json(manifest_path, manifest)
+
+
+def main() -> int:
+    """Run isolated installed-wheel acceptance and terminalize every claimed attempt."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wheel", required=True, type=Path)
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--dependency-authority", required=True, type=Path)
+    parser.add_argument("--receipt", type=Path)
+    args = parser.parse_args()
+
+    started_at = now()
+    start_time = time.monotonic()
+    attempt_id = f"{started_at.replace(':', '').replace('-', '')}-pid{os.getpid()}"
+    command = shlex.join(sys.argv)
+    manifest_path = args.manifest.resolve()
+    manifest = json.loads(manifest_path.read_text())
+    repository = repository_for_manifest(manifest_path)
+    inventory_path = (repository / CANONICAL_INVENTORY_PATH).resolve()
+    receipt_path = (repository / CANONICAL_RECEIPT_PATH).resolve()
+    false_isolation = {
+        "outside_checkout": False,
+        "pythonpath_unset": False,
+        "editable_installs_absent": False,
+        "scvi_tools_absent": False,
+        "fresh_environment": False,
+    }
+
+    in_progress = acceptance_receipt(
+        status="in_progress",
+        attempt_id=attempt_id,
+        manifest=manifest,
+        command=command,
+        started_at=started_at,
+        start_time=start_time,
+        exit_status=None,
+        cwd=None,
+        authority_path=None,
+        authority_sha256=None,
+        authority_verified=False,
+        isolation=false_isolation,
+        checks=[
+            {
+                "id": "acceptance_attempt",
+                "status": "not_run",
+                "detail": "Preflight is in progress; any interruption remains non-promotable.",
+            }
+        ],
+    )
+    write_acceptance_state(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        receipt_path=receipt_path,
+        receipt=in_progress,
+        blocker=f"Installed acceptance attempt {attempt_id} is in progress.",
+    )
+
+    def finish(
+        *,
+        status: str,
+        exit_status: int,
+        blocker: str | None,
+        checks: list[dict[str, str]],
+        isolation: dict[str, bool],
+        cwd: Path | None,
+        authority_path: Path | None = None,
+        authority_sha256: str | None = None,
+        authority_verified: bool = False,
+    ) -> int:
+        if authority_verified:
+            manifest["dependency_authority"].update(
+                {
+                    "status": "verified",
+                    "kind": "hashed_lock_and_wheelhouse",
+                    "path": str(authority_path),
+                    "sha256": authority_sha256,
+                }
+            )
+        elif status == "blocked_dependency_authority":
+            manifest["dependency_authority"].update(
+                {"status": "missing", "kind": "none", "path": None, "sha256": None}
+            )
+        receipt = acceptance_receipt(
+            status=status,
+            attempt_id=attempt_id,
+            manifest=manifest,
+            command=command,
+            started_at=started_at,
+            start_time=start_time,
+            exit_status=exit_status,
+            cwd=cwd,
+            authority_path=authority_path,
+            authority_sha256=authority_sha256,
+            authority_verified=authority_verified,
+            isolation=isolation,
+            checks=checks,
+        )
+        write_acceptance_state(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            receipt_path=receipt_path,
+            receipt=receipt,
+            blocker=blocker,
+        )
+        print(receipt_path)
+        return exit_status
+
+    wheel = args.wheel.resolve()
+    try:
+        if args.receipt is not None and args.receipt.resolve() != receipt_path:
+            raise ValueError(f"Receipt output must be exactly {receipt_path}")
+        if manifest["inventory"]["details_path"] != CANONICAL_INVENTORY_PATH:
+            raise ValueError("Manifest does not use the canonical inventory path")
+        if manifest["installed_acceptance"]["receipt"] != CANONICAL_RECEIPT_PATH:
+            raise ValueError("Manifest does not use the canonical receipt path")
+        if Path(__file__).resolve() != repository / "scripts/accept_usage_readiness_wheel":
+            raise ValueError("Acceptance must execute the canonical sealed repository harness")
+        if manifest["build"]["status"] != "passed" or manifest["source"]["clean"] is not True:
+            raise ValueError("Artifact manifest is not a clean successful build")
+        if manifest["candidate"] != {
+            "distribution": "cytoanvi",
+            "version": "0.2.0",
+            "build_ordinal": 1,
+        }:
+            raise ValueError("Artifact manifest is not the frozen 0.2.0 candidate")
+        if (
+            not wheel.is_file()
+            or wheel.is_symlink()
+            or wheel.name != manifest["wheel"]["filename"]
+            or sha256_file(wheel) != manifest["wheel"]["sha256"]
+        ):
+            raise ValueError("Wheel identity differs from the artifact manifest")
+        console_scripts = wheel_console_scripts(wheel)
+        if inventory_path.is_symlink() or not inventory_path.is_file():
+            raise ValueError("Canonical inventory is missing or non-regular")
+        if (
+            not manifest["inventory"]["details_sha256"]
+            or sha256_file(inventory_path) != manifest["inventory"]["details_sha256"]
+        ):
+            raise ValueError("Canonical inventory file hash differs from the manifest")
+        sealed_inventory = json.loads(inventory_path.read_text())
+        if (
+            sealed_inventory["wheel_sha256"] != manifest["wheel"]["sha256"]
+            or sealed_inventory["source_commit"] != manifest["source"]["commit"]
+            or sealed_inventory["acceptance_inputs"]
+            != manifest["inventory"]["acceptance_inputs"]
+        ):
+            raise ValueError("Detailed inventory identity differs from the artifact manifest")
+        verify_acceptance_inputs(repository, sealed_inventory["acceptance_inputs"])
+    except Exception as exc:  # noqa: BLE001 - every preflight failure must invalidate stale pass
+        detail = repr(exc)
+        print(detail, file=sys.stderr)
+        return finish(
+            status="failed",
+            exit_status=1,
+            blocker="Installed-artifact acceptance preflight failed; inspect receipt checks.",
+            checks=[{"id": "preflight", "status": "failed", "detail": detail}],
+            isolation=false_isolation,
+            cwd=None,
+        )
+
+    try:
+        authority, requirements, wheelhouse, authority_sha = verify_authority(
+            args.dependency_authority
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        detail = str(exc)
+        print(detail, file=sys.stderr)
+        return finish(
+            status="blocked_dependency_authority",
+            exit_status=4,
+            blocker=detail,
+            checks=[{"id": "dependency_authority", "status": "blocked", "detail": detail}],
+            isolation=false_isolation,
+            cwd=None,
+        )
+
+    temporary_root: Path | None = None
+    checks: list[dict[str, str]] = [
+        {"id": "dependency_authority", "status": "passed", "detail": authority_sha}
+    ]
+    isolation = dict(false_isolation)
+    try:
+        temporary_root = Path(tempfile.mkdtemp(prefix="cytoanvi-0.2.0-accept-", dir="/tmp"))
+        environment_dir = temporary_root / "venv"
+        smoke_copy = temporary_root / "usage_readiness_installed_smoke.py"
+        tutorial_copy = temporary_root / "cytoanvi_treearches_synthetic.py"
+        smoke_output = temporary_root / "smoke.json"
+        shutil.copy2(repository / "scripts/usage_readiness_installed_smoke.py", smoke_copy)
+        shutil.copy2(repository / "vignettes/cytoanvi_treearches_synthetic.py", tutorial_copy)
+        acceptance_by_path = {
+            entry["path"]: entry for entry in sealed_inventory["acceptance_inputs"]
+        }
+        for relative, copied in (
+            ("scripts/usage_readiness_installed_smoke.py", smoke_copy),
+            ("vignettes/cytoanvi_treearches_synthetic.py", tutorial_copy),
+        ):
+            expected = acceptance_by_path[relative]
+            if (
+                sha256_file(copied) != expected["sha256"]
+                or copied.stat().st_size != expected["size_bytes"]
+            ):
+                raise RuntimeError(
+                    f"Copied acceptance input differs from sealed bytes: {relative}"
+                )
+        env = isolated_subprocess_environment(temporary_root)
+        run([sys.executable, "-m", "venv", str(environment_dir)], cwd=temporary_root, env=env)
+        isolation.update(
+            {
+                "outside_checkout": repository not in temporary_root.parents,
+                "pythonpath_unset": "PYTHONPATH" not in env,
+                "fresh_environment": True,
+            }
+        )
+        python = environment_dir / "bin" / "python"
+        scripts_dir = python.parent.resolve()
+        run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                str(wheelhouse),
+                "--only-binary=:all:",
+                "--require-hashes",
+                "-r",
+                str(requirements),
+            ],
+            cwd=temporary_root,
+            env=env,
+        )
+        checks.append(
+            {
+                "id": "locked_dependencies",
+                "status": "passed",
+                "detail": authority["requirements_sha256"],
+            }
+        )
+        run(
+            [str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(wheel)],
+            cwd=temporary_root,
+            env=env,
+        )
+        editable = json.loads(
+            run(
+                [str(python), "-m", "pip", "list", "--editable", "--format=json"],
+                cwd=temporary_root,
+                env=env,
+            ).stdout
+        )
+        if editable:
+            raise RuntimeError(f"Fresh environment contains editable installs: {editable}")
+        isolation["editable_installs_absent"] = True
+        checks.append({"id": "editable_installs", "status": "passed", "detail": "none"})
+        run([str(python), "-m", "pip", "check"], cwd=temporary_root, env=env)
+        checks.append({"id": "pip_check", "status": "passed", "detail": "pip check exited 0"})
+        smoke_command = [
+            str(python),
+            "-I",
+            str(smoke_copy),
+            "--output",
+            str(smoke_output),
+            "--tutorial",
+            str(tutorial_copy),
+        ]
+        for name, target in sorted(console_scripts.items()):
+            smoke_command.extend(["--console-script", f"{name}={target}"])
+            run([str(scripts_dir / name), "--help"], cwd=temporary_root, env=env)
+        run(smoke_command, cwd=temporary_root, env=env)
+        smoke = json.loads(smoke_output.read_text())
+        identity = smoke["identity"]
+        if identity["distribution_version"] != "0.2.0" or not identity["scvi_tools_absent"]:
+            raise RuntimeError("Installed distribution version/isolation check failed")
+        isolation["scvi_tools_absent"] = True
+        site_root = Path(identity["installed_inventory"]["site_root"]).resolve()
+        environment_root = environment_dir.resolve()
+        if environment_root not in site_root.parents:
+            raise RuntimeError(f"Installed site-packages is outside the fresh venv: {site_root}")
+        if (
+            scripts_dir.name not in {"bin", "Scripts"}
+            or environment_root not in scripts_dir.parents
+        ):
+            raise RuntimeError(
+                f"Console-script directory is outside the fresh venv: {scripts_dir}"
+            )
+        expected_console_records = {
+            name: Path(os.path.relpath(scripts_dir / name, start=site_root)).as_posix()
+            for name in console_scripts
+        }
+        for key in ("cytoanvi_file", "scvi_file"):
+            loaded_path = Path(smoke["cytoanvi"][key]).resolve()
+            if environment_dir not in loaded_path.parents or repository in loaded_path.parents:
+                raise RuntimeError(f"{key} did not load from the fresh environment: {loaded_path}")
+        installed_file_count = validate_installed_inventory(
+            sealed_inventory["wheel_files"],
+            identity,
+            manifest["wheel"]["sha256"],
+            expected_console_records,
+            console_scripts,
+        )
+        checks.extend(
+            [
+                {
+                    "id": "namespace_identity",
+                    "status": "passed",
+                    "detail": json.dumps(identity["namespace_owners"], sort_keys=True),
+                },
+                {
+                    "id": "installed_inventory",
+                    "status": "passed",
+                    "detail": f"{installed_file_count} files",
+                },
+                {
+                    "id": "cytoanvi_core",
+                    "status": "passed",
+                    "detail": json.dumps(smoke["cytoanvi"], sort_keys=True),
+                },
+                {
+                    "id": "tree_arches",
+                    "status": "passed",
+                    "detail": json.dumps(smoke["tree_arches"], sort_keys=True),
+                },
+                {
+                    "id": "mrtotalvi_core",
+                    "status": "passed",
+                    "detail": json.dumps(smoke["mrtotalvi"], sort_keys=True),
+                },
+            ]
+        )
+    except Exception as exc:  # noqa: BLE001 - every runtime failure must seal a failed receipt
+        detail = repr(exc)
+        checks.append({"id": "acceptance_exception", "status": "failed", "detail": detail})
+        print(detail, file=sys.stderr)
+        return finish(
+            status="failed",
+            exit_status=1,
+            blocker="Installed-artifact acceptance failed; inspect receipt checks.",
+            checks=checks,
+            isolation=isolation,
+            cwd=temporary_root,
+            authority_path=args.dependency_authority.resolve(),
+            authority_sha256=authority_sha,
+            authority_verified=True,
+        )
+
+    return finish(
+        status="passed",
+        exit_status=0,
+        blocker=None,
+        checks=checks,
+        isolation=isolation,
+        cwd=temporary_root,
+        authority_path=args.dependency_authority.resolve(),
+        authority_sha256=authority_sha,
+        authority_verified=True,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

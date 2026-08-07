@@ -16,7 +16,11 @@ import math
 import pytest
 import torch
 
-from cytoanvi._uncertainty import bregman_information_lse, mask_augment
+from cytoanvi._uncertainty import (
+    bregman_information_lse,
+    experimental_get_uncertainty_threshold,
+    mask_augment,
+)
 
 
 def _gen(seed: int = 0) -> torch.Generator:
@@ -30,38 +34,21 @@ def _zeroed_columns(row: torch.Tensor) -> set[int]:
 
 
 # ---------------------------------------------------------------------------
-# Branch asymmetry: the two mask_augment branches disagree about "per cell".
+# Independent per-cell masking and chunk-invariant deterministic masks.
 # ---------------------------------------------------------------------------
 
 
-def test_mask_augment_none_branch_shares_one_mask_across_the_batch():
-    """DOCUMENTS CURRENT BEHAVIOUR, WHICH CONTRADICTS THE DOCSTRING.
-
-    ``mask_augment``'s docstring says "Randomly zero a fixed fraction of features **per cell**".
-    In the ``nan_mask is None`` branch that is not what happens: one mask is drawn and then
-    broadcast with ``mask.unsqueeze(0).expand(x.shape[0], -1)`` (``_uncertainty.py:42``), so every
-    cell in the minibatch gets the *identical* masked-feature set. The ``nan_mask`` branch (tested
-    below) does draw independently per row.
-
-    This test pins the current shared-mask behaviour rather than asserting the documented one, so
-    the suite stays green while the divergence is explicit and monitored. Resolving it is a
-    judgement call — either make the ``None`` branch draw per row, or correct the docstring — and
-    is deliberately left to a human rather than bundled into a test-coverage change.
-    """
-    x = torch.ones(4, 10)
+def test_mask_augment_none_branch_masks_independently_per_cell():
+    x = torch.ones(6, 12)
     out = mask_augment(x, mask_percentage=0.3, nan_mask=None, generator=_gen())
 
-    first = _zeroed_columns(out[0])
-    assert all(_zeroed_columns(out[i]) == first for i in range(1, out.shape[0])), (
-        "expected the None branch to share one mask across the batch"
+    per_row = [_zeroed_columns(out[i]) for i in range(out.shape[0])]
+    assert len({frozenset(s) for s in per_row}) > 1, (
+        "expected independent per-row masks when nan_mask is absent"
     )
 
 
 def test_mask_augment_nan_mask_branch_masks_independently_per_cell():
-    """The counterpart: with ``nan_mask`` supplied, each row draws its own mask.
-
-    Together with the test above this makes the asymmetry between the two branches explicit.
-    """
     x = torch.ones(6, 12)
     nan_mask = torch.ones_like(x)
     out = mask_augment(x, mask_percentage=0.5, nan_mask=nan_mask, generator=_gen())
@@ -70,6 +57,33 @@ def test_mask_augment_nan_mask_branch_masks_independently_per_cell():
     assert len({frozenset(s) for s in per_row}) > 1, (
         "expected per-row independent masks in the nan_mask branch"
     )
+
+
+def test_fixed_seed_masks_are_exactly_chunk_invariant():
+    x = torch.arange(8 * 11, dtype=torch.float32).reshape(8, 11) + 1.0
+    positions = torch.arange(len(x))
+
+    full = mask_augment(
+        x,
+        mask_percentage=0.5,
+        seed=1729,
+        cell_indices=positions,
+        augmentation_index=3,
+    )
+    chunked = torch.cat(
+        [
+            mask_augment(
+                x[start:stop],
+                mask_percentage=0.5,
+                seed=1729,
+                cell_indices=positions[start:stop],
+                augmentation_index=3,
+            )
+            for start, stop in ((0, 3), (3, 5), (5, 8))
+        ]
+    )
+
+    assert torch.equal(full, chunked)
 
 
 # ---------------------------------------------------------------------------
@@ -194,3 +208,23 @@ def test_bregman_information_is_nonnegative_for_varying_draws():
 
     assert bi.shape == (12,)
     assert (bi >= -1e-6).all()
+
+
+@pytest.mark.parametrize(
+    "calibration",
+    [
+        [],
+        [0.1, float("nan")],
+        [0.1, float("inf")],
+        [0.1, float("-inf")],
+    ],
+)
+def test_experimental_threshold_rejects_empty_or_nonfinite_calibration(calibration):
+    with pytest.raises(ValueError, match="at least one|finite"):
+        experimental_get_uncertainty_threshold(calibration)
+
+
+def test_experimental_threshold_accepts_finite_calibration():
+    threshold = experimental_get_uncertainty_threshold([0.1, 0.2, 0.3], specificity=0.5)
+
+    assert threshold == pytest.approx(0.2)

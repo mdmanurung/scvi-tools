@@ -1,6 +1,37 @@
 # Installation
 
-## Quick install
+The [usage-readiness matrix](usage_readiness.md) is authoritative for CytoANVI and MrTotalVI.
+Installing source or a wheel does not establish scientific acceptance or capability promotion.
+
+## Quick install for this fork
+
+The `cytoanvi` distribution owns both the `cytoanvi` and modified `scvi` namespaces. Install it in
+a fresh environment with **no** upstream `scvi-tools` distribution. For local engineering from a
+recorded checkout:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install .
+python - <<'PY'
+from importlib.metadata import PackageNotFoundError, distribution, version
+assert version("cytoanvi") == "0.2.0"
+try:
+    distribution("scvi-tools")
+except PackageNotFoundError:
+    pass
+else:
+    raise RuntimeError("Remove scvi-tools: it collides with cytoanvi's scvi namespace")
+from cytoanvi import CytoANVI
+from scvi.external import MrTotalVI
+print(CytoANVI.__module__, MrTotalVI.__module__)
+PY
+```
+
+The ignored 0.2.0 wheel is usable only after its exact SHA/source commit has a passing isolated
+receipt in `docs/artifacts/cytoanvi-0.2.0/`. The old 0.1.0 wheel is quarantined and no-go.
+
+## Upstream scvi-tools (does not install this fork)
 
 scvi-tools can be installed via `conda` or `pip`.
 We recommend installing into a fresh virtual environment to avoid conflicts with other packages
@@ -110,7 +141,7 @@ To install all tutorial dependencies:
 pip install -U scvi-tools[tutorials]
 ```
 
-### CytoANVI optional dependencies
+### Fork-specific optional dependencies
 
 :::{warning}
 **Not yet published to PyPI; install from source into a clean environment.** The `cytoanvi`
@@ -120,7 +151,7 @@ the `scvi` and `cytoanvi` import packages. It must **not** be installed alongsid
 alone, in a fresh virtualenv/conda env.
 :::
 
-CytoANVI's core label-transfer, uncertainty, save/load, and panel-aware query-mapping APIs install
+CytoANVI's core label-transfer, save/load, and panel-aware query-mapping APIs install
 with the base package (installed from a checkout of this repository):
 
 ```bash
@@ -132,7 +163,7 @@ Install only the optional CytoANVI backend you need:
 
 ```bash
 pip install ".[cytoanvi-hierarchy]"     # scHPL/treeArches helpers
-pip install ".[cytoanvi-mapping-qc]"    # mapQC query-mapping QC
+pip install ".[cytoanvi-mapping-qc]"    # exactly mapQC 0.1.1; advisory only
 pip install ".[cytoanvi-annbatch]"      # experimental benchmark loader
 pip install ".[cytoanvi-baselines]"     # FlowSOM benchmark baseline
 ```
@@ -147,6 +178,13 @@ For large CytoANVI cytometry atlases, use a CUDA-capable Linux environment when 
 publication benchmark environment used Python 3.13, PyTorch CUDA wheels, and an A100 40 GB GPU.
 On conda-based HPC installations, set `LD_LIBRARY_PATH=$CONDA_PREFIX/lib` if importing PyTorch
 fails with a `GLIBCXX` symbol error.
+
+MrTotalVI is installed only by this `cytoanvi` fork and imports as
+`from scvi.external import MrTotalVI`. Its RNA layer and protein matrix must contain finite,
+non-negative, integer-like **raw counts**. Registering `labels_key` records labels but does not
+enable supervision; supervision requires explicit `u_prior_supervision="labels"` with a positive
+weight. Its DA is descriptive, public DE refuses biological inference, streaming training and
+new-sample inference are no-go. See the [authoritative matrix](usage_readiness.md).
 
 To install all optional dependencies (_e.g._ jax support, custom dataloaders, autotune, criticism, model hub):
 

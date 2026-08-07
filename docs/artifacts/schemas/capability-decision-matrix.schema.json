@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mdmanurung.github.io/cytoanvi/schemas/capability-decision-matrix-v1.json",
+  "title": "CytoANVI and MrTotalVI capability decision matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact", "promotion_status", "rows"],
+  "properties": {
+    "schema_version": {"const": "usage-readiness-capability-matrix-v1"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "wheel_sha256", "source_commit", "installed_acceptance"],
+      "properties": {
+        "version": {"const": "0.2.0"},
+        "wheel_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+        "installed_acceptance": {"enum": ["pending", "in_progress", "passed", "failed", "blocked_dependency_authority"]}
+      }
+    },
+    "promotion_status": {"const": "pending_human_authority"},
+    "rows": {
+      "type": "array",
+      "minItems": 19,
+      "maxItems": 19,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability_id",
+          "engineering_execution",
+          "scientific_result",
+          "decision",
+          "limitations",
+          "artifact_identity",
+          "evidence_links",
+          "approver",
+          "approval_date"
+        ],
+        "properties": {
+          "capability_id": {"enum": [
+            "cytoanvi.core",
+            "cytoanvi.mapping.same_panel",
+            "cytoanvi.mapping.panel_divergent",
+            "cytoanvi.hierarchy",
+            "cytoanvi.integration_clustering",
+            "cytoanvi.tta_ood",
+            "cytoanvi.continual",
+            "cytoanvi.mapqc",
+            "cytoanvi.artifact",
+            "mrtotalvi.core",
+            "mrtotalvi.embeddings",
+            "mrtotalvi.prior_choice",
+            "mrtotalvi.label_supervision",
+            "mrtotalvi.da",
+            "mrtotalvi.legacy_de",
+            "mrtotalvi.centered_v2",
+            "mrtotalvi.streaming",
+            "mrtotalvi.new_sample_inference",
+            "mrtotalvi.artifact"
+          ]},
+          "engineering_execution": {"enum": ["pending", "source_passed", "installed_passed", "failed", "blocked"]},
+          "scientific_result": {"enum": ["pending", "historical_support_limited", "historical_negative", "experimental_only", "blocked", "terminal_positive", "terminal_negative", "terminal_inconclusive"]},
+          "decision": {"enum": ["pending", "go", "conditional-go", "experimental", "no-go"]},
+          "limitations": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "artifact_identity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["version", "wheel_sha256", "source_commit"],
+            "properties": {
+              "version": {"const": "0.2.0"},
+              "wheel_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+              "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"}
+            }
+          },
+          "evidence_links": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "approver": {"type": ["string", "null"]},
+          "approval_date": {"type": ["string", "null"], "format": "date"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mdmanurung.github.io/cytoanvi/schemas/installed-acceptance-receipt-v1.json",
+  "title": "cytoanvi isolated installed-artifact acceptance receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "acceptance_attempt_id",
+    "artifact",
+    "dependency_authority",
+    "execution",
+    "isolation",
+    "checks",
+    "receipt_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "cytoanvi-installed-acceptance-v1"},
+    "status": {"enum": ["in_progress", "passed", "failed", "blocked_dependency_authority"]},
+    "acceptance_attempt_id": {"type": ["string", "null"]},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "wheel_sha256", "source_commit"],
+      "properties": {
+        "version": {"const": "0.2.0"},
+        "wheel_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "dependency_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "verified"],
+      "properties": {
+        "path": {"type": ["string", "null"]},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "verified": {"type": "boolean"}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "started_at", "completed_at", "runtime_seconds", "exit_status", "cwd"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": ["string", "null"], "format": "date-time"},
+        "runtime_seconds": {"type": "number", "minimum": 0},
+        "exit_status": {"type": ["integer", "null"]},
+        "cwd": {"type": ["string", "null"]}
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outside_checkout", "pythonpath_unset", "editable_installs_absent", "scvi_tools_absent", "fresh_environment"],
+      "properties": {
+        "outside_checkout": {"type": "boolean"},
+        "pythonpath_unset": {"type": "boolean"},
+        "editable_installs_absent": {"type": "boolean"},
+        "scvi_tools_absent": {"type": "boolean"},
+        "fresh_environment": {"type": "boolean"}
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "detail"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed", "blocked", "not_run"]},
+          "detail": {"type": "string"}
+        }
+      }
+    },
+    "receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -113,6 +113,7 @@ def differential_abundance(
     donor_key: str | None = None,
     batch_size: int = 128,
     n_mc_samples: int = 1,
+    validated_sample_order: list | None = None,
 ) -> xr.Dataset:
     """Compute MrVI-style differential abundance log probabilities over ``u``.
 
@@ -147,11 +148,14 @@ def differential_abundance(
     if sample_cov_keys:
         _validate_sample_level_covariates(adata.obs, sample_key, list(sample_cov_keys))
 
-    sample_values = list(model.sample_order) if hasattr(model, "sample_order") else list(
-        adata.obs[sample_key].unique()
-    )
-    if sample_subset is not None:
-        sample_values = [s for s in sample_values if s in set(sample_subset)]
+    if validated_sample_order is not None:
+        sample_values = list(validated_sample_order)
+    else:
+        sample_values = list(model.sample_order) if hasattr(model, "sample_order") else list(
+            adata.obs[sample_key].unique()
+        )
+        if sample_subset is not None:
+            sample_values = [s for s in sample_values if s in set(sample_subset)]
 
     # Per-cell modality-weight models cannot accept held-out adata in get_latent_representation.
     # DA is always run on the training data, so adata=None (→ model.adata) is equivalent.
@@ -388,6 +392,7 @@ def _differential_expression(
     store_baseline: bool = False,
     eps_lfc: float = 1e-6,
     use_vmap: bool = False,
+    validated_sample_order: list | None = None,
     **filter_samples_kwargs,
 ) -> xr.Dataset:
     """MrVI-style latent-space differential expression for Mr multimodal models.
@@ -478,13 +483,18 @@ def _differential_expression(
     _validate_sample_level_covariates(adata.obs, model.sample_key, _cov_to_check)
 
     n_sample = model.summary_stats.n_sample
-    sample_mask = (
-        np.isin(model.sample_order, list(sample_subset))
-        if sample_subset is not None
-        else np.ones(n_sample, dtype=bool)
-    )
-    sample_order_kept = model.sample_order[sample_mask]
-    sample_indices_kept = np.where(sample_mask)[0].tolist()
+    if validated_sample_order is not None:
+        sample_order_kept = np.asarray(validated_sample_order)
+        position = {sample: i for i, sample in enumerate(model.sample_order)}
+        sample_indices_kept = [position[sample] for sample in sample_order_kept]
+    else:
+        sample_mask = (
+            np.isin(model.sample_order, list(sample_subset))
+            if sample_subset is not None
+            else np.ones(n_sample, dtype=bool)
+        )
+        sample_order_kept = model.sample_order[sample_mask]
+        sample_indices_kept = np.where(sample_mask)[0].tolist()
     n_sample_kept = len(sample_indices_kept)
 
     # Admissibility mask: (n_cells_total, n_sample_kept)

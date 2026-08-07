@@ -1,19 +1,34 @@
 """mapping_qc helpers tested with mocked mapqc (no mapqc install required)."""
 
+import sys
+from types import ModuleType
+
 import numpy as np
 import pytest
 from conftest import (
     BATCH_KEY,
     LABELS_KEY,
-    N_EPOCHS,
-    SAMPLE_KEY,
-    SCALED_LAYER_KEY,
-    UNLABELED,
     make_adata,
     setup_and_train,
 )
 
 from cytoanvi import mapping_qc
+
+
+def test_require_mapqc_accepts_exact_tested_version(monkeypatch):
+    monkeypatch.setitem(sys.modules, "mapqc", ModuleType("mapqc"))
+    monkeypatch.setattr(mapping_qc.metadata, "version", lambda name: "0.1.1")
+
+    mapping_qc._require_mapqc()
+
+
+@pytest.mark.parametrize("installed_version", ["0.1.0", "0.1.2", "1.0.0", "0.1.1.post1"])
+def test_require_mapqc_rejects_every_other_version(monkeypatch, installed_version):
+    monkeypatch.setitem(sys.modules, "mapqc", ModuleType("mapqc"))
+    monkeypatch.setattr(mapping_qc.metadata, "version", lambda name: installed_version)
+
+    with pytest.raises(ImportError, match=r"validated only for exactly mapqc==0\.1\.1"):
+        mapping_qc._require_mapqc()
 
 
 def _assign_mapqc_samples(adata):
@@ -239,14 +254,17 @@ def test_score_query_mapping_delegates(monkeypatch):
         return sentinel
 
     monkeypatch.setattr(mapping_qc, "run_mapqc_on_cytoanvi", fake_run)
-    assert model.score_query_mapping(
-        ref,
-        query,
-        sample_key="mapqc_sample",
-        n_nhoods=3,
-        k_min=10,
-        k_max=20,
-    ) is sentinel
+    assert (
+        model.score_query_mapping(
+            ref,
+            query,
+            sample_key="mapqc_sample",
+            n_nhoods=3,
+            k_min=10,
+            k_max=20,
+        )
+        is sentinel
+    )
 
 
 def test_task_b9_plumbing_only():
@@ -336,13 +354,15 @@ def test_patched_get_per_cell_filtering_info_guards_empty_mode():
 
     # empty-mode case (all filter_info None) — the exact upstream crash
     out = f(scores, mask, pd.DataFrame({"filter_info": [None] * n_nhoods}))
-    assert out[0] == "pass" and out[2] == "pass"
+    assert out[0] == "pass"
+    assert out[2] == "pass"
     assert out[5] == "not sampled"
 
     # non-empty case — most-prevalent reason still filled for sampled-but-unscored cells
     out2 = f(scores, mask, pd.DataFrame({"filter_info": ["low_n", None, "low_n", "high_var"]}))
     assert out2[1] == "low_n"
-    assert out2[0] == "pass" and out2[5] == "not sampled"
+    assert out2[0] == "pass"
+    assert out2[5] == "not sampled"
 
 
 def test_patch_mapqc_empty_mode_noop_without_mapqc():

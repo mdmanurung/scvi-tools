@@ -3,15 +3,19 @@
 Real-data benchmarking for CytoANVI against CytoVI's own workflow, on the two datasets the CytoVI
 vignettes use. Plan: `notes/2026-06-10-cytoanvi-benchmark-plan.md`.
 
-## Full-cohort results (Roider, max_epochs=1000, 3 seeds, FINAL)
+These are retrospective exploratory diagnostics, not sealed 0.2.0 scientific evidence or promotion.
+The [usage-readiness matrix](../../docs/usage_readiness.md) is authoritative; its cohorts, margins,
+independent review, installed artifact, and promotion gates remain blocked.
+
+## Historical full-cohort diagnostics (Roider, max_epochs=1000, 3 seeds; unsealed)
 
 | Task | Metric | CytoANVI | Baseline | Notes |
 |------|--------|----------|----------|-------|
-| B1 | Roider macro-F1 | **0.9317±0.0022** | CytoVI+kNN 0.8928±0.0034 | Δ+0.0388 ✅ passes ≥+0.03 gate |
+| B1 | Roider macro-F1 | **0.9317±0.0022** | CytoVI+kNN 0.8928±0.0034 | Retrospective Δ+0.0388; the P2 margin is unfrozen |
 | B1 | Nuñez macro-F1 | **0.9751±0.0003** | CytoVI+kNN 0.9749 | parity |
-| B3 | p1 holdout macro-F1 | **0.828±0.015** | — | defensible supervised headline |
-| B3 | p2 inter-method agreement | 0.671±0.008 | CytoVI-kNN (concordance, not accuracy) | gate (≥0.80) NOT met; no GT labels |
-| B5 | novelty mean AUROC | 0.484±0.019 (**NEGATIVE**) | CytoVI kNN-OOD 0.775±0.002 | TTA uncertainty below chance |
+| B3 | p1 holdout macro-F1 | **0.828±0.015** | — | Exploratory only; no independent labels or frozen margin |
+| B3 | p2 inter-method agreement | 0.671±0.008 | CytoVI-kNN (concordance, not accuracy) | No ground-truth labels; not a promotion gate |
+| B5 | novelty mean AUROC | historical mean below 0.5 (**NEGATIVE**) | CytoVI kNN-OOD comparator | TTA uncertainty below chance; stable API is no-go |
 | B8 | HCE vs flat-CE holdout F1 | **+0.6–1.8 pp** | flat CE | hierarchy helps on coarse labels |
 
 ## Layout
@@ -126,13 +130,19 @@ The command fails until every required manifest artifact is present and marked `
 - Metrics use **scib-metrics** aggregates (`batch_correction`, `bio_conservation`, `total`).
 
 ## Tasks → CytoANVI features
+
+This table describes historical benchmark reproduction. B4/B5 do not advertise supported
+uncertainty or replay-selection APIs: the stable entry points fail closed in 0.2.0, and the
+explicitly experimental TTA implementation is retained only to reproduce the negative evidence.
+See [`docs/usage_readiness.md`](../../docs/usage_readiness.md).
+
 | Task | Measures | API exercised | Baseline |
 |------|----------|---------------|----------|
 | B1 | label-transfer accuracy / macro-F1 on held-out labels | `predict` | CytoVI + kNN |
 | B2 | batch mixing vs bio conservation of the latent | `get_latent_representation` | CytoVI latent |
 | B3 | panel-1 → panel-2 mapping (panel-aware prep + surgery) | `prepare_query_anndata`, `load_query_data`, `predict` | CytoVI kNN (concordance) |
-| B4 | continual vs plain surgery (pseudo batch split) | `load_query_data_with_replay`, `select_replay_by_uncertainty` | plain `load_query_data` |
-| B5 | flags a held-out (novel) cell type | `get_uncertainty` | — |
+| B4 | historical continual vs plain surgery (pseudo batch split) | explicit experimental TTA plus manual replay construction | plain `load_query_data` |
+| B5 | historical held-out-type diagnostic | `experimental_get_uncertainty` (negative-evidence reproduction only) | — |
 | B6 | λ (`ewc_importance`) sweep | continual plan kwargs | — |
 | B7 | paired scRNA+CyTOF label transfer (RNA macro-F1 on shared samples) | `prepare_paired_cytoanvi`, `predict` | — |
 | B8 | flat CE vs HCE on held-out labels | `set_hierarchy`, `predict`, `predict_hierarchical` | flat CE on same holdout |

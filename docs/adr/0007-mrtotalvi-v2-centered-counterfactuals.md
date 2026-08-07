@@ -4,6 +4,10 @@
 
 Accepted as a package contract on 2026-07-25.
 
+Amended by ADR-0010 for `cytoanvi 0.2.0`: centered registered-sample counterfactual engineering
+semantics remain accepted, while the stricter raw-count, metadata/subset, `use_vmap`, and public DE
+refusal contracts apply to both hierarchy modes.
+
 Scientific validation is explicitly excluded. This ADR does not resolve the human/macaque data
 lineage blocker, establish a preferred model, or authorize biological or publication claims.
 
@@ -163,11 +167,10 @@ decoder-parameter path must not alter default TotalVI numerics.
 - Attributes record schema version, modes, inference mode, RNG, policies, formulas, context-table
   hash, dtype, chunks, estimated bytes, registered-target limitation, and non-causal meaning.
 
-In-memory materialization has a hard 512 MiB estimate including summaries and 20% overhead. Larger
-requests require subsetting or explicit Zarr output. Zarr writes direct regions into a temporary
-sibling store, refuses an existing destination, atomically renames only on success, and returns a
-lazy dataset. Missing Zarr/Dask dependencies produce the existing `parallel`-extra installation
-hint.
+In-memory materialization has a hard 512 MiB estimate including summaries and 20% overhead. ADR-0010
+supersedes the earlier storage proposal: larger requests must be subset, and all public Zarr
+streaming arguments fail closed before dependency or filesystem access. No stable lazy-output or
+atomic-storage path is promoted in 0.2.0.
 
 ### Descriptive enrichment
 
@@ -181,9 +184,9 @@ and optional paired donor summaries.
 - Paired contrasts require sample-constant covariates and exact donor pairing.
 - Posterior-draw and between-training-seed summaries remain separate.
 
-`differential_abundance()` stays numerically unchanged and may add only a descriptive,
-non-inferential warning for grouped use. Legacy `differential_expression()` fails closed on a
-centered-v2 model because v2 DE validation is outside package scope.
+`differential_abundance()` stays numerically unchanged and is descriptive/non-inferential.
+`MrTotalVI.differential_expression()` fails closed for both legacy and centered-v2 models because
+the historical eps-space outputs are outside the public biological-inference contract.
 
 `combine_mrtotalvi_seed_results()` concatenates `training_seed`, retains `draw`, and reports
 within-seed posterior mean/SD separately from between-seed mean/SD. It never pools these uncertainty
@@ -197,7 +200,8 @@ sources.
 - V2 counterfactuals have an explicit registered-sample-centered decomposition.
 - The raw penalty constrains the common residual mode and trains every registered sample embedding.
 - Decoder outputs have named deterministic estimands and explicit technical contexts.
-- Large requests fail before accidental materialization and have atomic optional storage.
+- Large requests fail before accidental materialization; ADR-0010 quarantines the former optional
+  Zarr storage path.
 
 ### Limitations
 
@@ -216,4 +220,3 @@ Acceptance requires legacy/MrMultiVI regression, analytic hierarchy and gradient
 contracts, documentation, package builds, and the bounded engineering smoke. Milo, simulation,
 candidate selection, multi-seed scientific runs, macaque validation, publication jobs, and
 biological interpretation remain outside this ADR's package acceptance.
-

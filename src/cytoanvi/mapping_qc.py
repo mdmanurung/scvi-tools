@@ -6,6 +6,7 @@ Requires ``pip install cytoanvi[cytoanvi-mapping-qc]`` (mapqc). Import from
 
 from __future__ import annotations
 
+from importlib import metadata
 from typing import TYPE_CHECKING
 
 from anndata import concat
@@ -21,8 +22,10 @@ if TYPE_CHECKING:
     from cytoanvi._model import CytoANVI
 
 _MAPQC_INSTALL_MSG = (
-    "mapqc is required for mapping QC. Install with: pip install cytoanvi[cytoanvi-mapping-qc]"
+    "mapqc==0.1.1 is required for mapping QC. Install with: "
+    "pip install cytoanvi[cytoanvi-mapping-qc]"
 )
+_MAPQC_REQUIRED_VERSION = "0.1.1"
 
 DEFAULT_EMB_KEY = "X_CytoANVI"
 DEFAULT_REF_Q_KEY = "mapqc_ref_query"
@@ -35,6 +38,18 @@ def _require_mapqc() -> None:
         import mapqc  # noqa: F401
     except ImportError as err:
         raise ImportError(_MAPQC_INSTALL_MSG) from err
+    try:
+        installed_version = metadata.version("mapqc")
+    except metadata.PackageNotFoundError as err:
+        raise ImportError(
+            f"{_MAPQC_INSTALL_MSG} The module imported, but distribution metadata is missing."
+        ) from err
+    if installed_version != _MAPQC_REQUIRED_VERSION:
+        raise ImportError(
+            "CytoANVI's private mapQC compatibility patch is validated only for exactly "
+            f"mapqc=={_MAPQC_REQUIRED_VERSION}; found mapqc=={installed_version}. Refusing to "
+            "run outside the tested runtime contract."
+        )
 
 
 def _patched_get_per_cell_filtering_info(mapqc_scores, cell_nhood_mask, nhood_info_df):

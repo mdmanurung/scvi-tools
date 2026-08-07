@@ -1,23 +1,26 @@
 """Runnable CytoANVI example: build a labeled reference, map a query, transfer labels.
 
 Mirrors the structure of the scANVI scArches surgery tutorial, but on antibody-intensity
-cytometry data (CytoVI's domain). Run with an scvi-tools >= 1.4.3 environment:
+cytometry data (CytoVI's domain). Run with the cytoanvi 0.2.0 environment:
 
-    PYTHONPATH=src:. python docs/tutorials/notebooks/cytometry/cytoanvi_example_reference_query.py
+    PYTHONPATH=src:. python vignettes/cytoanvi_example_reference_query.py
 
 Stages:
   1. same-panel: reference train -> query surgery -> label transfer -> evaluation.
   2. panel-divergent: reference with a backbone/panel-specific split -> a query measured on the
      backbone panel only -> ``prepare_query_anndata`` (pad + mask absent markers) -> surgery ->
      label transfer.
+  3. continual engineering path: an explicitly predeclared reference replay subset plus an
+     external matched control. TTA novelty and uncertainty-selected replay remain unsupported;
+     see ``docs/usage_readiness.md``.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from scvi.data import synthetic_iid
 from cytoanvi import CytoANVI
+from scvi.data import synthetic_iid
 from scvi.external import cytovi as cytovi_pp
 
 LAYER = "scaled"
@@ -90,11 +93,11 @@ def main(max_epochs: int = 20) -> None:
     print("[done] same-panel reference -> surgery -> label transfer complete.\n")
 
     panel_divergent_query(max_epochs=max_epochs)
-    uncertainty_and_continual(max_epochs=max_epochs)
+    continual_update(max_epochs=max_epochs)
 
 
-def uncertainty_and_continual(max_epochs: int = 20) -> None:
-    """Uncertainty scoring + continual update on a pseudo case/control split."""
+def continual_update(max_epochs: int = 20) -> None:
+    """Continual update with replay declared independently of model uncertainty."""
     ref = _make_cytometry_adata(seed=4)
     ref.obs[LABELS_KEY] = ref.obs[LABELS_KEY].astype(str)
     ref.obs.loc[ref.obs[LABELS_KEY] == "label_0", LABELS_KEY] = UNLABELED
@@ -109,10 +112,9 @@ def uncertainty_and_continual(max_epochs: int = 20) -> None:
     model = CytoANVI(ref, n_latent=10)
     model.train(max_epochs=max_epochs)
 
-    unc = model.get_uncertainty(tta_rep=5)
-    print(f"[uncertainty] mean BI={unc.mean():.4f}, max={unc.max():.4f}")
-
-    replay = CytoANVI.select_replay_by_uncertainty(model, ref, fraction=0.2)
+    # This fixed selection rule is declared before query construction and does not inspect model
+    # uncertainty or outcomes. Scientific continual-learning use remains a P2 no-go.
+    replay = ref[: max(1, ref.n_obs // 5)].copy()
     query = _make_cytometry_adata(seed=5)
     query.obs[LABELS_KEY] = UNLABELED
     control = query[:64].copy()
@@ -122,7 +124,7 @@ def uncertainty_and_continual(max_epochs: int = 20) -> None:
     )
     updated.train(max_epochs=max_epochs, plan_kwargs={"ewc_importance": 1.0})
     print(f"[continual] query predictions: {updated.predict()[:5]}")
-    print("[done] uncertainty + continual update complete.")
+    print("[done] predeclared-replay continual engineering path complete.")
 
 
 def panel_divergent_query(max_epochs: int = 20) -> None:

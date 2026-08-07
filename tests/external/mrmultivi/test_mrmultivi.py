@@ -482,6 +482,43 @@ def test_mrmultivi_label_conditioned_mog_flows_through_mc_loss(mdata_basic):
     assert torch.isfinite(loss_out.loss)
 
 
+def test_mrmultivi_labelled_vamp_preserves_unconditioned_legacy_logits():
+    """The shared MrMultiVI compatibility sentinel must not label-condition Vamp."""
+    import torch
+
+    mdata = _make_mdata()
+    mdata.obs["cell_type"] = np.where(np.arange(mdata.n_obs) % 2 == 0, "T", "B")
+    MrMultiVI.setup_mudata(
+        mdata,
+        sample_key="donor",
+        batch_key="batch",
+        labels_key="cell_type",
+        modalities={**MODALITIES, "labels_key": None},
+    )
+    model = MrMultiVI(
+        mdata,
+        sample_key="donor",
+        n_latent=N_LATENT,
+        n_latent_u=4,
+        u_prior="vamp",
+        u_prior_mixture_k=7,
+    )
+    module = model.module
+
+    assert module.u_prior_supervision is None
+    assert module.resolved_u_prior_mixture_k == model.summary_stats.n_labels
+    labels = torch.tensor([[0], [1], [0]])
+    prior = module.build_u_prior(torch.zeros(3, 4), labels)
+
+    # Historical MrMultiVI Vamp used one global categorical distribution;
+    # label-conditioned logits would instead have shape (batch, components).
+    assert prior.mixture_distribution.logits.ndim == 1
+    torch.testing.assert_close(
+        prior.mixture_distribution.logits,
+        torch.log_softmax(module.u_prior_logits, dim=-1),
+    )
+
+
 def test_mrmultivi_gaussian_u_prior_and_z_u_prior_off(mdata_basic):
     """u_prior_mixture=False uses analytic Gaussian KL and z_u_prior=False omits kl_z."""
     import torch

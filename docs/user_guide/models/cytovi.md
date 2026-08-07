@@ -17,7 +17,7 @@ The limitations of CytoVI include:
 - Assumes measurements have been corrected for fluorescent spillover and preprocessed according to standard practice.
 
 ```{topic} Related cytometry docs:
-- {doc}`/tutorials/notebooks/cytometry/CytoANVI_tutorial`
+- `vignettes/cytoanvi_example_reference_query.py` (tracked engineering fixture)
 - {doc}`/user_guide/models/cytoanvi`
 ```
 

@@ -78,6 +78,7 @@ Find a bug? Interested in improving scvi-tools? Check out our GitHub for the lat
 :titlesonly: true
 
 installation
+usage_readiness
 tutorials/index
 user_guide/index
 api/index

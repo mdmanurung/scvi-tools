@@ -566,7 +566,9 @@ def task_b5_novelty(
         )
         _t = _timing("cytoanvi_train", _t)
         calib_mask = ~eval_is_novel
-        unc_latent = model.get_uncertainty(eval_adata, mode="latent", batch_size=batch_size)
+        unc_latent = model.experimental_get_uncertainty(
+            eval_adata, mode="latent", batch_size=batch_size, seed=seed
+        )
         _t = _timing("latent_tta", _t)
         latent_extra = metrics.precision_at_specificity(
             unc_latent,
@@ -581,7 +583,9 @@ def task_b5_novelty(
         # compute_logit is False to roughly halve the per-holdout evaluation cost.
         logit_result = None
         if compute_logit:
-            unc_logit = model.get_uncertainty(eval_adata, mode="logit", batch_size=batch_size)
+            unc_logit = model.experimental_get_uncertainty(
+                eval_adata, mode="logit", batch_size=batch_size, seed=seed
+            )
             logit_result = metrics.novelty_auroc(unc_logit, eval_is_novel)
             logit_result.update(
                 metrics.precision_at_specificity(
@@ -673,8 +677,8 @@ def task_b5_novelty(
         annbatch_config=annbatch_config,
         **_training_config(cytoanvi_training_config),
     )
-    unc_latent = model.get_uncertainty(mode="latent")
-    unc_logit = model.get_uncertainty(mode="logit")
+    unc_latent = model.experimental_get_uncertainty(mode="latent", seed=seed)
+    unc_logit = model.experimental_get_uncertainty(mode="logit", seed=seed)
     return _finish(
         model,
         unc_latent,
@@ -846,8 +850,7 @@ def _mean_baseline_auroc(per_type: dict, key: str) -> float:
     vals = [
         v[key]["auroc"]
         for v in per_type.values()
-        if isinstance(v.get(key), dict)
-        and not np.isnan(v[key].get("auroc", float("nan")))
+        if isinstance(v.get(key), dict) and not np.isnan(v[key].get("auroc", float("nan")))
     ]
     return float(np.mean(vals)) if vals else float("nan")
 
@@ -946,8 +949,6 @@ def _b4_setup(
     Returns a dict consumed by :func:`task_b4_continual`.  B6 calls this once and passes
     the result to each per-λ surgery call, avoiding redundant reference retraining.
     """
-    from cytoanvi import CytoANVI
-
     labels = np.asarray(adata.obs[labels_key].astype(str))
     use_real_split = (
         case_control_key is not None and control_values is not None and case_values is not None
@@ -999,7 +1000,16 @@ def _b4_setup(
     control = query_adata[ctrl_idx].copy()
     query_adata.obs[labels_key] = unlabeled_category
 
-    replay = CytoANVI.select_replay_by_uncertainty(ref_model, ref_adata, fraction=replay_frac)
+    # Historical B4/B6 reproduction explicitly opts into the quarantined TTA estimator. This is
+    # benchmark-only and must not be interpreted as a supported replay-selection policy.
+    if not 0 < replay_frac <= 1:
+        raise ValueError("replay_frac must be in (0, 1].")
+    replay_scores = ref_model.experimental_get_uncertainty(
+        ref_adata, batch_size=batch_size, seed=seed
+    )
+    n_replay = max(1, int(replay_frac * ref_adata.n_obs))
+    replay_indices = np.argsort(replay_scores)[-n_replay:]
+    replay = ref_adata[replay_indices].copy()
 
     train_extra: dict = {}
     if batch_size is not None:
@@ -1523,7 +1533,7 @@ def task_b9_mapqc(
                 control_value="control",
                 case_control_key=MAPQC_STATUS_KEY,
             ),
-            "note": "Requires pip install scvi-tools[cytoanvi-mapping-qc].",
+            "note": "Requires pip install cytoanvi[cytoanvi-mapping-qc].",
         }
     )
     return out

@@ -1,0 +1,52 @@
+name: Usage-readiness contracts
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/usage_readiness_contracts.yml"
+      - "benchmarks/cytoanvi/usage_readiness_contract_v1.json"
+      - "benchmarks/mrtotalvi/usage_readiness_contract_v1.json"
+      - "docs/artifacts/**"
+      - "docs/protocols/**"
+      - "docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/**"
+      - "docs/schemas/**"
+      - "scripts/accept_usage_readiness_wheel"
+      - "scripts/build_usage_readiness_wheel"
+      - "scripts/usage_readiness_installed_smoke.py"
+      - "scripts/validate_usage_readiness.py"
+      - "tests/usage_readiness/**"
+      - "vignettes/cytoanvi_treearches_synthetic.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install contract-test dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          jsonschema==4.26.0 pytest==9.0.3
+
+      - name: Validate cross-file repository state
+        run: python scripts/validate_usage_readiness.py
+
+      - name: Run fail-closed contract and harness tests
+        run: >-
+          python -m pytest -q -p no:cacheprovider
+          --confcutdir=tests/usage_readiness tests/usage_readiness
+
+      # Candidate construction and installed acceptance remain one-time, governed local actions.
+      # This workflow deliberately validates their contracts without building or accepting a wheel.

@@ -73,12 +73,14 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         If ``True``, uses a single linear layer for classification instead of an MLP.
     y_prior
         Prior over the observed labels. One of: ``"uniform"`` / ``None`` (uniform), ``"empirical"``
-        (label frequencies among labeled cells, Laplace-smoothed), or a tensor of shape
-        ``(1, n_labels)``. Use ``"empirical"`` for class-imbalanced panels.
+        (label frequencies among labeled cells in the actual training split, Laplace-smoothed), or
+        a tensor of shape ``(1, n_labels)``. Empirical values are resolved only after the split is
+        fixed by :meth:`train`.
     class_weighting
         Optional per-class weighting for the supervised classifier loss. ``"none"`` preserves
         default behavior. ``"inverse_frequency"`` and ``"sqrt_inverse_frequency"`` compute weights
-        from labeled observed cells.
+        from labeled cells in the actual training split. Data-derived values are resolved only
+        after the split is fixed by :meth:`train`.
     class_weight_clip
         Maximum computed class weight before mean normalization.
     hierarchy_edges
@@ -105,6 +107,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
 
     Notes
     -----
+    Authoritative capability status and promotion boundaries are recorded in
+    ``docs/usage_readiness.md``.
+
     - Only ``latent_distribution="normal"`` is supported (the semi-supervised ``z1`` log-prob term
       assumes a Gaussian latent).
     - With overlapping panels, the encoder (and hence the classifier, which reads the shared
@@ -190,15 +195,55 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             else None
         )
 
-        y_prior_tensor = self._resolve_y_prior(y_prior, n_labels)
-        class_weights = self._resolve_class_weights(class_weighting, class_weight_clip, n_labels)
+        self.y_prior_mode_ = (
+            "tensor" if isinstance(y_prior, torch.Tensor) else (y_prior or "uniform")
+        )
+        if self.y_prior_mode_ not in {"uniform", "empirical", "tensor"}:
+            raise ValueError(
+                f"y_prior must be 'uniform', 'empirical', None, or a tensor; got {y_prior!r}."
+            )
+        # Data-derived quantities must not see validation/test labels. Initialize their module
+        # slots neutrally and resolve them after train() fixes the actual split.
+        y_prior_tensor = (
+            None if self.y_prior_mode_ == "empirical" else self._resolve_y_prior(y_prior, n_labels)
+        )
+
         self.class_weighting_ = (
             "tensor" if isinstance(class_weighting, torch.Tensor) else (class_weighting or "none")
         )
-        self.class_weight_clip_ = None if class_weights is None else float(class_weight_clip)
+        if self.class_weighting_ not in {
+            "none",
+            "inverse_frequency",
+            "sqrt_inverse_frequency",
+            "tensor",
+        }:
+            raise ValueError(
+                "class_weighting must be 'none', 'inverse_frequency', "
+                "'sqrt_inverse_frequency', None, or a tensor."
+            )
+        if self.class_weighting_ in {"inverse_frequency", "sqrt_inverse_frequency", "tensor"}:
+            if not np.isfinite(class_weight_clip) or class_weight_clip <= 0:
+                raise ValueError("class_weight_clip must be finite and > 0.")
+            self.class_weight_clip_ = float(class_weight_clip)
+        else:
+            self.class_weight_clip_ = None
+        class_weights = (
+            None
+            if self.class_weighting_ in {"inverse_frequency", "sqrt_inverse_frequency"}
+            else self._resolve_class_weights(class_weighting, class_weight_clip, n_labels)
+        )
         self.class_weights_ = (
             None if class_weights is None else class_weights.detach().cpu().numpy()
         )
+        resolved_prior = (
+            (torch.ones(1, n_labels) / n_labels) if y_prior_tensor is None else y_prior_tensor
+        )
+        self.resolved_y_prior_ = (
+            None
+            if self.y_prior_mode_ == "empirical"
+            else resolved_prior.detach().cpu().numpy()
+        )
+        self.training_statistics_boundary_ = None
 
         reachability_tensor = self._resolve_reachability_tensor(reachability_matrix, n_labels)
 
@@ -511,7 +556,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         devices
             Devices to use. Default ``"auto"``.
         train_size
-            Fraction of cells used for training. Default 0.9.
+            Fraction of cells used for training. Default 0.9. Empirical priors and data-derived
+            class weights use only the indices assigned to this split.
         validation_size
             Fraction used for validation. If ``None``, ``1 - train_size``.
         batch_size
@@ -529,15 +575,9 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         n_epochs_kl_warmup
             Epochs to warm up the KL weight. Default 400 (40% of ``max_epochs``).
         adversarial_classifier
-            **Currently a no-op for CytoANVI, accepted only for signature compatibility.**
-            :meth:`~scvi.model.base.SemisupervisedTrainingMixin.train` consumes this argument
-            only under ``if type(self).__name__ == "TOTALANVI":``, and
-            ``CytoANVI._training_plan_cls`` resolves to
-            :class:`~scvi.train.SemiSupervisedTrainingPlan`, which has no such parameter, so the
-            value is silently discarded. Honouring it would require
-            :class:`~scvi.train.SemiSupervisedAdversarialTrainingPlan`, which hardcodes a
-            gradient-clip norm of 50 and would override any ``gradient_clip_norm`` passed via
-            ``plan_kwargs``. Do not rely on this for batch mixing.
+            Compatibility placeholder. ``None`` is the only accepted value. Every non-null value
+            raises before data splitting or trainer construction because CytoANVI has no
+            adversarial objective.
         plan_kwargs
             Extra keyword arguments for the training plan (e.g.
             ``{"ewc_importance": 100}`` for continual update).
@@ -545,16 +585,38 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             Epochs to wait before triggering early stopping. Default 30.
         **kwargs
             Forwarded to ``Trainer``.
+
+        See ``docs/usage_readiness.md`` for the authoritative capability status. In particular,
+        adversarial training is not a supported CytoANVI objective.
         """
+        if adversarial_classifier is not None:
+            raise NotImplementedError(
+                "CytoANVI does not implement adversarial training; adversarial_classifier must "
+                "be None. No trainer was constructed."
+            )
+
         cont = getattr(self.module, "continual", None)
         if cont is not None and not cont.replay_batches:
-            warnings.warn(
-                "Continual update is active but the replay buffer is empty (typical after "
-                "save/load). Experience replay is disabled until you re-call "
-                "`load_query_data_with_replay(..., replay_adata=...)`. The EWC penalty still "
-                "applies.",
-                UserWarning,
-                stacklevel=settings.warnings_stacklevel,
+            raise RuntimeError(
+                "CytoANVI continual state is active but no replay buffer is attached (typically "
+                "after save/load). EWC-only training is not a public mode. Reconstruct the "
+                "EWC-plus-replay objective through "
+                "CytoANVI.load_query_data_with_replay(..., replay_adata=..., "
+                "control_adata=...) before training. No trainer was constructed."
+            )
+
+        if getattr(self, "y_prior_mode_", "uniform") == "empirical" or getattr(
+            self, "class_weighting_", "none"
+        ) in {
+            "inverse_frequency",
+            "sqrt_inverse_frequency",
+        }:
+            self._resolve_training_split_statistics(
+                train_size=train_size,
+                validation_size=validation_size,
+                n_samples_per_label=n_samples_per_label,
+                batch_size=batch_size,
+                train_kwargs=kwargs,
             )
         update_dict = {
             "lr": lr,
@@ -639,29 +701,87 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         fraction: float = 0.2,
         tta_rep: int = 50,
     ) -> AnnData:
-        """Select high-uncertainty reference cells for the continual replay buffer.
+        """Refuse the legacy indirect TTA replay selector.
 
-        Mirrors the cscanvi paper's Bregman-Information replay selection: cells whose latent
-        embedding is unstable under feature masking are rehearsed during continual update.
-
-        Parameters
-        ----------
-        model
-            A trained :class:`CytoANVI` reference.
-        adata
-            Reference AnnData subset from which to draw the replay buffer.
-        fraction
-            Fraction of cells to retain (highest uncertainty first).
-        tta_rep
-            TTA repetitions passed to :meth:`get_uncertainty`.
+        The retained TTA estimator has negative scientific validation. Historical reproduction may
+        call :meth:`experimental_get_uncertainty` explicitly and construct an AnnData subset, but
+        CytoANVI no longer turns that experimental score into a replay policy through a stable
+        helper. See ``docs/usage_readiness.md`` for the authoritative no-go status.
         """
-        if not 0 < fraction <= 1:
-            raise ValueError("fraction must be in (0, 1].")
-        model._check_if_trained(warn=False)
-        unc = model.get_uncertainty(adata, tta_rep=tta_rep)
-        n = max(1, int(fraction * adata.n_obs))
-        idx = np.argsort(unc)[-n:]
-        return adata[idx].copy()
+        raise NotImplementedError(
+            "select_replay_by_uncertainty is quarantined because TTA is not a supported novelty "
+            "or replay-selection capability. For historical experiments only, call "
+            "model.experimental_get_uncertainty(..., seed=...) explicitly and construct the "
+            "replay subset yourself."
+        )
+
+    def _resolve_training_split_statistics(
+        self,
+        *,
+        train_size: float,
+        validation_size: float | None,
+        n_samples_per_label: float | None,
+        batch_size: int,
+        train_kwargs: dict,
+    ) -> None:
+        """Resolve label-derived quantities from the exact split used by training."""
+        datamodule = train_kwargs.get("datamodule")
+        if datamodule is None:
+            datasplitter_kwargs = dict(train_kwargs.get("datasplitter_kwargs") or {})
+            datamodule = self._data_splitter_cls(
+                adata_manager=self.adata_manager,
+                train_size=train_size,
+                validation_size=validation_size,
+                shuffle_set_split=train_kwargs.get("shuffle_set_split", True),
+                n_samples_per_label=n_samples_per_label,
+                batch_size=batch_size or settings.batch_size,
+                **datasplitter_kwargs,
+            )
+        datamodule.setup()
+        train_indices = getattr(datamodule, "train_idx", None)
+        validation_indices = getattr(datamodule, "val_idx", None)
+        test_indices = getattr(datamodule, "test_idx", None)
+        if train_indices is None or validation_indices is None or test_indices is None:
+            raise RuntimeError(
+                "CytoANVI cannot resolve empirical priors/class weights because the training "
+                "data splitter does not expose train_idx, val_idx, and test_idx."
+            )
+
+        train_indices = np.asarray(train_indices, dtype=np.int64).copy()
+        validation_indices = np.asarray(validation_indices, dtype=np.int64).copy()
+        test_indices = np.asarray(test_indices, dtype=np.int64).copy()
+        if train_indices.size == 0:
+            raise ValueError("Cannot resolve empirical priors/class weights from an empty split.")
+
+        # This public, trailing-underscore attribute is included in scvi model saves. Keep all
+        # three index sets so the leakage boundary can be audited and round-tripped exactly.
+        self.training_statistics_boundary_ = {
+            "source": "training_indices_only",
+            "train_indices": train_indices,
+            "validation_indices": validation_indices,
+            "test_indices": test_indices,
+        }
+        self.train_indices_ = train_indices
+        self.validation_indices_ = validation_indices
+        self.test_indices_ = test_indices
+
+        if self.y_prior_mode_ == "empirical":
+            y_prior = self._resolve_y_prior("empirical", self.n_labels, indices=train_indices)
+            with torch.no_grad():
+                self.module.y_prior.copy_(y_prior.to(self.module.y_prior.device))
+            self.resolved_y_prior_ = y_prior.detach().cpu().numpy()
+
+        if self.class_weighting_ in {"inverse_frequency", "sqrt_inverse_frequency"}:
+            class_weights = self._resolve_class_weights(
+                self.class_weighting_,
+                self.class_weight_clip_,
+                self.n_labels,
+                indices=train_indices,
+            )
+            self.module.set_class_weights(class_weights)
+            self.class_weights_ = (
+                None if class_weights is None else class_weights.detach().cpu().numpy()
+            )
 
     def _label_counts(self, labeled_vals: np.ndarray, n_labels: int) -> np.ndarray:
         """Count labeled cells per class code, ordered by ``self._label_mapping[:n_labels]``.
@@ -678,7 +798,11 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         return np.bincount(codes[codes >= 0], minlength=n_labels).astype(np.float64)
 
     def _resolve_y_prior(
-        self, y_prior: Literal["uniform", "empirical"] | torch.Tensor | None, n_labels: int
+        self,
+        y_prior: Literal["uniform", "empirical"] | torch.Tensor | None,
+        n_labels: int,
+        *,
+        indices: np.ndarray | None = None,
     ) -> torch.Tensor | None:
         """Resolve ``y_prior`` into a ``(1, n_labels)`` tensor, or ``None`` for a uniform prior."""
         if y_prior is None or (isinstance(y_prior, str) and y_prior == "uniform"):
@@ -688,8 +812,13 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                 raise ValueError(
                     f"y_prior must be 'uniform', 'empirical', None, or a tensor; got '{y_prior}'."
                 )
-            # frequencies of observed labels among labeled cells, Laplace-smoothed
-            labeled_vals = self.labels_[self._labeled_indices]
+            if indices is None:
+                raise RuntimeError(
+                    "Empirical y_prior requires fixed training indices; call train() to resolve "
+                    "it."
+                )
+            # Frequencies of observed labels among training cells only, Laplace-smoothed.
+            labeled_vals = self.labels_[indices]
             counts = self._label_counts(labeled_vals, n_labels)
             counts += 1.0
             freqs = counts / counts.sum()
@@ -720,6 +849,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         | None,
         class_weight_clip: float,
         n_labels: int,
+        *,
+        indices: np.ndarray | None = None,
     ) -> torch.Tensor | None:
         """Resolve optional classifier-loss weights into a 1-D tensor."""
         if class_weighting is None or (
@@ -731,7 +862,12 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         if isinstance(class_weighting, torch.Tensor):
             weights = class_weighting.detach().clone().to(dtype=torch.float32)
         elif class_weighting in {"inverse_frequency", "sqrt_inverse_frequency"}:
-            labeled_vals = self.labels_[self._labeled_indices]
+            if indices is None:
+                raise RuntimeError(
+                    "Data-derived class weights require fixed training indices; call train() to "
+                    "resolve them."
+                )
+            labeled_vals = self.labels_[indices]
             if len(labeled_vals) == 0:
                 return None
             counts = self._label_counts(labeled_vals, n_labels)
@@ -1052,7 +1188,7 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         adata: AnnData,
         reference_model: CytoANVI,
         replay_adata: AnnData,
-        control_adata: AnnData | None = None,
+        control_adata: AnnData,
         combine_type: str = "product",
         freeze_classifier: bool = True,
         seed: int = 0,
@@ -1076,7 +1212,8 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
             A trained :class:`CytoANVI` reference.
         replay_adata
             Replay buffer = a subset (~20%) of reference cells, rehearsed in the ELBO and used for
-            the reference Fisher importances. Select randomly, or by :meth:`get_uncertainty` (BI).
+            the reference Fisher importances. Selection is an explicit experimental design choice;
+            the former TTA-based selector is quarantined.
         control_adata
             Healthy control cells from the query (~5-10%), used for the query-control Fisher.
             **Required** — controls must exist in both reference and query (the EWC term is
@@ -1102,10 +1239,13 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         - The continual update (:class:`~cytoanvi.ContinualUpdate`) is held by the
           module and persisted across :meth:`save` / :meth:`load` **except** its replay buffer
           (session-scoped). After a reload, ``predict`` / ``get_latent_representation`` /
-          ``get_uncertainty`` work immediately; resuming continual *training* requires re-supplying
-          ``replay_adata`` via another :meth:`load_query_data_with_replay`.
+          inference works immediately, but resuming continual *training* requires reconstructing
+          the full objective by re-supplying both ``replay_adata`` and ``control_adata`` through
+          another :meth:`load_query_data_with_replay`. EWC-only continuation is not exposed.
         - The query-control Fisher is computed on the batch-extended query model (controls may
           carry query batches); the reference anchor and reference Fisher on the reference model.
+        - See ``docs/usage_readiness.md`` for the authoritative experimental/no-go status of
+          continual updates.
         """
         if combine_type not in ("additive", "product"):
             raise ValueError("combine_type must be 'additive' or 'product'.")
@@ -1204,39 +1344,91 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
         tta_rep: int = 50,
         mode: str = "latent",
     ) -> np.ndarray:
-        """Per-cell Bregman-Information uncertainty via test-time augmentation.
+        """Refuse the legacy stable TTA novelty entry point.
 
-        High scores flag cells whose embedding/logits are unstable under feature masking — a proxy
-        for novelty / out-of-distribution query cells (e.g. disease-specific states absent from the
-        reference). Useful before trusting :meth:`predict` on a mapped query.
+        The retained estimator performed below chance in the available validation and is not a
+        supported novelty capability. Historical reproduction must opt in explicitly through
+        :meth:`experimental_get_uncertainty` and provide a deterministic seed.
+        See ``docs/usage_readiness.md`` for the authoritative no-go status.
+        """
+        raise NotImplementedError(
+            "get_uncertainty is quarantined because TTA is not a supported novelty/OOD "
+            "capability. For historical experiments only, call "
+            "experimental_get_uncertainty(..., seed=...) explicitly."
+        )
+
+    @torch.inference_mode()
+    def experimental_get_uncertainty(
+        self,
+        adata: AnnData | None = None,
+        indices=None,
+        batch_size: int | None = None,
+        tta_rep: int = 50,
+        mode: str = "latent",
+        seed: int | None = None,
+    ) -> np.ndarray:
+        """Reproduce the experimental TTA Bregman-Information score.
+
+        This method is retained for historical experiments, not supported novelty decisions. With
+        a fixed ``seed`` and fixed evaluated cell order, its per-cell masks and returned scores are
+        exactly invariant to ``batch_size`` / chunk partitioning. See ``docs/usage_readiness.md``
+        for the authoritative no-go status.
 
         Parameters
         ----------
         tta_rep
-            Number of TTA augmentations for estimating Bregman Information. More reps give a
-            more stable estimate at linear cost. The default (50) balances stability and cost.
+            Positive number of independent per-cell mask augmentations.
         mode
-            ``"latent"`` (default): BI computed over encoder mean vectors (``n_latent`` dims).
-            ``"logit"``: BI computed over classifier logit vectors (``n_labels`` dims) — the
-            canonical Bregman-Variance-Decomposition-on-logits formulation.
-
-        Returns
-        -------
-        np.ndarray of shape ``(n_cells,)`` with one non-negative scalar uncertainty score per
-        cell (Bregman Information). Higher values indicate cells whose embedding or logits vary
-        more across TTA augmentations — a proxy for novelty or out-of-distribution status.
+            ``"latent"`` uses encoder means; ``"logit"`` uses classifier logits.
+        seed
+            Deterministic mask seed. ``None`` retains non-deterministic experimental behavior.
         """
         if mode not in {"latent", "logit"}:
             raise ValueError("mode must be one of {'latent', 'logit'}.")
+        if not isinstance(tta_rep, int) or isinstance(tta_rep, bool) or tta_rep <= 0:
+            raise ValueError("tta_rep must be a positive integer.")
+        if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool)):
+            raise TypeError("seed must be an integer or None.")
         self._check_if_trained(warn=False)
         adata = self._validate_anndata(adata)
+        if indices is None:
+            n_selected = adata.n_obs
+        else:
+            indices = np.asarray(indices)
+            if indices.ndim != 1:
+                raise ValueError(f"indices must be one-dimensional; got shape {indices.shape}.")
+            n_selected = len(indices)
+        if n_selected == 0:
+            return np.empty(0, dtype=np.float32)
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
         scores = []
+        cell_offset = 0
+        compute_chunk_size = 64
+        pending_inputs = None
+        pending_nan_mask = None
+        pending_count = 0
         nan_key = CYTOVI_REGISTRY_KEYS.PROTEIN_NAN_MASK
         enc_mask = getattr(self.module, "encoder_marker_mask", None)
+
+        def score_pending_chunk(chunk_inputs, chunk_nan_mask, size):
+            nonlocal cell_offset
+            cell_positions = np.arange(cell_offset, cell_offset + size, dtype=np.int64)
+            result = compute_uncertainty_scores(
+                chunk_inputs,
+                self.module,
+                tta_rep=tta_rep,
+                nan_mask=chunk_nan_mask,
+                mode=mode,
+                seed=seed,
+                cell_indices=cell_positions,
+            )
+            cell_offset += size
+            return result
+
         with self._eval_mode():
             for tensors in scdl:
                 inference_inputs = self.module._get_inference_input(tensors)
+                n_batch = inference_inputs["x"].shape[0]
                 nan_mask = None
                 if nan_key in tensors:
                     full_mask = tensors[nan_key]
@@ -1244,15 +1436,65 @@ class CytoANVI(SemisupervisedTrainingMixin, CYTOVI):
                         nan_mask = full_mask[..., enc_mask]
                     else:
                         nan_mask = full_mask
-                scores.append(
-                    compute_uncertainty_scores(
-                        inference_inputs,
-                        self.module,
-                        tta_rep=tta_rep,
-                        nan_mask=nan_mask,
-                        mode=mode,
+
+                if pending_inputs is None:
+                    pending_inputs = inference_inputs
+                    pending_nan_mask = nan_mask
+                else:
+                    merged_inputs = {}
+                    for key, value in inference_inputs.items():
+                        pending_value = pending_inputs[key]
+                        if value is None and pending_value is None:
+                            merged_inputs[key] = None
+                        elif isinstance(value, torch.Tensor) and isinstance(
+                            pending_value, torch.Tensor
+                        ):
+                            merged_inputs[key] = torch.cat((pending_value, value), dim=0)
+                        else:
+                            raise RuntimeError(
+                                f"Experimental TTA input {key!r} changed type across chunks."
+                            )
+                    pending_inputs = merged_inputs
+                    if nan_mask is None and pending_nan_mask is not None:
+                        raise RuntimeError(
+                            "Experimental TTA nan-mask availability changed by chunk."
+                        )
+                    if nan_mask is not None and pending_nan_mask is None:
+                        raise RuntimeError(
+                            "Experimental TTA nan-mask availability changed by chunk."
+                        )
+                    if nan_mask is not None:
+                        pending_nan_mask = torch.cat((pending_nan_mask, nan_mask), dim=0)
+                pending_count += n_batch
+
+                while pending_count >= compute_chunk_size:
+                    chunk_inputs = {
+                        key: None if value is None else value[:compute_chunk_size]
+                        for key, value in pending_inputs.items()
+                    }
+                    chunk_nan_mask = (
+                        None
+                        if pending_nan_mask is None
+                        else pending_nan_mask[:compute_chunk_size]
                     )
-                )
+                    scores.append(
+                        score_pending_chunk(chunk_inputs, chunk_nan_mask, compute_chunk_size)
+                    )
+                    pending_inputs = {
+                        key: None if value is None else value[compute_chunk_size:]
+                        for key, value in pending_inputs.items()
+                    }
+                    if pending_nan_mask is not None:
+                        pending_nan_mask = pending_nan_mask[compute_chunk_size:]
+                    pending_count -= compute_chunk_size
+
+            if pending_count:
+                scores.append(score_pending_chunk(pending_inputs, pending_nan_mask, pending_count))
+
+        if cell_offset != n_selected:
+            raise RuntimeError(
+                f"Experimental TTA evaluated {cell_offset} cells, expected {n_selected}."
+            )
         return torch.cat(scores).cpu().numpy()
 
     def score_query_mapping(

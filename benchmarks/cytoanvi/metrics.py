@@ -130,7 +130,7 @@ def precision_at_specificity(
     -------
     dict with keys: threshold, specificity, precision, recall, n_predicted_novel
     """
-    from cytoanvi._uncertainty import get_uncertainty_threshold
+    from cytoanvi._uncertainty import experimental_get_uncertainty_threshold
 
     uncertainty = np.asarray(uncertainty, dtype=float)
     is_novel = np.asarray(is_novel, dtype=bool)
@@ -139,7 +139,7 @@ def precision_at_specificity(
         if uncertainty_ref is not None
         else uncertainty[~is_novel]
     )
-    threshold = get_uncertainty_threshold(ref_scores, specificity=specificity)
+    threshold = experimental_get_uncertainty_threshold(ref_scores, specificity=specificity)
     pred_novel = uncertainty > threshold
     tp = int((pred_novel & is_novel).sum())
     fp = int((pred_novel & ~is_novel).sum())
@@ -171,8 +171,9 @@ def rna_macro_f1_paired(
             adata.obs.loc[adata.obs[batch_key].astype(str) == rna_modality, sample_key].astype(str)
         )
         cy_samples = set(
-            adata.obs.loc[adata.obs[batch_key].astype(str) == cytof_modality, sample_key]
-            .astype(str)
+            adata.obs.loc[adata.obs[batch_key].astype(str) == cytof_modality, sample_key].astype(
+                str
+            )
         )
         shared_samples = rna_samples & cy_samples
     mask = (adata.obs[batch_key].astype(str) == rna_modality) & (

@@ -1,4 +1,4 @@
-"""AnnBatch-style streaming ``LightningDataModule`` for MrTotalVI.
+"""Private registry-adapter prototype for MrTotalVI data collections.
 
 Extends the generic streaming-registry pattern used by
 :class:`~scvi.dataloaders.MappedCollectionDataModule` (see
@@ -7,11 +7,9 @@ tensor and a per-sample (donor) axis, matching what
 :meth:`~scvi.external.mrtotalvi.MrTotalVI.setup_anndata` registers for the
 in-memory :class:`~scvi.data.AnnDataManager` path.
 
-**Build-only.** This module is not imported by
-:mod:`scvi.external.mrtotalvi` training code, :mod:`benchmarks.mrtotalvi`, or
-:meth:`MrTotalVI.setup_anndata`. It exists as a standalone, independently
-testable data-loading component; wiring it into training is a separate,
-deliberate decision left for later.
+**Quarantined: not a model-training surface.** This module is not exported,
+accepted by :class:`MrTotalVI`, or supported for end-to-end train/infer/save/load.
+It exists only to preserve and test registry-construction mechanics.
 
 Known gaps (see class docstring for detail)
 ---------------------------------------------
@@ -24,19 +22,10 @@ Known gaps (see class docstring for detail)
   matches ``MrTotalVI.setup_anndata``'s *default* ``size_factor_key=None``
   behavior, but an explicit key cannot be threaded through the streaming
   backend here). Passing a non-``None`` value raises ``NotImplementedError``.
-* Real multi-file **lamindb** streaming of the protein-expression ``.obsm``
-  array could not be verified in this environment: lamindb is not
-  installed, and vanilla :mod:`anndata` (which lamindb's
-  ``Collection.mapped()`` builds on) exposes no ``mapped()``/``obsm_keys``
-  API to inspect. The in-repo precedent for streaming a *second* per-cell
-  matrix through an X-only streaming backend
-  (``benchmarks/common/annbatch.py``'s ``AnnBatchSemiSupervisedDataModule``)
-  concatenates the second matrix onto ``X`` and slices it back apart after
-  loading, rather than relying on obsm streaming support. The lamindb branch
-  here instead best-effort forwards ``obsm_keys=[protein_expression_obsm_key]``
-  to ``collection.mapped(...)`` and raises a clear, actionable
-  ``NotImplementedError`` if that argument is rejected -- it does not
-  silently produce wrong tensors.
+* The **lamindb** backend is refused unconditionally. This private adapter
+  cannot verify both row-aligned protein values and an authoritative protein
+  feature axis through that backend, so accepting a mapped collection would
+  be an untested and potentially silent feature-order failure.
 * The tested, parity-verified backend is the in-memory
   :class:`_InMemoryProteinMappedDataset` adapter (built directly from
   ``AnnData``/``list[AnnData]``), used automatically when ``collection`` is
@@ -58,6 +47,10 @@ from torch.utils.data import DataLoader, Dataset
 
 import scvi
 from scvi import REGISTRY_KEYS
+from scvi.external.mrtotalvi._contracts import (
+    authoritative_protein_names,
+    matrix_row,
+)
 from scvi.model._utils import parse_device_args
 from scvi.utils import dependencies
 
@@ -85,7 +78,7 @@ class _InMemoryProteinMappedDataset(Dataset):
     "collection") and exposes just enough of the lamindb ``MappedCollection``
     surface (``encoders``, ``n_obs``, ``n_vars``, ``var_joint``,
     ``torch_worker_init_fn``, integer indexing) for
-    :class:`MrTotalVIBatchDataModule` to build tensors from it -- including
+    :class:`_MrTotalVIRegistryAdapter` to build tensors from it -- including
     the protein-expression ``.obsm`` array, which real lamindb streaming may
     or may not support (see module docstring "Known gaps").
 
@@ -100,7 +93,9 @@ class _InMemoryProteinMappedDataset(Dataset):
         adatas: list[AnnData],
         obs_keys: list[str],
         protein_expression_obsm_key: str,
+        protein_names_uns_key: str | None = None,
         continuous_keys: list[str] | None = None,
+        require_protein_names: bool = False,
     ):
         if len(adatas) == 0:
             raise ValueError("`adatas` must contain at least one AnnData object.")
@@ -130,6 +125,27 @@ class _InMemoryProteinMappedDataset(Dataset):
                     f"protein columns in obsm['{protein_expression_obsm_key}']."
                 )
         self.n_proteins = int(protein_width)
+        axes = [
+            authoritative_protein_names(
+                adata,
+                protein_expression_obsm_key=protein_expression_obsm_key,
+                protein_names_uns_key=protein_names_uns_key,
+                required=require_protein_names or len(self._adatas) > 1,
+            )
+            for adata in self._adatas
+        ]
+        available_axes = [axis for axis in axes if axis is not None]
+        if available_axes:
+            reference_axis = available_axes[0]
+            for axis in axes:
+                if axis is None or not np.array_equal(axis, reference_axis):
+                    raise ValueError(
+                        "All files must provide identical authoritative protein names "
+                        "in exact order; equal width is insufficient."
+                    )
+            self.protein_names = reference_axis
+        else:
+            self.protein_names = np.arange(self.n_proteins)
 
         sizes = [a.n_obs for a in self._adatas]
         self._offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(int)
@@ -158,7 +174,10 @@ class _InMemoryProteinMappedDataset(Dataset):
         mats = []
         for a in self._adatas:
             m = a.obsm[self._protein_expression_obsm_key]
-            m = m.toarray() if hasattr(m, "toarray") else np.asarray(m)
+            if isinstance(m, pd.DataFrame):
+                m = m.to_numpy()
+            else:
+                m = m.toarray() if hasattr(m, "toarray") else np.asarray(m)
             mats.append(m)
         return np.concatenate(mats, axis=0).astype(np.float32)
 
@@ -189,8 +208,7 @@ class _InMemoryProteinMappedDataset(Dataset):
         x_row = adata.X[local_idx]
         x_row = x_row.toarray().ravel() if hasattr(x_row, "toarray") else np.asarray(x_row).ravel()
 
-        p_row = adata.obsm[self._protein_expression_obsm_key][local_idx]
-        p_row = p_row.toarray().ravel() if hasattr(p_row, "toarray") else np.asarray(p_row).ravel()
+        p_row = matrix_row(adata.obsm[self._protein_expression_obsm_key], local_idx)
 
         item: dict[str, Any] = {
             "X": x_row.astype(np.float32, copy=False),
@@ -205,8 +223,8 @@ class _InMemoryProteinMappedDataset(Dataset):
         return item
 
 
-class MrTotalVIBatchDataModule(LightningDataModule):
-    """Streaming ``LightningDataModule`` for MrTotalVI, with protein support.
+class _MrTotalVIRegistryAdapter(LightningDataModule):
+    """Private, non-training registry adapter for MrTotalVI-shaped collections.
 
     Follows the constructor/``registry``/dataloader shape of
     :class:`~scvi.dataloaders.MappedCollectionDataModule`, extended with:
@@ -302,14 +320,14 @@ class MrTotalVIBatchDataModule(LightningDataModule):
         super().__init__()
         if size_factor_key is not None:
             raise NotImplementedError(
-                "`size_factor_key` is not supported by MrTotalVIBatchDataModule "
+                "`size_factor_key` is not supported by _MrTotalVIRegistryAdapter "
                 "(the `size_factor` field is always registered empty). See the "
                 "module docstring 'Known gaps'."
             )
         if panel_key is not None:
             raise NotImplementedError(
                 "`panel_key` (per-panel protein batch masking) is not supported by "
-                "MrTotalVIBatchDataModule. See the module docstring 'Known gaps'."
+                "_MrTotalVIRegistryAdapter. See the module docstring 'Known gaps'."
             )
 
         self._batch_size = batch_size
@@ -335,12 +353,31 @@ class MrTotalVIBatchDataModule(LightningDataModule):
             obs_keys.extend(self._continuous_covariate_keys)
         self._obs_keys = list(dict.fromkeys(obs_keys))
 
-        self._dataset = self._build_dataset(collection, self._obs_keys, **kwargs)
+        compare_validation_axis = collection_val is not None
+        self._dataset = self._build_dataset(
+            collection,
+            self._obs_keys,
+            require_protein_names=compare_validation_axis,
+            **kwargs,
+        )
         self._validset = (
-            self._build_dataset(collection_val, self._obs_keys, **kwargs)
+            self._build_dataset(
+                collection_val,
+                self._obs_keys,
+                require_protein_names=True,
+                **kwargs,
+            )
             if collection_val is not None
             else None
         )
+        if self._validset is not None and not np.array_equal(
+            self._dataset.protein_names,
+            self._validset.protein_names,
+        ):
+            raise ValueError(
+                "Training and validation collections must provide identical "
+                "authoritative protein names in exact order."
+            )
 
         # n_obs_per_sample: exposed as a convenience attribute (matching the
         # generic reference's convention), but deliberately *not* stored
@@ -363,7 +400,14 @@ class MrTotalVIBatchDataModule(LightningDataModule):
     # Dataset construction
     # ------------------------------------------------------------------
 
-    def _build_dataset(self, collection, obs_keys: list[str], **kwargs):
+    def _build_dataset(
+        self,
+        collection,
+        obs_keys: list[str],
+        *,
+        require_protein_names: bool = False,
+        **kwargs,
+    ):
         if collection is None:
             return None
         if isinstance(collection, AnnData):
@@ -381,35 +425,19 @@ class MrTotalVIBatchDataModule(LightningDataModule):
             adatas,
             obs_keys=obs_keys,
             protein_expression_obsm_key=self._protein_expression_obsm_key,
+            protein_names_uns_key=self._protein_names_uns_key,
             continuous_keys=self._continuous_covariate_keys,
+            require_protein_names=require_protein_names,
         )
 
     @dependencies("lamindb")
     def _build_lamindb_dataset(self, collection: ln.Collection, obs_keys: list[str], **kwargs):
-        if self._protein_names_uns_key is not None:
-            raise NotImplementedError(
-                "`protein_names_uns_key` is not supported for the lamindb streaming "
-                "backend -- a multi-file collection has no single, unambiguous "
-                "`.uns`. See the module docstring 'Known gaps'."
-            )
-        try:
-            return collection.mapped(
-                obs_keys=obs_keys,
-                obsm_keys=[self._protein_expression_obsm_key],
-                parallel=self._parallel,
-                **kwargs,
-            )
-        except TypeError as exc:
-            raise NotImplementedError(
-                "MrTotalVIBatchDataModule's lamindb backend expects "
-                "`ln.Collection.mapped(..., obsm_keys=[...])` to accept an "
-                "`obsm_keys` argument for streaming the protein-expression obsm "
-                "array alongside X. This could not be verified against an "
-                "installed lamindb in the development environment used to build "
-                "this class (KNOWN GAP -- see module docstring). Pass an "
-                "in-memory AnnData/list[AnnData] as `collection` to use the "
-                "tested local streaming backend instead."
-            ) from exc
+        raise NotImplementedError(
+            "_MrTotalVIRegistryAdapter refuses the lamindb backend because it cannot "
+            "fail-closed verify both row-aligned protein values and an authoritative "
+            "protein feature axis. Pass an in-memory AnnData/list[AnnData] to use "
+            "the tested private registry adapter."
+        )
 
     def close(self):
         if self._dataset is not None and hasattr(self._dataset, "close"):
@@ -545,9 +573,7 @@ class MrTotalVIBatchDataModule(LightningDataModule):
 
     @property
     def protein_names(self) -> np.ndarray:
-        if self._protein_names_uns_key is not None:
-            return np.asarray(self._dataset.get_uns(self._protein_names_uns_key))
-        return np.arange(self.n_proteins)
+        return np.asarray(self._dataset.protein_names)
 
     @property
     def n_batch(self) -> int:

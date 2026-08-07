@@ -10,9 +10,13 @@ kernelspec:
 
 # CytoANVI: choosing parameters
 
-This tutorial is about **how to pick values**, not about what the arguments mean — for the API
-surface see {doc}`/user_guide/models/cytoanvi`, and for a runnable end-to-end workflow see
-{doc}`CytoANVI_tutorial`.
+This tutorial is about **how to pick values**, not about what the arguments mean. For the API
+surface see {doc}`/user_guide/models/cytoanvi`; tracked runnable engineering workflows live at
+`vignettes/cytoanvi_example_reference_query.py` and
+`vignettes/cytoanvi_treearches_synthetic.py`.
+
+The {doc}`/usage_readiness` capability table is authoritative. This guide cannot promote a
+capability that remains no-go or blocked there.
 
 Most CytoANVI defaults were chosen for a reason, but the reasons differ enormously in strength.
 Some are backed by multi-seed benchmarks on full cohorts; others are conventions inherited from the
@@ -120,12 +124,13 @@ is plausible, but no benchmark in this repository supports it. The same is true 
 `class_weighting='inverse_frequency'` and `class_weight_clip=10.0`.
 
 These are reasonable things to try on an imbalanced panel. They are not validated defaults, and
-this tutorial will not pretend otherwise. Measure per-class recall on held-out labels before and
-after; do not assume the reweighting helped.
+this tutorial will not pretend otherwise. In 0.2.0 empirical priors and class weights are resolved
+only from the actual training split and that boundary is persisted; held-out labels cannot affect
+them. Measure per-class recall on held-out labels after fitting; do not tune from those labels.
 
 +++
 
-## `ewc_importance` (λ) — must be retuned, always
+## Continual update and `ewc_importance` (λ): no promoted recipe
 
 **Tier: Benchmark-backed (as a negative result about portability).**
 
@@ -139,8 +144,10 @@ batch-mean-gradient `(E[grad])²` approximation was replaced by an exact per-sam
 (`per_sample=True`, now the default), which shifts the absolute scale again.
 
 **Consequence:** any λ copied from the paper, from an older run, or from a different dataset is
-meaningless. Sweep it, every time. There is no CytoANVI-recommended value, and inventing one here
-would be worse than saying so.
+meaningless. More importantly, continual updating is no-go without an explicitly predeclared
+reference replay set and an external matched control. A replay-less reload refuses before trainer
+construction; uncertainty-selected replay is not a stable path. This guide does not recommend a λ
+or a sweep as a substitute for the missing P2 protocol.
 ```
 
 +++
@@ -149,12 +156,14 @@ would be worse than saying so.
 
 **Tier: Contested / negative.** This is the most important section on the page.
 
-`get_uncertainty()` implements test-time-augmentation (TTA) Bregman-Information scoring. On the
-full Roider cohort across 3 seeds it achieved **mean AUROC 0.484 ± 0.005 — below chance.**
+The historical experimental TTA Bregman-Information score had a **mean AUROC near 0.484 — below
+chance** on the full Roider cohort across three seeds. Legacy summaries disagree on the reported
+dispersion, so no spread estimate is treated as sealed evidence. Stable `get_uncertainty()` and the
+indirect uncertainty replay selector therefore fail closed in 0.2.0.
 
 The diagnostic matters: a kNN out-of-distribution score computed *in CytoANVI's own latent space*
-reached **0.906 ± 0.003**, better than CytoVI's latent (0.855). So the latent representation is
-good; the TTA scoring method built on top of it is what fails.
+performed better in the same retrospective analysis. That comparator is not independently reviewed
+or promoted; it only localizes the historical TTA failure and remains an unfrozen P2 candidate.
 
 ```{admonition} There is no parameter that fixes this
 :class: danger
@@ -163,12 +172,12 @@ good; the TTA scoring method built on top of it is what fails.
 give you a more precise broken estimate. `mask_percentage` (0.5, the paper's convention) is **not
 exposed** on any public method and has never been swept.
 
-Do not treat novelty detection as a tuning problem. For OOD detection, use a kNN distance in the
-CytoANVI latent instead, which measurably outperforms it.
+Do not treat novelty detection as a tuning problem. Latent-space kNN is a useful preregistered P2
+comparator, but it is not a promoted automatic acceptance rule in this release.
 ```
 
 ```{code-cell} ipython3
-# The recommended alternative: kNN distance in the CytoANVI latent, not TTA uncertainty.
+# Research comparator only: kNN distance in the CytoANVI latent, not stable package TTA.
 latent = model.get_latent_representation()
 print("latent shape:", latent.shape)
 # Build a reference kNN index on known cells, then score query cells by distance to it.
@@ -207,8 +216,8 @@ them. Flagged so you know it is an unexamined inconsistency rather than a consid
 | `max_epochs` | 1000 | Convention | A sufficiency floor; early stopping usually fires first |
 | `classification_ratio` | 50 | Assertion (direction only) | Higher = label transfer, lower = batch mixing; magnitude unvalidated |
 | `y_prior`, `class_weighting` | `uniform`, `none` | Assertion | Plausible for imbalance; unvalidated. Measure per-class recall |
-| `ewc_importance` | — | Benchmark-backed (non-portability) | **Always sweep.** No portable value exists |
-| `tta_rep`, `mask_percentage` | 50, 0.5 | Contested / negative | Method is below chance (AUROC 0.484). Use latent kNN instead |
+| `ewc_importance` | — | Benchmark-backed (non-portability) | No promoted value; replay plus external control are mandatory before P2 use |
+| `tta_rep`, `mask_percentage` | Experimental only | Contested / negative | Stable TTA refuses; historical method is below chance (AUROC 0.484) |
 | HCE hierarchy | `None` | Convention | Only for genuinely hierarchical labels |
 
 **The general rule:** the further down this table you go, the less the default is protecting you.

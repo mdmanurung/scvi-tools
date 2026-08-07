@@ -1,0 +1,221 @@
+{
+  "schema_version": "usage-readiness-capability-matrix-v1",
+  "artifact": {
+    "version": "0.2.0",
+    "wheel_sha256": null,
+    "source_commit": null,
+    "installed_acceptance": "blocked_dependency_authority"
+  },
+  "promotion_status": "pending_human_authority",
+  "rows": [
+    {
+      "capability_id": "cytoanvi.core",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_support_limited",
+      "decision": "pending",
+      "limitations": ["One main cohort; target labels were not independent biological truth; exact 0.2.0 artifact has no P2 result."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.mapping.same_panel",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_support_limited",
+      "decision": "pending",
+      "limitations": ["Mapping concordance is not target-label accuracy; independent target evidence is absent."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.mapping.panel_divergent",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_support_limited",
+      "decision": "pending",
+      "limitations": ["Requires a shared discriminative backbone and an independent panel-divergent target cohort."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.hierarchy",
+      "engineering_execution": "pending",
+      "scientific_result": "experimental_only",
+      "decision": "experimental",
+      "limitations": ["Existing hierarchy is nearly leaf-only and does not establish biological hierarchy utility."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.integration_clustering",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_support_limited",
+      "decision": "pending",
+      "limitations": ["One-cohort structure is not evidence of general batch removal or biological preservation."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.tta_ood",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_negative",
+      "decision": "no-go",
+      "limitations": ["Three-seed mean OOD AUROC was below chance; no replacement latent-distance protocol is frozen."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.continual",
+      "engineering_execution": "pending",
+      "scientific_result": "experimental_only",
+      "decision": "experimental",
+      "limitations": ["No decisive real case/control validation and no portable EWC importance selection."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.mapqc",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_negative",
+      "decision": "no-go",
+      "limitations": ["Nuñez queries were universally rejected despite strong transfer; thresholds lack independent calibration."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "cytoanvi.artifact",
+      "engineering_execution": "blocked",
+      "scientific_result": "blocked",
+      "decision": "no-go",
+      "limitations": ["Candidate not yet sealed; installed acceptance is blocked by missing dependency authority."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/artifacts/cytoanvi-0.2.0/manifest.json", "docs/artifacts/cytoanvi-0.2.0/installed-acceptance.json"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.core",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_support_limited",
+      "decision": "pending",
+      "limitations": ["Expert exploratory use only; exact 0.2.0 artifact and second-cohort P2 evidence are absent."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.embeddings",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_support_limited",
+      "decision": "experimental",
+      "limitations": ["Legacy u is sample-conditioned; no donor-neutral or superiority claim survives two cohorts."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/adr/0008-mrtotalvi-stable-latent-da-redesign.md", "docs/adr/0009-mrtotalvi-rdx03-latent-integrity-v2.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.prior_choice",
+      "engineering_execution": "pending",
+      "scientific_result": "experimental_only",
+      "decision": "experimental",
+      "limitations": ["MoG versus Vamp is unsettled and must be prespecified with sensitivity analysis."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.label_supervision",
+      "engineering_execution": "pending",
+      "scientific_result": "experimental_only",
+      "decision": "experimental",
+      "limitations": ["Supervised prior use requires intentional disclosure and capability-specific comparison."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/migration/cytoanvi-mrtotalvi-0.2.0.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.da",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_negative",
+      "decision": "no-go",
+      "limitations": ["Three-seed native DA changed sign and remains descriptive, not replicate-aware inference."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.legacy_de",
+      "engineering_execution": "pending",
+      "scientific_result": "historical_negative",
+      "decision": "no-go",
+      "limitations": ["All tested cell types were directionally anti-concordant with donor-pseudobulk; public inference refuses use."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.centered_v2",
+      "engineering_execution": "pending",
+      "scientific_result": "experimental_only",
+      "decision": "experimental",
+      "limitations": ["Registered-sample descriptive estimands only; non-causal, no new-sample extrapolation, no complete real-data validation."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/adr/0007-mrtotalvi-v2-centered-counterfactuals.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.streaming",
+      "engineering_execution": "pending",
+      "scientific_result": "blocked",
+      "decision": "no-go",
+      "limitations": ["No end-to-end model construction, training, inference, and save/load contract exists."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/review-clear-execute/cytoanvi-mrtotalvi-usage-readiness/source-review-evidence.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.new_sample_inference",
+      "engineering_execution": "pending",
+      "scientific_result": "blocked",
+      "decision": "no-go",
+      "limitations": ["Embedding-table surgery or a projection contract is absent; registered-sample refusal is required."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/adr/0005-mrtotalvi.md", "docs/adr/0007-mrtotalvi-v2-centered-counterfactuals.md"],
+      "approver": null,
+      "approval_date": null
+    },
+    {
+      "capability_id": "mrtotalvi.artifact",
+      "engineering_execution": "blocked",
+      "scientific_result": "blocked",
+      "decision": "no-go",
+      "limitations": ["Candidate not yet sealed; installed acceptance is blocked by missing dependency authority."],
+      "artifact_identity": {"version": "0.2.0", "wheel_sha256": null, "source_commit": null},
+      "evidence_links": ["docs/artifacts/cytoanvi-0.2.0/manifest.json", "docs/artifacts/cytoanvi-0.2.0/installed-acceptance.json"],
+      "approver": null,
+      "approval_date": null
+    }
+  ]
+}
